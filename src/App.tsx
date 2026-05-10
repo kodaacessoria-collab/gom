@@ -83,6 +83,7 @@ function App() {
         setActiveTab={setActiveTab} 
         isOpen={isSidebarOpen} 
         toggle={() => setIsSidebarOpen(!isSidebarOpen)} 
+        userEmail={session?.user?.email}
       />
       
       <main className="main-content">

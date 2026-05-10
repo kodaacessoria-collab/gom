@@ -6,9 +6,10 @@ interface SidebarProps {
   setActiveTab: (tab: string) => void;
   isOpen: boolean;
   toggle: () => void;
+  userEmail?: string;
 }
 
-const Sidebar: React.FC<SidebarProps> = ({ activeTab, setActiveTab, isOpen, toggle }) => {
+const Sidebar: React.FC<SidebarProps> = ({ activeTab, setActiveTab, isOpen, toggle, userEmail }) => {
   const menuItems = [
     { id: 'dashboard', label: 'Painel', icon: LayoutDashboard },
     { id: 'inventory', label: 'Estoque', icon: Package },
@@ -28,7 +29,12 @@ const Sidebar: React.FC<SidebarProps> = ({ activeTab, setActiveTab, isOpen, togg
     <>
       <div className={`sidebar ${isOpen ? 'open' : ''}`}>
         <div className="sidebar-header">
-          <h2>GOM ESTOQUE</h2>
+          <div>
+            <h2 style={{ marginBottom: '0.25rem' }}>GOM ESTOQUE</h2>
+            <p style={{ fontSize: '0.75rem', opacity: 0.8, color: 'var(--indigo-light)', fontWeight: 500 }}>
+              {userEmail || 'Usuário Conectado'}
+            </p>
+          </div>
           <button className="mobile-close" onClick={toggle}>
             <X size={24} />
           </button>
