@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { BarChart3, FileText, Filter, Calendar, Package, AlertTriangle, ChevronRight } from 'lucide-react';
+import { Filter, Calendar, Package, AlertTriangle, ChevronRight } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';

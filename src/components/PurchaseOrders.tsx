@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { ShoppingCart, RefreshCw, CheckCircle, ListChecks, ArrowRight, FileText, History, Plus, Trash2 } from 'lucide-react';
+import { ShoppingCart, CheckCircle, ListChecks, ArrowRight, FileText, History, Plus, Trash2 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
-import type { Product, Slip } from '../types';
+import type { Product } from '../types';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 

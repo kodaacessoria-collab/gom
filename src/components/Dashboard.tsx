@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Package, FileText, ShoppingCart, AlertTriangle } from 'lucide-react';
+import { Package, FileText, ShoppingCart } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 
 const Dashboard: React.FC = () => {

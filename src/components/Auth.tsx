@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { supabase } from '../lib/supabase';
-import { LogIn, UserPlus, Mail, Lock, Loader2 } from 'lucide-react';
+import { LogIn, Mail, Lock, Loader2 } from 'lucide-react';
 
 interface AuthProps {
   onLogin: () => void;

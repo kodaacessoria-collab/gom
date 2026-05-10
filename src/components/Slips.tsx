@@ -78,6 +78,7 @@ const Slips: React.FC = () => {
         }
       });
 
+      let currentProducts: Product[];
       if (missingProducts.length > 0) {
         const { error: pError } = await supabase.from('products').insert(
           missingProducts.map(name => ({
@@ -96,9 +97,9 @@ const Slips: React.FC = () => {
         const { data: updatedProducts } = await supabase.from('products').select('*');
         if (updatedProducts) setProducts(updatedProducts);
         // Use the updated list for the next step
-        var currentProducts = updatedProducts || products;
+        currentProducts = updatedProducts || products;
       } else {
-        var currentProducts = products;
+        currentProducts = products;
       }
 
       // 2. Prepare slips for insertion
