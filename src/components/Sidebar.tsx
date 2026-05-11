@@ -27,6 +27,7 @@ const Sidebar: React.FC<SidebarProps> = ({ activeTab, setActiveTab, isOpen, togg
 
   return (
     <>
+      {isOpen && <div className="sidebar-overlay" onClick={toggle}></div>}
       <div className={`sidebar ${isOpen ? 'open' : ''}`}>
         <div className="sidebar-header">
           <div>
@@ -62,7 +63,6 @@ const Sidebar: React.FC<SidebarProps> = ({ activeTab, setActiveTab, isOpen, togg
           </div>
         </nav>
       </div>
-      {isOpen && <div className="sidebar-overlay" onClick={toggle}></div>}
     </>
   );
 };
