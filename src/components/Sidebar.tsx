@@ -1,3 +1,4 @@
+import React, { useEffect } from 'react';
 import { LayoutDashboard, Package, FileText, ShoppingCart, BarChart3, X, History, Users, LogOut } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 
@@ -25,10 +26,36 @@ const Sidebar: React.FC<SidebarProps> = ({ activeTab, setActiveTab, isOpen, togg
     await supabase.auth.signOut();
   };
 
+  useEffect(() => {
+    if (isOpen) {
+      document.body.classList.add('menu-open');
+      const handleEsc = (e: KeyboardEvent) => {
+        if (e.key === 'Escape') toggle();
+      };
+      window.addEventListener('keydown', handleEsc);
+      return () => {
+        document.body.classList.remove('menu-open');
+        window.removeEventListener('keydown', handleEsc);
+      };
+    } else {
+      document.body.classList.remove('menu-open');
+    }
+  }, [isOpen, toggle]);
+
   return (
     <>
-      {isOpen && <div className="sidebar-overlay" onClick={toggle}></div>}
-      <div className={`sidebar ${isOpen ? 'open' : ''}`}>
+      {isOpen && (
+        <div 
+          className="sidebar-overlay" 
+          onClick={toggle}
+          aria-hidden="true"
+        ></div>
+      )}
+      <aside 
+        className={`sidebar ${isOpen ? 'open' : ''}`}
+        aria-label="Menu Lateral"
+        aria-expanded={isOpen}
+      >
         <div className="sidebar-header">
           <div>
             <h2 style={{ marginBottom: '0.25rem' }}>GOM ESTOQUE</h2>
@@ -36,7 +63,11 @@ const Sidebar: React.FC<SidebarProps> = ({ activeTab, setActiveTab, isOpen, togg
               {userEmail || 'Usuário Conectado'}
             </p>
           </div>
-          <button className="mobile-close" onClick={toggle}>
+          <button 
+            className="mobile-close" 
+            onClick={toggle}
+            aria-label="Fechar menu"
+          >
             <X size={24} />
           </button>
         </div>
@@ -49,20 +80,26 @@ const Sidebar: React.FC<SidebarProps> = ({ activeTab, setActiveTab, isOpen, togg
                 setActiveTab(item.id);
                 if (window.innerWidth < 1024) toggle();
               }}
+              aria-current={activeTab === item.id ? 'page' : undefined}
             >
-              <item.icon size={20} />
+              <item.icon size={20} aria-hidden="true" />
               <span>{item.label}</span>
             </button>
           ))}
           
           <div style={{ marginTop: 'auto', borderTop: '1px solid var(--border)', paddingTop: '1rem' }}>
-            <button className="nav-item" onClick={handleLogout} style={{ color: '#ef4444', width: '100%' }}>
-              <LogOut size={20} />
+            <button 
+              className="nav-item" 
+              onClick={handleLogout} 
+              style={{ color: '#ef4444', width: '100%' }}
+              aria-label="Sair do sistema"
+            >
+              <LogOut size={20} aria-hidden="true" />
               <span>Sair</span>
             </button>
           </div>
         </nav>
-      </div>
+      </aside>
     </>
   );
 };
