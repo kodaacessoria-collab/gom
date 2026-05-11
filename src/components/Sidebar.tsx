@@ -1,6 +1,8 @@
 import { LayoutDashboard, Package, FileText, ShoppingCart, BarChart3, X, History, Users, LogOut } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 
+import { createPortal } from 'react-dom';
+
 interface SidebarProps {
   activeTab: string;
   setActiveTab: (tab: string) => void;
@@ -25,7 +27,7 @@ const Sidebar: React.FC<SidebarProps> = ({ activeTab, setActiveTab, isOpen, togg
     await supabase.auth.signOut();
   };
 
-  return (
+  const content = (
     <>
       {isOpen && <div className="sidebar-overlay" onClick={toggle}></div>}
       <div className={`sidebar ${isOpen ? 'open' : ''}`}>
@@ -65,6 +67,8 @@ const Sidebar: React.FC<SidebarProps> = ({ activeTab, setActiveTab, isOpen, togg
       </div>
     </>
   );
+
+  return createPortal(content, document.body);
 };
 
 export default Sidebar;
