@@ -104,14 +104,12 @@ p {
 
 .sidebar {
   width: 280px;
-  background-color: #1e293b; /* Fundo sólido opaco (var(--card-bg)) */
+  background-color: #0f172a; /* Fundo sólido opaco (bg-slate-900) */
   border-right: 1px solid var(--border);
   display: flex;
   flex-direction: column;
   transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-  z-index: 1050; /* Z-index alto para ficar acima do overlay */
-  filter: none !important; /* Garante que não haja blur no menu */
-  backdrop-filter: none !important;
+  z-index: 50; /* Z-index alto para ficar acima do overlay */
 }
 
 .sidebar-header {
@@ -201,7 +199,7 @@ p {
   background-color: rgba(0, 0, 0, 0.5);
   backdrop-filter: blur(4px);
   -webkit-backdrop-filter: blur(4px); /* Suporte para iOS Safari */
-  z-index: 1040; /* Logo abaixo do sidebar (1050) */
+  z-index: 40; /* Logo abaixo do sidebar (50) */
   animation: fadeIn 0.2s ease-out;
 }
 

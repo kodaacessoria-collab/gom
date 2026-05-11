@@ -87,7 +87,13 @@ function App() {
       />
       
       <main className="main-content">
-        <button className="mobile-menu-btn" onClick={() => setIsSidebarOpen(true)}>
+        <button 
+          id="mobile-menu-btn"
+          className="mobile-menu-btn" 
+          onClick={() => setIsSidebarOpen(true)}
+          aria-expanded={isSidebarOpen}
+          aria-controls="sidebar-menu"
+        >
           <Menu size={24} />
         </button>
         {renderContent()}

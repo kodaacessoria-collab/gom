@@ -36,6 +36,8 @@ const Sidebar: React.FC<SidebarProps> = ({ activeTab, setActiveTab, isOpen, togg
       return () => {
         document.body.classList.remove('menu-open');
         window.removeEventListener('keydown', handleEsc);
+        // Retorna o foco ao botão hambúrguer ao fechar o menu (acessibilidade)
+        document.getElementById('mobile-menu-btn')?.focus();
       };
     } else {
       document.body.classList.remove('menu-open');
@@ -52,9 +54,9 @@ const Sidebar: React.FC<SidebarProps> = ({ activeTab, setActiveTab, isOpen, togg
         ></div>
       )}
       <aside 
+        id="sidebar-menu"
         className={`sidebar ${isOpen ? 'open' : ''}`}
         aria-label="Menu Lateral"
-        aria-expanded={isOpen}
       >
         <div className="sidebar-header">
           <div>
