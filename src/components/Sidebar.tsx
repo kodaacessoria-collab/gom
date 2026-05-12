@@ -48,14 +48,14 @@ const Sidebar: React.FC<SidebarProps> = ({ activeTab, setActiveTab, isOpen, togg
     <>
       {isOpen && (
         <div 
-          className="sidebar-overlay" 
+          className="menu-overlay" 
           onClick={toggle}
           aria-hidden="true"
         ></div>
       )}
       <aside 
         id="sidebar-menu"
-        className={`sidebar ${isOpen ? 'open' : ''}`}
+        className={`menu ${isOpen ? 'open' : ''}`}
         aria-label="Menu Lateral"
       >
         <div className="sidebar-header">

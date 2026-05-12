@@ -102,14 +102,15 @@ p {
   min-height: 100vh;
 }
 
-.sidebar {
+.menu {
   width: 280px;
   background-color: #0f172a; /* Fundo sólido opaco (bg-slate-900) */
   border-right: 1px solid var(--border);
   display: flex;
   flex-direction: column;
   transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-  z-index: 50; /* Z-index alto para ficar acima do overlay */
+  z-index: 9999; /* acima do overlay */
+  pointer-events: auto; /* permite cliques */
   will-change: transform; /* Corrige bug de renderização no Safari/iOS */
   transform: translateZ(0); /* Força a renderização em uma camada de hardware separada */
 }
@@ -177,7 +178,7 @@ p {
 }
 
 @media (max-width: 1023px) {
-  .sidebar {
+  .menu {
     position: fixed;
     top: 0;
     left: 0;
@@ -187,7 +188,7 @@ p {
     transform: translateX(-100%) translateZ(0);
     box-shadow: 20px 0 25px -5px rgba(0, 0, 0, 0.3);
   }
-  .sidebar.open {
+  .menu.open {
     transform: translateX(0) translateZ(0);
   }
   .mobile-close {
@@ -195,13 +196,12 @@ p {
   }
 }
 
-.sidebar-overlay {
+.menu-overlay {
   position: fixed;
   inset: 0;
-  background-color: rgba(0, 0, 0, 0.5);
-  backdrop-filter: blur(4px);
-  -webkit-backdrop-filter: blur(4px); /* Suporte para iOS Safari */
-  z-index: 40; /* Logo abaixo do sidebar (50) */
+  background: rgba(0,0,0,0.3); /* opacidade reduzida */
+  z-index: 999; /* abaixo do menu */
+  pointer-events: none; /* não bloqueia interação */
   animation: fadeIn 0.2s ease-out;
 }
 
