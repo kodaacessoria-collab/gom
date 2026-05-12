@@ -110,6 +110,8 @@ p {
   flex-direction: column;
   transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
   z-index: 50; /* Z-index alto para ficar acima do overlay */
+  will-change: transform; /* Corrige bug de renderização no Safari/iOS */
+  transform: translateZ(0); /* Força a renderização em uma camada de hardware separada */
 }
 
 .sidebar-header {
@@ -182,11 +184,11 @@ p {
     bottom: 0;
     height: 100%;
     height: 100dvh;
-    transform: translateX(-100%);
+    transform: translateX(-100%) translateZ(0);
     box-shadow: 20px 0 25px -5px rgba(0, 0, 0, 0.3);
   }
   .sidebar.open {
-    transform: translateX(0);
+    transform: translateX(0) translateZ(0);
   }
   .mobile-close {
     display: block;
