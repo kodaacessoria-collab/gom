@@ -102,6 +102,29 @@ const Sidebar: React.FC<SidebarProps> = ({ activeTab, setActiveTab, isOpen, togg
           </div>
         </nav>
       </aside>
+
+      {/* Bottom Navigation for Mobile */}
+      <nav className="bottom-nav">
+        {menuItems.map((item) => (
+          <button
+            key={`bottom-${item.id}`}
+            className={`bottom-nav-item ${activeTab === item.id ? 'active' : ''}`}
+            onClick={() => setActiveTab(item.id)}
+            aria-current={activeTab === item.id ? 'page' : undefined}
+          >
+            <item.icon size={20} aria-hidden="true" />
+            <span>{item.label}</span>
+          </button>
+        ))}
+        <button
+          className="bottom-nav-item"
+          onClick={handleLogout}
+          style={{ color: '#ef4444' }}
+        >
+          <LogOut size={20} aria-hidden="true" />
+          <span>Sair</span>
+        </button>
+      </nav>
     </>
   );
 };
