@@ -1,5 +1,5 @@
-import React, { useEffect, useState } from 'react';
-import { Package, FileText, ShoppingCart } from 'lucide-react';
+import React, { useEffect, useState, useCallback } from 'react';
+import { Package, FileText, ShoppingCart, BarChart3, RefreshCw, AlertTriangle } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 
 const Dashboard: React.FC = () => {
@@ -8,26 +8,50 @@ const Dashboard: React.FC = () => {
     totalSlips: 0,
     activeOrders: 0,
   });
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  const fetchStats = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      // Usando Promise.all para buscar tudo em paralelo e ser mais rápido
+      const [productsRes, slipsRes, ordersRes] = await Promise.all([
+        supabase.from('products').select('*', { count: 'exact', head: true }),
+        supabase.from('slips').select('*', { count: 'exact', head: true }),
+        supabase.from('purchase_orders').select('*', { count: 'exact', head: true }).eq('status', 'PENDENTE')
+      ]);
+
+      if (productsRes.error) throw productsRes.error;
+      if (slipsRes.error) throw slipsRes.error;
+      if (ordersRes.error) throw ordersRes.error;
+
+      setStats({
+        totalProducts: productsRes.count || 0,
+        totalSlips: slipsRes.count || 0,
+        activeOrders: ordersRes.count || 0,
+      });
+      
+      console.log('Estatísticas atualizadas:', {
+        p: productsRes.count,
+        s: slipsRes.count,
+        o: ordersRes.count
+      });
+    } catch (err: any) {
+      console.error('Erro detalhado ao buscar estatísticas:', err);
+      setError(err.message || 'Erro ao carregar dados do banco de dados');
+    } finally {
+      setLoading(false);
+    }
+  }, []);
 
   useEffect(() => {
     fetchStats();
-  }, []);
-
-  const fetchStats = async () => {
-    try {
-      const { data: products } = await supabase.from('products').select('*');
-      const { data: slips } = await supabase.from('slips').select('*');
-      const { data: orders } = await supabase.from('purchase_orders').select('*').eq('status', 'PENDENTE');
-
-      setStats({
-        totalProducts: products?.length || 0,
-        totalSlips: slips?.length || 0,
-        activeOrders: orders?.length || 0,
-      });
-    } catch (err) {
-      console.error('Erro ao buscar estatísticas:', err);
-    }
-  };
+    
+    // Configurar um intervalo para atualizar a cada 5 minutos
+    const interval = setInterval(fetchStats, 5 * 60 * 1000);
+    return () => clearInterval(interval);
+  }, [fetchStats]);
 
   const cards = [
     { title: 'Total de Itens', value: stats.totalProducts, icon: Package, color: 'blue' },
@@ -42,7 +66,33 @@ const Dashboard: React.FC = () => {
           <h1>Painel de Controle</h1>
           <p>Visão geral do sistema de estoque GOM.</p>
         </div>
+        <button 
+          onClick={fetchStats} 
+          className="button-outline" 
+          disabled={loading}
+          style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', width: 'auto', padding: '0.5rem 1rem' }}
+        >
+          <RefreshCw size={16} className={loading ? 'animate-spin' : ''} />
+          {loading ? 'Atualizando...' : 'Atualizar'}
+        </button>
       </div>
+
+      {error && (
+        <div style={{ 
+          backgroundColor: 'rgba(239, 68, 68, 0.1)', 
+          border: '1px solid #ef4444', 
+          color: '#f87171', 
+          padding: '1rem', 
+          borderRadius: '0.5rem', 
+          marginBottom: '1.5rem',
+          display: 'flex',
+          alignItems: 'center',
+          gap: '0.75rem'
+        }}>
+          <AlertTriangle size={20} />
+          <span>{error}. Verifique sua conexão ou credenciais.</span>
+        </div>
+      )}
 
       <div className="stats-grid" style={{ 
         display: 'grid', 
@@ -55,7 +105,9 @@ const Dashboard: React.FC = () => {
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
               <div>
                 <p style={{ margin: 0, fontSize: '0.875rem', fontWeight: 600, color: 'var(--text-muted)' }}>{card.title}</p>
-                <h2 style={{ fontSize: '2rem', marginTop: '0.5rem', marginBottom: 0, fontWeight: 800 }}>{card.value}</h2>
+                <h2 style={{ fontSize: '2rem', marginTop: '0.5rem', marginBottom: 0, fontWeight: 800 }}>
+                  {loading && stats.totalProducts === 0 ? '...' : card.value}
+                </h2>
               </div>
               <div style={{ 
                 padding: '0.75rem', 
@@ -113,8 +165,5 @@ const Dashboard: React.FC = () => {
     </div>
   );
 };
-
-// Adicionando ícone que faltou no import
-import { BarChart3 } from 'lucide-react';
 
 export default Dashboard;
