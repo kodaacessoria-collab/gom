@@ -352,21 +352,6 @@ label {
   letter-spacing: 0.05em;
 }
 
-.mobile-menu-btn {
-  display: none;
-  background: none;
-  border: none;
-  color: var(--text);
-  cursor: pointer;
-  margin-bottom: 1rem;
-}
-
-@media (max-width: 1023px) {
-  .mobile-menu-btn {
-    display: none !important;
-  }
-}
-
 /* Reports */
 .reports-container {
   max-width: 1200px;

@@ -8,7 +8,6 @@ import Reports from './components/Reports';
 import Logs from './components/Logs';
 import Users from './components/Users';
 import Auth from './components/Auth';
-import { Menu } from 'lucide-react';
 import { supabase } from './lib/supabase';
 import './index.css';
 
@@ -87,15 +86,6 @@ function App() {
       />
       
       <main className="main-content">
-        <button 
-          id="mobile-menu-btn"
-          className="mobile-menu-btn" 
-          onClick={() => setIsSidebarOpen(true)}
-          aria-expanded={isSidebarOpen}
-          aria-controls="sidebar-menu"
-        >
-          <Menu size={24} />
-        </button>
         {renderContent()}
       </main>
     </div>
