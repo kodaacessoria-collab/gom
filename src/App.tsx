@@ -31,15 +31,19 @@ function App() {
     }
 
     // 2. Se não houver bypass, verifica a sessão real do Supabase
-    const { data: { session: currentSession } } = await supabase.auth.getSession();
-    setSession(currentSession);
-    
-    if (currentSession?.user) {
-      const { data } = await supabase.from('profiles').select('role').eq('id', currentSession.user.id).single();
-      if (data) setUserRole(mapDbRoleToRole(data.role));
+    try {
+      const { data: { session: currentSession } } = await supabase.auth.getSession();
+      setSession(currentSession);
+      
+      if (currentSession?.user) {
+        const { data } = await supabase.from('profiles').select('role').eq('id', currentSession.user.id).single();
+        if (data) setUserRole(mapDbRoleToRole(data.role));
+      }
+    } catch (err) {
+      console.error('Erro ao verificar sessão do Supabase:', err);
+    } finally {
+      setLoading(false);
     }
-
-    setLoading(false);
   };
 
   const fixCategoryTypos = async () => {
@@ -56,20 +60,28 @@ function App() {
     fixCategoryTypos();
     checkSession();
 
-    // Ouvir mudanças de estado (login/logout oficial)
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (_event, newSession) => {
-      if (localStorage.getItem('gom_admin_bypass') !== 'true') {
-        setSession(newSession);
-        if (newSession?.user) {
-          const { data } = await supabase.from('profiles').select('role').eq('id', newSession.user.id).single();
-          if (data) setUserRole(mapDbRoleToRole(data.role));
-        } else {
-          setUserRole(null);
+    let subscription: any = null;
+    try {
+      // Ouvir mudanças de estado (login/logout oficial)
+      const { data } = supabase.auth.onAuthStateChange(async (_event, newSession) => {
+        if (localStorage.getItem('gom_admin_bypass') !== 'true') {
+          setSession(newSession);
+          if (newSession?.user) {
+            const { data: profileData } = await supabase.from('profiles').select('role').eq('id', newSession.user.id).single();
+            if (profileData) setUserRole(mapDbRoleToRole(profileData.role));
+          } else {
+            setUserRole(null);
+          }
         }
-      }
-    });
+      });
+      subscription = data?.subscription;
+    } catch (err) {
+      console.error('Erro ao assinar mudanças de autenticação:', err);
+    }
 
-    return () => subscription.unsubscribe();
+    return () => {
+      if (subscription) subscription.unsubscribe();
+    };
   }, []);
 
   useEffect(() => {
