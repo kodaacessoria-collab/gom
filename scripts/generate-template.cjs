@@ -6,7 +6,7 @@ const fs = require('fs');
 const productData = [
   {
     PRODUTO: 'Arroz 5kg',
-    CATEGORIA: 'ESTOCAVEIS',
+    CATEGORIA: 'Estocáveis',
     UND: 'UN',
     MARCA: 'Tio João',
     QTD: 10,
@@ -14,7 +14,7 @@ const productData = [
   },
   {
     PRODUTO: 'Feijão 1kg',
-    CATEGORIA: 'ESTOCAVEIS',
+    CATEGORIA: 'Estocáveis',
     UND: 'UN',
     MARCA: 'Camil',
     QTD: 20,
@@ -27,7 +27,7 @@ const slipData = [
   {
     PRODUTO: 'Arroz 5kg',
     DATA: new Date().toISOString().split('T')[0],
-    CATEGORIA: 'ESTOCAVEIS',
+    CATEGORIA: 'Estocáveis',
     UND: 'UN',
     QTD: 5,
     DESTINO: 'Cozinha Central',
@@ -36,7 +36,7 @@ const slipData = [
   {
     PRODUTO: 'Feijão 1kg',
     DATA: new Date().toISOString().split('T')[0],
-    CATEGORIA: 'ESTOCAVEIS',
+    CATEGORIA: 'Estocáveis',
     UND: 'UN',
     QTD: 10,
     DESTINO: 'Doação',

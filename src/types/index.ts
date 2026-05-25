@@ -1,4 +1,26 @@
 export type Category = 'Estocáveis' | 'DIETA' | 'LIMPEZA' | 'PAPELARIA';
+export type Deposit = 'Depósito-Grupo OM' | 'Depósito-RED';
+export type Role = 'admin' | 'om' | 'red';
+
+export const mapDbRoleToRole = (dbRole: string): Role => {
+  if (dbRole === 'manager') return 'om';
+  if (dbRole === 'user') return 'red';
+  return dbRole as Role;
+};
+
+export const mapRoleToDbRole = (role: Role): string => {
+  if (role === 'om') return 'manager';
+  if (role === 'red') return 'user';
+  return role;
+};
+
+export interface Profile {
+  id: string;
+  email: string;
+  full_name: string;
+  role: Role;
+  created_at: string;
+}
 
 export interface Product {
   id: string;
@@ -11,6 +33,7 @@ export interface Product {
   expiry_date?: string;
   quantity: number;
   min_stock: number;
+  deposit?: Deposit;
   created_at: string;
 }
 

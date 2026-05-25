@@ -2,6 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { Users as UsersIcon, UserPlus, Shield, Mail, Trash2, X, Lock } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { createClient } from '@supabase/supabase-js';
+import type { Role } from '../types';
+import { mapDbRoleToRole, mapRoleToDbRole } from '../types';
 
 // Separate client for user creation to avoid session conflicts
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
@@ -14,7 +16,7 @@ interface Profile {
   id: string;
   email: string;
   full_name: string;
-  role: 'admin' | 'manager' | 'user';
+  role: Role;
   created_at: string;
 }
 
@@ -26,7 +28,7 @@ const Users: React.FC = () => {
     email: '',
     password: '',
     full_name: '',
-    role: 'user' as any
+    role: 'om' as Role
   });
 
   useEffect(() => {
@@ -36,7 +38,13 @@ const Users: React.FC = () => {
   const fetchProfiles = async () => {
     setLoading(true);
     const { data } = await supabase.from('profiles').select('*').order('created_at', { ascending: false });
-    if (data) setProfiles(data);
+    if (data) {
+      const mapped = data.map((p: any) => ({
+        ...p,
+        role: mapDbRoleToRole(p.role)
+      }));
+      setProfiles(mapped);
+    }
     setLoading(false);
   };
 
@@ -54,29 +62,38 @@ const Users: React.FC = () => {
       if (authError) throw authError;
 
       if (authData.user) {
+        // Verifica se o usuário retornou sem identidades (indicando que o e-mail já existe)
+        if (authData.user.identities && authData.user.identities.length === 0) {
+          throw new Error('Este e-mail já está cadastrado no sistema. Se o e-mail ainda não foi confirmado, verifique a caixa de entrada para ativar a conta.');
+        }
+
         const { error: profError } = await supabase.from('profiles').upsert([{
           id: authData.user.id,
           email: formData.email,
           full_name: formData.full_name,
-          role: formData.role
+          role: mapRoleToDbRole(formData.role)
         }]);
 
         if (profError) throw profError;
         
         alert('Usuário cadastrado com sucesso! Ele precisará confirmar o e-mail para acessar.');
         setIsModalOpen(false);
-        setFormData({ email: '', password: '', full_name: '', role: 'user' });
+        setFormData({ email: '', password: '', full_name: '', role: 'om' });
         fetchProfiles();
       }
     } catch (err: any) {
-      alert('Erro ao cadastrar usuário: ' + err.message);
+      let errorMessage = err.message;
+      if (errorMessage.includes('rate limit')) {
+        errorMessage = 'Limite de envios de e-mail excedido por segurança. Tente novamente em alguns minutos ou configure um servidor SMTP customizado no seu painel do Supabase.';
+      }
+      alert('Erro ao cadastrar usuário: ' + errorMessage);
     } finally {
       setLoading(false);
     }
   };
 
-  const updateRole = async (id: string, newRole: string) => {
-    const { error } = await supabase.from('profiles').update({ role: newRole }).eq('id', id);
+  const updateRole = async (id: string, newRole: Role) => {
+    const { error } = await supabase.from('profiles').update({ role: mapRoleToDbRole(newRole) }).eq('id', id);
     if (error) alert(error.message);
     else fetchProfiles();
   };
@@ -140,13 +157,13 @@ const Users: React.FC = () => {
                 <td>
                   <select 
                     className="input-field" 
-                    style={{ padding: '0.2rem', height: 'auto', width: '120px' }}
+                    style={{ padding: '0.2rem', height: 'auto', width: '200px' }}
                     value={p.role}
                     onChange={(e) => updateRole(p.id, e.target.value)}
                   >
-                    <option value="admin">ADMIN</option>
-                    <option value="manager">GERENTE</option>
-                    <option value="user">OPERADOR</option>
+                    <option value="admin">ADM (Acesso Total)</option>
+                    <option value="om">Grupo OM (Estoque/Relatórios)</option>
+                    <option value="red">RED (Relatórios RED)</option>
                   </select>
                 </td>
                 <td style={{ color: 'var(--text-muted)', fontSize: '0.9rem' }}>
@@ -205,9 +222,9 @@ const Users: React.FC = () => {
               <div>
                 <label>Nível de Acesso</label>
                 <select className="input-field" value={formData.role} onChange={e => setFormData({...formData, role: e.target.value as any})}>
-                  <option value="admin">ADMIN (Acesso Total)</option>
-                  <option value="manager">GERENTE (Estoque e Compras)</option>
-                  <option value="user">OPERADOR (Apenas Romaneios)</option>
+                  <option value="admin">ADM (Acesso Total)</option>
+                  <option value="om">Grupo OM (Estoque e Relatórios)</option>
+                  <option value="red">RED (Relatórios RED)</option>
                 </select>
               </div>
 

@@ -2,13 +2,13 @@ import React, { useState, useEffect } from 'react';
 import { Plus, Upload, Search, X, Trash2, Edit3, Save, Layers } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { saveLog } from '../lib/logger';
-import type { Product, Category } from '../types';
-import * as XLSX from 'xlsx';
+import type { Product, Category, Deposit } from '../types';
 
 const Inventory: React.FC = () => {
   const [products, setProducts] = useState<Product[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
+  const [selectedDeposit, setSelectedDeposit] = useState<Deposit | 'SELECIONE'>('SELECIONE');
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isBulkOpen, setIsBulkOpen] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
@@ -21,6 +21,7 @@ const Inventory: React.FC = () => {
     batch: '',
     quantity: 0,
     min_stock: 0,
+    deposit: 'Depósito-Grupo OM',
   });
 
   useEffect(() => {
@@ -52,102 +53,7 @@ const Inventory: React.FC = () => {
     }
   };
 
-  const clearInventory = async () => {
-    if (!confirm('ATENÇÃO: Isso apagará TODOS os produtos e romaneios do sistema. Deseja continuar?')) return;
-    const { error } = await supabase.from('products').delete().neq('id', '00000000-0000-0000-0000-000000000000');
-    if (error) alert(error.message);
-    else {
-      saveLog('LIMPAR_TUDO', 'ESTOQUE', 'Banco de dados de produtos zerado');
-      fetchProducts();
-    }
-  };
 
-  const handleImport = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-
-    const reader = new FileReader();
-    reader.onload = async (evt) => {
-      const bstr = evt.target?.result;
-      const wb = XLSX.read(bstr, { type: 'binary' });
-      const wsname = wb.SheetNames[0];
-      const ws = wb.Sheets[wsname];
-      const data = XLSX.utils.sheet_to_json(ws);
-
-      const parseDate = (val: any) => {
-        if (!val) return null;
-        if (typeof val === 'number') {
-          const date = new Date(Math.round((val - 25569) * 86400 * 1000));
-          return date.toISOString().split('T')[0];
-        }
-        return val.toString();
-      };
-
-      const parseNumber = (val: any) => {
-        if (val === null || val === undefined || val === '') return 0;
-        if (typeof val === 'number') return val;
-        const cleaned = val.toString().replace(/\./g, '').replace(',', '.');
-        return parseFloat(cleaned) || 0;
-      };
-
-      // Aggregate products by Name + Brand + Unit
-      const aggregated: Record<string, any> = {};
-
-      data.forEach((item: any) => {
-        const keys = Object.keys(item);
-        const findValue = (possibleNames: string[]) => {
-          const key = keys.find(k => possibleNames.includes(k.toUpperCase().trim()));
-          return key ? item[key] : null;
-        };
-
-        const name = findValue(['PRODUTO', 'NOME', 'PRODUCT', 'ITEM']);
-        if (!name) return;
-
-        const pName = name.toString().trim();
-        const pBrand = findValue(['MARCA', 'BRAND', 'FABRICANTE']) || '';
-        const pUnit = findValue(['UND', 'UNIDADE', 'UNIT', 'MEDIDA']) || 'UN';
-        const key = `${pName}|${pBrand}|${pUnit}`.toUpperCase();
-
-        const qty = parseNumber(findValue(['QTD', 'QUANTIDADE', 'STOCK', 'ESTOQUE']));
-
-        const rawCat = findValue(['CATEGORIA', 'CATEGORY', 'TIPO']) || 'Estocáveis';
-        const pCategory = rawCat.toString().trim() === 'Estabeláveis' ? 'Estocáveis' : rawCat;
-
-        if (aggregated[key]) {
-          aggregated[key].quantity += qty;
-        } else {
-          aggregated[key] = {
-            name: pName,
-            brand: pBrand,
-            unit: pUnit,
-            category: pCategory,
-            batch: findValue(['LOTE', 'BATCH'])?.toString() || '',
-            expiry_date: parseDate(findValue(['VENCIMENTO', 'EXPIRY', 'EXPIRY_DATE', 'VALIDADE'])),
-            quantity: qty,
-            min_stock: parseNumber(findValue(['MINIMO', 'MIN', 'ESTOQUE MINIMO', 'MIN_STOCK'])) || 10,
-          };
-        }
-      });
-
-      const productsToInsert = Object.values(aggregated);
-
-      if (productsToInsert.length === 0) {
-        alert('Nenhum produto válido encontrado no arquivo.');
-        return;
-      }
-
-      // To handle existing products, we'll try to match and update or just insert
-      // For now, if "Limpar Tudo" wasn't used, this will create duplicates. 
-      // But it SOLVES the "splitting" issue within the Excel itself.
-      const { error } = await supabase.from('products').insert(productsToInsert);
-      if (error) alert('Erro ao importar: ' + error.message);
-      else {
-        saveLog('IMPORTAR_XLSX', 'ESTOQUE', `Importação de ${productsToInsert.length} itens via Excel`);
-        fetchProducts();
-      }
-    };
-    reader.readAsBinaryString(file);
-  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -161,7 +67,8 @@ const Inventory: React.FC = () => {
       batch: formData.batch,
       expiry_date: formData.expiry_date,
       quantity: formData.quantity,
-      min_stock: formData.min_stock
+      min_stock: formData.min_stock,
+      deposit: formData.deposit
     };
     
     const id = formData.id;
@@ -218,16 +125,18 @@ const Inventory: React.FC = () => {
     }
   };
 
-  const filteredProducts = products.filter(p => 
-    p.name.toLowerCase().includes(search.toLowerCase()) ||
-    p.category.toLowerCase().includes(search.toLowerCase())
-  );
+  const filteredProducts = products.filter(p => {
+    if (selectedDeposit === 'SELECIONE') return false;
+    const matchSearch = p.name.toLowerCase().includes(search.toLowerCase()) || p.category.toLowerCase().includes(search.toLowerCase());
+    const matchDeposit = p.deposit === selectedDeposit;
+    return matchSearch && matchDeposit;
+  });
 
   return (
     <div>
       <div className="view-header">
         <div className="view-title">
-          <h1>Controle de Estoque</h1>
+          <h1>ESTOQUE</h1>
           <p>Gerencie seus produtos, marcas e quantidades.</p>
         </div>
         <div style={{ display: 'flex', gap: '1rem' }}>
@@ -235,16 +144,7 @@ const Inventory: React.FC = () => {
             <Layers size={18} style={{ marginRight: '0.5rem' }} />
             Lançar em Massa
           </button>
-          <button className="button" style={{ backgroundColor: '#ef4444', border: 'none' }} onClick={clearInventory}>
-            <Trash2 size={18} style={{ marginRight: '0.5rem' }} />
-            Limpar Tudo
-          </button>
-          <label className="button" style={{ cursor: 'pointer', backgroundColor: 'var(--card-bg)', border: '1px solid var(--border)' }}>
-            <Upload size={18} style={{ marginRight: '0.5rem' }} />
-            Importar XLSX
-            <input type="file" hidden onChange={handleImport} accept=".xlsx, .xls" />
-          </label>
-          <button className="button" onClick={() => { setFormData({ category: 'Estocáveis', unit: 'UN', quantity: 0, min_stock: 10 }); setIsEditing(false); setIsModalOpen(true); }}>
+          <button className="button" onClick={() => { setFormData({ category: 'Estocáveis', unit: 'UN', quantity: 0, min_stock: 10, deposit: 'Depósito-Grupo OM' }); setIsEditing(false); setIsModalOpen(true); }}>
             <Plus size={18} style={{ marginRight: '0.5rem' }} />
             Novo Produto
           </button>
@@ -262,6 +162,18 @@ const Inventory: React.FC = () => {
             value={search}
             onChange={(e) => setSearch(e.target.value)}
           />
+        </div>
+        <div style={{ width: '250px' }}>
+          <select 
+            className="input-field" 
+            style={{ height: '44px' }}
+            value={selectedDeposit}
+            onChange={(e) => setSelectedDeposit(e.target.value as Deposit | 'SELECIONE')}
+          >
+            <option value="SELECIONE">Selecione um Depósito...</option>
+            <option value="Depósito-Grupo OM">Depósito-Grupo OM</option>
+            <option value="Depósito-RED">Depósito-RED</option>
+          </select>
         </div>
       </div>
 
@@ -281,7 +193,9 @@ const Inventory: React.FC = () => {
             </tr>
           </thead>
           <tbody>
-            {loading ? (
+            {selectedDeposit === 'SELECIONE' ? (
+              <tr><td colSpan={9} style={{ textAlign: 'center', padding: '2rem' }}>Selecione um depósito para visualizar os produtos.</td></tr>
+            ) : loading ? (
               <tr><td colSpan={9} style={{ textAlign: 'center', padding: '2rem' }}>Carregando...</td></tr>
             ) : filteredProducts.map((p) => (
               <tr key={p.id}>
@@ -316,8 +230,8 @@ const Inventory: React.FC = () => {
       </div>
 
       {isModalOpen && (
-        <div className="sidebar-overlay" style={{ alignItems: 'flex-start' }}>
-          <div className="card" style={{ width: '100%', maxWidth: '600px', position: 'relative' }}>
+        <div className="menu-overlay" style={{ display: 'flex', justifyContent: 'center', paddingTop: '10vh', overflowY: 'auto' }}>
+          <div className="card" style={{ width: '100%', maxWidth: '600px', position: 'relative', margin: '0 auto', height: 'fit-content' }}>
             <div className="view-header">
               <h2>{isEditing ? 'Editar Produto' : 'Novo Produto'}</h2>
               <button onClick={() => setIsModalOpen(false)} style={{ background: 'none', border: 'none', color: 'white', cursor: 'pointer' }}><X size={24} /></button>
@@ -356,6 +270,13 @@ const Inventory: React.FC = () => {
                 <label>Estoque Mínimo</label>
                 <input type="number" className="input-field" value={formData.min_stock} onChange={e => setFormData({...formData, min_stock: Number(e.target.value)})} />
               </div>
+              <div>
+                <label>Depósito</label>
+                <select className="input-field" value={formData.deposit || 'Depósito-Grupo OM'} onChange={e => setFormData({...formData, deposit: e.target.value as Deposit})}>
+                  <option value="Depósito-Grupo OM">Depósito-Grupo OM</option>
+                  <option value="Depósito-RED">Depósito-RED</option>
+                </select>
+              </div>
               <div style={{ gridColumn: 'span 2', marginTop: '1rem' }}>
                 <button type="submit" className="button">{isEditing ? 'Salvar Alterações' : 'Salvar Produto'}</button>
               </div>
@@ -365,7 +286,7 @@ const Inventory: React.FC = () => {
       )}
 
       {isBulkOpen && (
-        <div className="sidebar-overlay" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+        <div className="menu-overlay" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
           <div className="card" style={{ width: '100%', maxWidth: '800px', maxHeight: '90vh', overflowY: 'auto' }}>
             <div className="view-header">
               <div>

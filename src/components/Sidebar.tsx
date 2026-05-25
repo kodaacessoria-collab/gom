@@ -1,6 +1,7 @@
 import React, { useEffect } from 'react';
 import { LayoutDashboard, Package, FileText, ShoppingCart, BarChart3, X, History, Users, LogOut } from 'lucide-react';
 import { supabase } from '../lib/supabase';
+import type { Role } from '../types';
 
 interface SidebarProps {
   activeTab: string;
@@ -8,10 +9,11 @@ interface SidebarProps {
   isOpen: boolean;
   toggle: () => void;
   userEmail?: string;
+  userRole?: Role | null;
 }
 
-const Sidebar: React.FC<SidebarProps> = ({ activeTab, setActiveTab, isOpen, toggle, userEmail }) => {
-  const menuItems = [
+const Sidebar: React.FC<SidebarProps> = ({ activeTab, setActiveTab, isOpen, toggle, userEmail, userRole }) => {
+  const allMenuItems = [
     { id: 'dashboard', label: 'Painel', icon: LayoutDashboard },
     { id: 'inventory', label: 'Estoque', icon: Package },
     { id: 'slips', label: 'Romaneios', icon: FileText },
@@ -20,6 +22,15 @@ const Sidebar: React.FC<SidebarProps> = ({ activeTab, setActiveTab, isOpen, togg
     { id: 'logs', label: 'Logs', icon: History },
     { id: 'users', label: 'Usuários', icon: Users },
   ];
+
+  const getMenuItems = () => {
+    if (!userRole || userRole === 'admin') return allMenuItems;
+    if (userRole === 'om') return allMenuItems.filter(i => ['inventory', 'reports'].includes(i.id));
+    if (userRole === 'red') return allMenuItems.filter(i => ['reports'].includes(i.id));
+    return [];
+  };
+
+  const menuItems = getMenuItems();
 
   const handleLogout = async () => {
     localStorage.removeItem('gom_admin_bypass');

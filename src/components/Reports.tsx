@@ -1,15 +1,27 @@
 import React, { useState, useEffect } from 'react';
 import { Filter, Calendar, Package, AlertTriangle, ChevronRight } from 'lucide-react';
 import { supabase } from '../lib/supabase';
+import type { Deposit, Role } from '../types';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 
-const Reports: React.FC = () => {
+interface ReportsProps {
+  userRole?: Role | null;
+}
+
+const Reports: React.FC<ReportsProps> = ({ userRole }) => {
   const [dateStart, setDateStart] = useState('');
   const [dateEnd, setDateEnd] = useState('');
   const [selectedCategory, setSelectedCategory] = useState('TODAS');
+  const [selectedDeposit, setSelectedDeposit] = useState<Deposit | 'TODOS'>('TODOS');
   const [categories, setCategories] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if (userRole === 'red') {
+      setSelectedDeposit('Depósito-RED');
+    }
+  }, [userRole]);
 
   useEffect(() => {
     fetchCategories();
@@ -34,6 +46,11 @@ const Reports: React.FC = () => {
     try {
       let queryProducts = supabase.from('products').select('*').order('name');
       
+      const depositToQuery = userRole === 'red' ? 'Depósito-RED' : selectedDeposit;
+      if (depositToQuery !== 'TODOS') {
+        queryProducts = queryProducts.eq('deposit', depositToQuery);
+      }
+
       if (mode === 'estoque_categoria') {
         if (selectedCategory === 'TODAS') {
           alert('Por favor, selecione uma categoria específica.');
@@ -122,7 +139,7 @@ const Reports: React.FC = () => {
         doc.setFontSize(11);
         doc.text(`Período: ${dateStart.split('-').reverse().join('/')} até ${dateEnd.split('-').reverse().join('/')}`, 14, startY);
 
-        let querySlips = supabase.from('slips').select('*, products(name)')
+        let querySlips = supabase.from('slips').select('*, products(name, deposit)')
           .gte('date', dateStart)
           .lte('date', dateEnd);
         
@@ -130,11 +147,17 @@ const Reports: React.FC = () => {
           querySlips = querySlips.eq('category', selectedCategory);
         }
         
-        const { data: slips, error: sError } = await querySlips;
+        const { data: rawSlips, error: sError } = await querySlips;
         if (sError) throw sError;
 
-        if (!slips || slips.length === 0) {
-          alert('Nenhuma movimentação encontrada para este período.');
+        let slips = rawSlips || [];
+        const depositToFilter = userRole === 'red' ? 'Depósito-RED' : selectedDeposit;
+        if (depositToFilter !== 'TODOS') {
+          slips = slips.filter((s: any) => s.products?.deposit === depositToFilter);
+        }
+
+        if (slips.length === 0) {
+          alert('Nenhuma movimentação encontrada para este período com os filtros selecionados.');
           setLoading(false);
           return;
         }
@@ -197,10 +220,23 @@ const Reports: React.FC = () => {
 
   return (
     <div className="reports-container">
-      <div className="view-header">
+      <div className="view-header" style={{ flexWrap: 'wrap' }}>
         <div className="view-title">
           <h1>Central de Relatórios</h1>
           <p>Selecione um tipo de relatório para visualizar o estoque e movimentações.</p>
+        </div>
+        <div style={{ width: '250px', marginLeft: 'auto' }}>
+          <label style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: '0.2rem', display: 'block' }}>Depósito Base:</label>
+          <select 
+            className="input-field" 
+            value={selectedDeposit}
+            onChange={(e) => setSelectedDeposit(e.target.value as Deposit | 'TODOS')}
+            disabled={userRole === 'red'}
+          >
+            {userRole !== 'red' && <option value="TODOS">Todos os Depósitos</option>}
+            {userRole !== 'red' && <option value="Depósito-Grupo OM">Depósito-Grupo OM</option>}
+            <option value="Depósito-RED">Depósito-RED</option>
+          </select>
         </div>
       </div>
 

@@ -13,6 +13,7 @@ CREATE TABLE IF NOT EXISTS products (
   expiry_date DATE,
   quantity DECIMAL DEFAULT 0,
   min_stock DECIMAL DEFAULT 10,
+  deposit TEXT DEFAULT 'Depósito-Grupo OM',
   created_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
