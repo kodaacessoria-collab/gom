@@ -159,7 +159,7 @@ const Users: React.FC = () => {
                     className="input-field" 
                     style={{ padding: '0.2rem', height: 'auto', width: '200px' }}
                     value={p.role}
-                    onChange={(e) => updateRole(p.id, e.target.value)}
+                    onChange={(e) => updateRole(p.id, e.target.value as Role)}
                   >
                     <option value="admin">ADM (Acesso Total)</option>
                     <option value="om">Grupo OM (Estoque/Relatórios)</option>

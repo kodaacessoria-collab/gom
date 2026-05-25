@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Plus, Upload, Search, X, Trash2, Edit3, Save, Layers } from 'lucide-react';
+import { Plus, Search, X, Trash2, Edit3, Save, Layers } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { saveLog } from '../lib/logger';
 import type { Product, Category, Deposit } from '../types';
