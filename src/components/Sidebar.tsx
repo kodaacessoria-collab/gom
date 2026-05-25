@@ -1,5 +1,5 @@
 import React, { useEffect } from 'react';
-import { LayoutDashboard, Package, FileText, ShoppingCart, BarChart3, X, History, Users, LogOut } from 'lucide-react';
+import { LayoutDashboard, Package, FileText, ShoppingCart, BarChart3, X, History, Users, LogOut, Lock } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import type { Role } from '../types';
 
@@ -24,10 +24,16 @@ const Sidebar: React.FC<SidebarProps> = ({ activeTab, setActiveTab, isOpen, togg
   ];
 
   const getMenuItems = () => {
-    if (!userRole || userRole === 'admin') return allMenuItems;
-    if (userRole === 'om') return allMenuItems.filter(i => ['inventory', 'reports'].includes(i.id));
-    if (userRole === 'red') return allMenuItems.filter(i => ['reports'].includes(i.id));
-    return [];
+    let items = [...allMenuItems];
+    if (userRole === 'om') {
+      items = allMenuItems.filter(i => ['inventory', 'reports'].includes(i.id));
+    } else if (userRole === 'red') {
+      items = allMenuItems.filter(i => ['reports'].includes(i.id));
+    }
+    
+    // Todos os usuários têm acesso à aba "Minha Conta" para alterar senha
+    items.push({ id: 'settings', label: 'Minha Conta', icon: Lock });
+    return items;
   };
 
   const menuItems = getMenuItems();

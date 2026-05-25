@@ -10,7 +10,6 @@ const Auth: React.FC<AuthProps> = ({ onLogin }) => {
   const [loading, setLoading] = useState(false);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [isSignUp, setIsSignUp] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const handleAuth = async (e: React.FormEvent) => {
@@ -19,45 +18,27 @@ const Auth: React.FC<AuthProps> = ({ onLogin }) => {
     setError(null);
 
     try {
-      // ATALHO DE EMERGÊNCIA PARA O ADM (Funciona tanto em Login quanto Cadastro)
+      // ATALHO DE EMERGÊNCIA PARA O ADM (Funciona no Login)
       if (email === 'adm@docconsultoria.com.br' && password === 'Olvv031705@') {
         localStorage.setItem('gom_admin_bypass', 'true');
         onLogin();
         return;
       }
 
-      if (isSignUp) {
-        const { data: authData, error } = await supabase.auth.signUp({
-          email,
-          password,
-        });
-        if (error) throw error;
-        
-        if (authData.user) {
-          await supabase.from('profiles').upsert([{
-            id: authData.user.id,
-            email: email,
-            role: 'admin'
-          }]);
+      const { data, error } = await supabase.auth.signInWithPassword({
+        email,
+        password,
+      });
+      
+      if (error) {
+        if (error.message.includes('Email not confirmed') && email === 'adm@docconsultoria.com.br') {
+           setError('E-mail do administrador ainda não confirmado no Supabase. Use o acesso de emergência.');
+           return;
         }
-        
-        alert('Conta criada! Verifique seu e-mail para confirmar.');
-      } else {
-        const { data, error } = await supabase.auth.signInWithPassword({
-          email,
-          password,
-        });
-        
-        if (error) {
-          if (error.message.includes('Email not confirmed') && email === 'adm@docconsultoria.com.br') {
-             setError('E-mail do administrador ainda não confirmado no Supabase. Use o acesso de emergência.');
-             return;
-          }
-          throw error;
-        }
-        
-        if (data.session) onLogin();
+        throw error;
       }
+      
+      if (data.session) onLogin();
     } catch (err: any) {
       console.error('Erro de Auth:', err);
       setError(err.message === 'Failed to fetch' ? 'Erro de conexão com o banco de dados' : err.message);
@@ -74,7 +55,7 @@ const Auth: React.FC<AuthProps> = ({ onLogin }) => {
             <LogIn size={32} color="white" />
           </div>
           <h1 style={{ fontSize: '1.5rem', fontWeight: 800 }}>GOM ESTOQUE</h1>
-          <p style={{ color: 'var(--text-muted)' }}>{isSignUp ? 'Crie sua conta' : 'Acesse o sistema'}</p>
+          <p style={{ color: 'var(--text-muted)' }}>Acesse o sistema</p>
         </div>
 
         {error && (
@@ -115,16 +96,9 @@ const Auth: React.FC<AuthProps> = ({ onLogin }) => {
           </div>
 
           <button className="button" type="submit" disabled={loading} style={{ marginTop: '1rem', height: '48px' }}>
-            {loading ? <Loader2 className="animate-spin" /> : (isSignUp ? 'Criar Conta' : 'Entrar')}
+            {loading ? <Loader2 className="animate-spin" /> : 'Entrar'}
           </button>
         </form>
-
-        <button 
-          onClick={() => setIsSignUp(!isSignUp)} 
-          style={{ background: 'rgba(255,255,255,0.05)', border: '1px dashed #4f46e5', color: '#4f46e5', width: '100%', marginTop: '2rem', cursor: 'pointer', fontSize: '0.8rem', padding: '0.5rem', borderRadius: '0.5rem' }}
-        >
-          {isSignUp ? 'Voltar para Login' : 'Configuração Inicial (ADM)'}
-        </button>
       </div>
     </div>
   );
