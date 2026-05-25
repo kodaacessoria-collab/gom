@@ -9,6 +9,7 @@ const Inventory: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [selectedDeposit, setSelectedDeposit] = useState<Deposit | 'SELECIONE'>('SELECIONE');
+  const [selectedCategory, setSelectedCategory] = useState<Category | 'TODAS'>('TODAS');
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isBulkOpen, setIsBulkOpen] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
@@ -129,7 +130,8 @@ const Inventory: React.FC = () => {
     if (selectedDeposit === 'SELECIONE') return false;
     const matchSearch = p.name.toLowerCase().includes(search.toLowerCase()) || p.category.toLowerCase().includes(search.toLowerCase());
     const matchDeposit = p.deposit === selectedDeposit;
-    return matchSearch && matchDeposit;
+    const matchCategory = selectedCategory === 'TODAS' || p.category === selectedCategory;
+    return matchSearch && matchDeposit && matchCategory;
   });
 
   return (
@@ -151,19 +153,33 @@ const Inventory: React.FC = () => {
         </div>
       </div>
 
-      <div className="card" style={{ padding: '1rem', marginBottom: '2rem', display: 'flex', gap: '1rem' }}>
-        <div style={{ position: 'relative', flex: 1 }}>
+      <div className="card" style={{ padding: '1rem', marginBottom: '2rem', display: 'flex', gap: '1rem', flexWrap: 'wrap' }}>
+        <div style={{ position: 'relative', flex: 1, minWidth: '250px' }}>
           <Search size={18} style={{ position: 'absolute', left: '1rem', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)' }} />
           <input 
             type="text" 
-            placeholder="Buscar por produto ou categoria..." 
+            placeholder="Buscar por produto..." 
             className="input" 
             style={{ paddingLeft: '3rem', width: '100%', height: '44px', borderRadius: '0.5rem', background: 'rgba(255,255,255,0.05)', border: '1px solid var(--border)', color: 'white' }}
             value={search}
             onChange={(e) => setSearch(e.target.value)}
           />
         </div>
-        <div style={{ width: '250px' }}>
+        <div style={{ width: '200px', minWidth: '150px' }}>
+          <select 
+            className="input-field" 
+            style={{ height: '44px' }}
+            value={selectedCategory}
+            onChange={(e) => setSelectedCategory(e.target.value as Category | 'TODAS')}
+          >
+            <option value="TODAS">Todas as Categorias</option>
+            <option value="Estocáveis">Estocáveis</option>
+            <option value="DIETA">DIETA</option>
+            <option value="LIMPEZA">LIMPEZA</option>
+            <option value="PAPELARIA">PAPELARIA</option>
+          </select>
+        </div>
+        <div style={{ width: '250px', minWidth: '200px' }}>
           <select 
             className="input-field" 
             style={{ height: '44px' }}
