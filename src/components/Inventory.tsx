@@ -334,6 +334,7 @@ const Inventory: React.FC<InventoryProps> = ({ userRole }) => {
                   <tr>
                     <th>Produto</th>
                     <th>Marca</th>
+                    <th>UND</th>
                     <th>Saldo Real</th>
                     <th>Tipo</th>
                     <th>Quantidade</th>
@@ -344,6 +345,7 @@ const Inventory: React.FC<InventoryProps> = ({ userRole }) => {
                     <tr key={p.id}>
                       <td style={{ fontWeight: 600 }}>{p.name}</td>
                       <td>{p.brand || '-'}</td>
+                      <td>{p.unit || '-'}</td>
                       <td style={{ fontWeight: 700 }}>{p.quantity}</td>
                       <td>
                          <select 
