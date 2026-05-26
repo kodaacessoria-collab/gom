@@ -9,7 +9,7 @@ interface SidebarProps {
   toggle: () => void;
   userEmail?: string;
   userRole?: Role | null;
-  handleLogout: () => Promise<void>;
+  handleLogout: () => void;
 }
 
 const Sidebar: React.FC<SidebarProps> = ({ activeTab, setActiveTab, isOpen, toggle, userEmail, userRole, handleLogout }) => {

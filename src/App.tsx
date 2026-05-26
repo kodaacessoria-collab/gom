@@ -22,16 +22,17 @@ function App() {
   const [userRole, setUserRole] = useState<Role | null>(null);
   const [loading, setLoading] = useState(true);
 
-  const handleLogout = async () => {
+  const handleLogout = () => {
     localStorage.removeItem('gom_admin_bypass');
-    try {
-      await supabase.auth.signOut();
-    } catch (err) {
-      console.error('Erro ao fazer logout do Supabase:', err);
-    }
+    // Wipe local state immediately so UI updates instantly
     setSession(null);
     setUserRole(null);
     setIsSidebarOpen(false);
+    
+    // Run Supabase sign out in the background without blocking the UI
+    supabase.auth.signOut().catch((err) => {
+      console.error('Erro ao fazer logout do Supabase:', err);
+    });
   };
 
   const checkSession = async () => {
