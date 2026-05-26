@@ -1,6 +1,5 @@
 import React, { useEffect } from 'react';
 import { LayoutDashboard, Package, FileText, ShoppingCart, BarChart3, X, History, Users, LogOut, Lock } from 'lucide-react';
-import { supabase } from '../lib/supabase';
 import type { Role } from '../types';
 
 interface SidebarProps {
@@ -10,9 +9,10 @@ interface SidebarProps {
   toggle: () => void;
   userEmail?: string;
   userRole?: Role | null;
+  handleLogout: () => Promise<void>;
 }
 
-const Sidebar: React.FC<SidebarProps> = ({ activeTab, setActiveTab, isOpen, toggle, userEmail, userRole }) => {
+const Sidebar: React.FC<SidebarProps> = ({ activeTab, setActiveTab, isOpen, toggle, userEmail, userRole, handleLogout }) => {
   const allMenuItems = [
     { id: 'dashboard', label: 'Painel', icon: LayoutDashboard },
     { id: 'inventory', label: 'Estoque', icon: Package },
@@ -37,11 +37,6 @@ const Sidebar: React.FC<SidebarProps> = ({ activeTab, setActiveTab, isOpen, togg
   };
 
   const menuItems = getMenuItems();
-
-  const handleLogout = async () => {
-    localStorage.removeItem('gom_admin_bypass');
-    await supabase.auth.signOut();
-  };
 
   useEffect(() => {
     if (isOpen) {
@@ -119,29 +114,6 @@ const Sidebar: React.FC<SidebarProps> = ({ activeTab, setActiveTab, isOpen, togg
           </div>
         </nav>
       </aside>
-
-      {/* Bottom Navigation for Mobile */}
-      <nav className="bottom-nav">
-        {menuItems.map((item) => (
-          <button
-            key={`bottom-${item.id}`}
-            className={`bottom-nav-item ${activeTab === item.id ? 'active' : ''}`}
-            onClick={() => setActiveTab(item.id)}
-            aria-current={activeTab === item.id ? 'page' : undefined}
-          >
-            <item.icon size={20} aria-hidden="true" />
-            <span>{item.label}</span>
-          </button>
-        ))}
-        <button
-          className="bottom-nav-item"
-          onClick={handleLogout}
-          style={{ color: '#ef4444' }}
-        >
-          <LogOut size={20} aria-hidden="true" />
-          <span>Sair</span>
-        </button>
-      </nav>
     </>
   );
 };

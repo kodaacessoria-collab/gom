@@ -12,6 +12,7 @@ import Settings from './components/Settings';
 import { supabase } from './lib/supabase';
 import type { Role } from './types';
 import { mapDbRoleToRole } from './types';
+import { Menu, LogOut } from 'lucide-react';
 import './index.css';
 
 function App() {
@@ -20,6 +21,18 @@ function App() {
   const [session, setSession] = useState<any>(null);
   const [userRole, setUserRole] = useState<Role | null>(null);
   const [loading, setLoading] = useState(true);
+
+  const handleLogout = async () => {
+    localStorage.removeItem('gom_admin_bypass');
+    try {
+      await supabase.auth.signOut();
+    } catch (err) {
+      console.error('Erro ao fazer logout do Supabase:', err);
+    }
+    setSession(null);
+    setUserRole(null);
+    setIsSidebarOpen(false);
+  };
 
   const checkSession = async () => {
     // 1. Verifica primeiro o bypass de emergência
@@ -113,7 +126,7 @@ function App() {
     if (!isAllowed) {
       const defaultTab = allowedTabs[currentRole]?.[0] || 'reports';
       switch (defaultTab) {
-        case 'inventory': return <Inventory />;
+        case 'inventory': return <Inventory userRole={userRole} />;
         case 'reports': return <Reports userRole={userRole} />;
         default: return <Dashboard />;
       }
@@ -121,7 +134,7 @@ function App() {
 
     switch (activeTab) {
       case 'dashboard': return <Dashboard />;
-      case 'inventory': return <Inventory />;
+      case 'inventory': return <Inventory userRole={userRole} />;
       case 'slips': return <Slips />;
       case 'purchase-orders': return <PurchaseOrders />;
       case 'reports': return <Reports userRole={userRole} />;
@@ -141,9 +154,29 @@ function App() {
         toggle={() => setIsSidebarOpen(!isSidebarOpen)} 
         userEmail={session?.user?.email}
         userRole={userRole}
+        handleLogout={handleLogout}
       />
       
       <main className="main-content">
+        <header className="mobile-header">
+          <button 
+            id="mobile-menu-btn" 
+            className="mobile-header-btn" 
+            onClick={() => setIsSidebarOpen(true)}
+            aria-label="Abrir menu"
+          >
+            <Menu size={24} />
+          </button>
+          <span className="mobile-header-title">GOM ESTOQUE</span>
+          <button 
+            className="mobile-header-btn logout-btn" 
+            onClick={handleLogout}
+            aria-label="Sair"
+            style={{ color: '#ef4444' }}
+          >
+            <LogOut size={22} />
+          </button>
+        </header>
         {renderContent()}
       </main>
     </div>

@@ -72,7 +72,7 @@ const Auth: React.FC<AuthProps> = ({ onLogin }) => {
               <input 
                 type="email" 
                 required 
-                className="input" 
+                className="input-field" 
                 style={{ paddingLeft: '3rem', width: '100%' }}
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
@@ -87,7 +87,7 @@ const Auth: React.FC<AuthProps> = ({ onLogin }) => {
               <input 
                 type="password" 
                 required 
-                className="input" 
+                className="input-field" 
                 style={{ paddingLeft: '3rem', width: '100%' }}
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}

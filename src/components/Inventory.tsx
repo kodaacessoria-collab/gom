@@ -2,13 +2,27 @@ import React, { useState, useEffect } from 'react';
 import { Plus, Search, X, Trash2, Edit3, Save, Layers } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { saveLog } from '../lib/logger';
-import type { Product, Category, Deposit } from '../types';
+import type { Product, Category, Deposit, Role } from '../types';
 
-const Inventory: React.FC = () => {
+interface InventoryProps {
+  userRole?: Role | null;
+}
+
+const Inventory: React.FC<InventoryProps> = ({ userRole }) => {
   const [products, setProducts] = useState<Product[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
-  const [selectedDeposit, setSelectedDeposit] = useState<Deposit | 'SELECIONE'>('SELECIONE');
+  const [selectedDeposit, setSelectedDeposit] = useState<Deposit | 'SELECIONE'>(
+    userRole === 'red' ? 'Depósito-RED' : 'Depósito-Grupo OM'
+  );
+
+  useEffect(() => {
+    if (userRole === 'red') {
+      setSelectedDeposit('Depósito-RED');
+    } else if (userRole === 'om') {
+      setSelectedDeposit('Depósito-Grupo OM');
+    }
+  }, [userRole]);
   const [selectedCategory, setSelectedCategory] = useState<Category | 'TODAS'>('TODAS');
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isBulkOpen, setIsBulkOpen] = useState(false);
@@ -213,6 +227,8 @@ const Inventory: React.FC = () => {
               <tr><td colSpan={9} style={{ textAlign: 'center', padding: '2rem' }}>Selecione um depósito para visualizar os produtos.</td></tr>
             ) : loading ? (
               <tr><td colSpan={9} style={{ textAlign: 'center', padding: '2rem' }}>Carregando...</td></tr>
+            ) : filteredProducts.length === 0 ? (
+              <tr><td colSpan={9} style={{ textAlign: 'center', padding: '2rem', color: 'var(--text-muted)' }}>Nenhum produto encontrado neste depósito.</td></tr>
             ) : filteredProducts.map((p) => (
               <tr key={p.id}>
                 <td style={{ fontWeight: 600 }}>{p.name}</td>
@@ -316,7 +332,8 @@ const Inventory: React.FC = () => {
               <thead>
                 <tr>
                   <th>Produto</th>
-                  <th>Saldo Atual</th>
+                  <th>Marca</th>
+                  <th>Saldo Real</th>
                   <th>Tipo</th>
                   <th>Quantidade</th>
                 </tr>
@@ -325,9 +342,10 @@ const Inventory: React.FC = () => {
                 {products.map(p => (
                   <tr key={p.id}>
                     <td>{p.name}</td>
+                    <td>{p.brand || '-'}</td>
                     <td>{p.quantity}</td>
                     <td>
-                      <select 
+                       <select 
                         className="input-field" 
                         style={{ padding: '0.2rem', height: 'auto' }}
                         value={bulkData[p.id]?.type || 'ENTRADA'}
