@@ -262,7 +262,7 @@ const Inventory: React.FC<InventoryProps> = ({ userRole }) => {
       </div>
 
       {isModalOpen && (
-        <div className="menu-overlay" style={{ display: 'flex', justifyContent: 'center', paddingTop: '10vh', overflowY: 'auto' }}>
+        <div className="modal-overlay" style={{ display: 'flex', justifyContent: 'center', paddingTop: '10vh', overflowY: 'auto' }}>
           <div className="card" style={{ width: '100%', maxWidth: '600px', position: 'relative', margin: '0 auto', height: 'fit-content' }}>
             <div className="view-header">
               <h2>{isEditing ? 'Editar Produto' : 'Novo Produto'}</h2>
@@ -318,9 +318,9 @@ const Inventory: React.FC<InventoryProps> = ({ userRole }) => {
       )}
 
       {isBulkOpen && (
-        <div className="menu-overlay" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-          <div className="card" style={{ width: '100%', maxWidth: '800px', maxHeight: '90vh', overflowY: 'auto' }}>
-            <div className="view-header">
+        <div className="modal-overlay">
+          <div className="card" style={{ width: '100%', maxWidth: '850px', maxHeight: '90vh', overflowY: 'auto' }}>
+            <div className="view-header" style={{ marginBottom: '1.5rem' }}>
               <div>
                 <h2>Lançamento em Massa</h2>
                 <p style={{ fontSize: '0.9rem', opacity: 0.7 }}>Ajuste o estoque de vários itens simultaneamente.</p>
@@ -328,51 +328,53 @@ const Inventory: React.FC<InventoryProps> = ({ userRole }) => {
               <button onClick={() => setIsBulkOpen(false)} style={{ background: 'none', border: 'none', color: 'white', cursor: 'pointer' }}><X size={24} /></button>
             </div>
             
-            <table className="data-table" style={{ marginTop: '1rem' }}>
-              <thead>
-                <tr>
-                  <th>Produto</th>
-                  <th>Marca</th>
-                  <th>Saldo Real</th>
-                  <th>Tipo</th>
-                  <th>Quantidade</th>
-                </tr>
-              </thead>
-              <tbody>
-                {products.map(p => (
-                  <tr key={p.id}>
-                    <td>{p.name}</td>
-                    <td>{p.brand || '-'}</td>
-                    <td>{p.quantity}</td>
-                    <td>
-                       <select 
-                        className="input-field" 
-                        style={{ padding: '0.2rem', height: 'auto' }}
-                        value={bulkData[p.id]?.type || 'ENTRADA'}
-                        onChange={e => setBulkData({...bulkData, [p.id]: { ...bulkData[p.id], type: e.target.value as any, qty: bulkData[p.id]?.qty || 0 }})}
-                      >
-                        <option value="ENTRADA">ENTRADA (+)</option>
-                        <option value="SAIDA">SAÍDA (-)</option>
-                      </select>
-                    </td>
-                    <td>
-                      <input 
-                        type="number" 
-                        className="input-field" 
-                        style={{ padding: '0.2rem', height: 'auto', width: '80px' }}
-                        placeholder="0"
-                        value={bulkData[p.id]?.qty || ''}
-                        onChange={e => setBulkData({...bulkData, [p.id]: { ...bulkData[p.id], qty: Number(e.target.value), type: bulkData[p.id]?.type || 'ENTRADA' }})}
-                      />
-                    </td>
+            <div style={{ overflowX: 'auto', width: '100%', borderRadius: '0.5rem', border: '1px solid var(--border)' }}>
+              <table className="data-table" style={{ width: '100%', borderCollapse: 'collapse', border: 'none' }}>
+                <thead>
+                  <tr>
+                    <th>Produto</th>
+                    <th>Marca</th>
+                    <th>Saldo Real</th>
+                    <th>Tipo</th>
+                    <th>Quantidade</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {products.map(p => (
+                    <tr key={p.id}>
+                      <td style={{ fontWeight: 600 }}>{p.name}</td>
+                      <td>{p.brand || '-'}</td>
+                      <td style={{ fontWeight: 700 }}>{p.quantity}</td>
+                      <td>
+                         <select 
+                          className="input-field" 
+                          style={{ padding: '0.4rem', height: 'auto', minWidth: '130px' }}
+                          value={bulkData[p.id]?.type || 'ENTRADA'}
+                          onChange={e => setBulkData({...bulkData, [p.id]: { ...bulkData[p.id], type: e.target.value as any, qty: bulkData[p.id]?.qty || 0 }})}
+                        >
+                          <option value="ENTRADA">ENTRADA (+)</option>
+                          <option value="SAIDA">SAÍDA (-)</option>
+                        </select>
+                      </td>
+                      <td>
+                        <input 
+                          type="number" 
+                          className="input-field" 
+                          style={{ padding: '0.4rem', height: 'auto', width: '90px' }}
+                          placeholder="0"
+                          value={bulkData[p.id]?.qty || ''}
+                          onChange={e => setBulkData({...bulkData, [p.id]: { ...bulkData[p.id], qty: Number(e.target.value), type: bulkData[p.id]?.type || 'ENTRADA' }})}
+                        />
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
             
-            <div style={{ marginTop: '2rem', display: 'flex', justifyContent: 'flex-end', gap: '1rem' }}>
-              <button className="button button-outline" onClick={() => setIsBulkOpen(false)}>Cancelar</button>
-              <button className="button" onClick={handleBulkSubmit}>
+            <div style={{ marginTop: '2rem', display: 'flex', justifyContent: 'flex-end', gap: '1rem', flexWrap: 'wrap' }}>
+              <button className="button button-outline" onClick={() => setIsBulkOpen(false)} style={{ flex: '1 1 auto', minWidth: '120px' }}>Cancelar</button>
+              <button className="button" onClick={handleBulkSubmit} style={{ flex: '1 1 auto', minWidth: '220px' }}>
                 <Save size={18} style={{ marginRight: '0.5rem' }} />
                 Confirmar Todos os Lançamentos
               </button>
