@@ -84,7 +84,7 @@ const Reports: React.FC<ReportsProps> = ({ userRole }) => {
       
       doc.setFontSize(10);
       doc.setTextColor(107, 114, 128);
-      doc.text(`Gerado em: ${new Date().toLocaleString('pt-BR')}`, 14, 30);
+      doc.text(`Gerado em: ${new Date().toLocaleString('pt-BR')} | Depósito: ${depositToQuery === 'TODOS' ? 'Todos os Depósitos' : depositToQuery}`, 14, 30);
       
       let startY = 40;
 
@@ -93,6 +93,7 @@ const Reports: React.FC<ReportsProps> = ({ userRole }) => {
           .filter(p => p.quantity > 0) // Only items with stock
           .map(p => [
             p.name,
+            p.deposit || '-',
             p.category,
             p.unit,
             p.brand || '-',
@@ -102,7 +103,7 @@ const Reports: React.FC<ReportsProps> = ({ userRole }) => {
 
         autoTable(doc, {
           startY: startY,
-          head: [['Produto', 'Categoria', 'UND', 'Marca', 'Vencimento', 'Saldo']],
+          head: [['Produto', 'Depósito', 'Categoria', 'UND', 'Marca', 'Vencimento', 'Saldo']],
           body: tableData,
           headStyles: { fillColor: [79, 70, 229] }, // Indigo
           theme: 'grid'
@@ -117,6 +118,7 @@ const Reports: React.FC<ReportsProps> = ({ userRole }) => {
           })
           .map(p => [
             p.name,
+            p.deposit || '-',
             p.category,
             p.batch || '-',
             p.expiry_date ? p.expiry_date.split('-').reverse().join('/') : 'N/D',
@@ -125,7 +127,7 @@ const Reports: React.FC<ReportsProps> = ({ userRole }) => {
 
         autoTable(doc, {
           startY: startY,
-          head: [['Produto', 'Categoria', 'Lote', 'Vencimento', 'Saldo']],
+          head: [['Produto', 'Depósito', 'Categoria', 'Lote', 'Vencimento', 'Saldo']],
           body: tableData,
           headStyles: { fillColor: [153, 27, 27] }, // Dark Red for Expiry
           theme: 'grid'
@@ -168,6 +170,7 @@ const Reports: React.FC<ReportsProps> = ({ userRole }) => {
           const tableData = slips.map(s => [
             s.date.split('-').reverse().join('/'),
             s.products?.name || 'N/A',
+            s.products?.deposit || '-',
             s.quantity,
             s.type,
             s.destination || '-'
@@ -175,7 +178,7 @@ const Reports: React.FC<ReportsProps> = ({ userRole }) => {
 
           autoTable(doc, {
             startY: startY + 10,
-            head: [['Data', 'Produto', 'QTD', 'Tipo', 'Destino/Origem']],
+            head: [['Data', 'Produto', 'Depósito', 'QTD', 'Tipo', 'Destino/Origem']],
             body: tableData,
             headStyles: { fillColor: [5, 150, 105] }, // Green for Movement
             theme: 'grid'
