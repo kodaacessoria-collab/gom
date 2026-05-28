@@ -40,7 +40,7 @@ const Reports: React.FC<ReportsProps> = ({ userRole }) => {
     }
   };
 
-  const generatePDF = async (mode: 'estoque_total' | 'estoque_categoria' | 'validade' | 'movimentacao', type: 'sintetico' | 'analitico' = 'sintetico') => {
+  const generatePDF = async (mode: 'estoque_total' | 'estoque_categoria' | 'validade' | 'movimentacao' | 'estoque_agrupado', type: 'sintetico' | 'analitico' = 'sintetico') => {
     setLoading(true);
     
     try {
@@ -76,6 +76,7 @@ const Reports: React.FC<ReportsProps> = ({ userRole }) => {
       if (mode === 'estoque_categoria') title = `Estoque: ${selectedCategory} (Saldos > 0)`;
       if (mode === 'validade') title = 'Relatório de Vencimentos (Saldos > 0)';
       if (mode === 'movimentacao') title = 'Relatório de Movimentação';
+      if (mode === 'estoque_agrupado') title = 'Relatório de Estoque Consolidado (Por Peso/Medida)';
 
       // Header
       doc.setFontSize(20);
@@ -88,7 +89,96 @@ const Reports: React.FC<ReportsProps> = ({ userRole }) => {
       
       let startY = 40;
 
-      if (mode === 'estoque_total' || mode === 'estoque_categoria') {
+      if (mode === 'estoque_agrupado') {
+        const getProductGroupKey = (p: any) => {
+          let name = p.name.toLowerCase().trim();
+          
+          if (p.brand) {
+            const brandLower = p.brand.toLowerCase().trim();
+            if (brandLower && brandLower !== 'null' && brandLower !== 'diversos' && brandLower !== 'variadas marcas') {
+              const escapedBrand = brandLower.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');
+              const regex = new RegExp(`\\b${escapedBrand}\\b`, 'gi');
+              name = name.replace(regex, '').replace(/\s+/g, ' ').trim();
+            }
+          }
+          
+          name = name.replace(/[\s\-\/\(\)]+$/, '').replace(/^\s*[\s\-\/\(\)]+/, '').replace(/\s+/g, ' ').trim();
+
+          let unit = (p.unit || 'UN').toLowerCase().trim().replace(/\s+/g, '');
+          if (unit === '1kilo' || unit === 'kilo' || unit === '1kg' || unit === 'kg') {
+            unit = '1kg';
+          } else if (unit === '5kg') {
+            unit = '5kg';
+          } else if (unit === '5l' || unit === '5lt' || unit === '5lts') {
+            unit = '5l';
+          } else if (unit === '1l' || unit === '1lt' || unit === '1lts') {
+            unit = '1l';
+          } else if (unit === '500g' || unit === '500gr') {
+            unit = '500g';
+          } else if (unit === '300g' || unit === '300gr') {
+            unit = '300g';
+          } else if (unit === '250g' || unit === '250gr') {
+            unit = '250g';
+          } else if (unit === '200g' || unit === '200gr') {
+            unit = '200g';
+          } else if (unit === '170g' || unit === '170gr') {
+            unit = '170g';
+          }
+
+          return `${name} | ${unit}`;
+        };
+
+        const groups: Record<string, {
+          name: string;
+          unit: string;
+          category: string;
+          deposit: string;
+          totalStock: number;
+          brands: Set<string>;
+        }> = {};
+
+        products.forEach(p => {
+          const key = getProductGroupKey(p);
+          if (!groups[key]) {
+            let cleanName = p.name;
+            if (p.brand) {
+              const regex = new RegExp(`\\b${p.brand}\\b`, 'gi');
+              cleanName = cleanName.replace(regex, '').replace(/[\s\-\/\(\)]+$/, '').replace(/^\s*[\s\-\/\(\)]+/, '').replace(/\s+/g, ' ').trim();
+            }
+            groups[key] = {
+              name: cleanName.toUpperCase(),
+              unit: p.unit,
+              category: p.category,
+              deposit: p.deposit || '-',
+              totalStock: 0,
+              brands: new Set<string>()
+            };
+          }
+          groups[key].totalStock += Number(p.quantity || 0);
+          if (p.brand && p.brand !== 'null') {
+            groups[key].brands.add(p.brand);
+          }
+        });
+
+        const tableData = Object.values(groups)
+          .filter(g => g.totalStock > 0)
+          .map(g => [
+            g.name,
+            g.deposit,
+            g.category,
+            g.unit,
+            g.brands.size > 0 ? Array.from(g.brands).join(', ') : '-',
+            g.totalStock
+          ]);
+
+        autoTable(doc, {
+          startY: startY,
+          head: [['Produto (Agrupado)', 'Depósito', 'Categoria', 'UND', 'Marcas Encontradas', 'Saldo Consolidado']],
+          body: tableData,
+          headStyles: { fillColor: [124, 58, 237] }, // Purple
+          theme: 'grid'
+        });
+      } else if (mode === 'estoque_total' || mode === 'estoque_categoria') {
         const tableData = products
           .filter(p => p.quantity > 0) // Only items with stock
           .map(p => [
@@ -255,6 +345,20 @@ const Reports: React.FC<ReportsProps> = ({ userRole }) => {
             <p className="report-description">Listagem completa de todos os itens com saldo em estoque (acima de zero).</p>
             <button className="button" disabled={loading} onClick={() => generatePDF('estoque_total')}>
               <ChevronRight size={16} /> Relatório Total
+            </button>
+          </div>
+        </div>
+
+        {/* Estoque Agrupado */}
+        <div className="card report-card">
+          <div className="report-icon" style={{ backgroundColor: 'var(--indigo)', color: 'white' }}>
+            <Package size={24} />
+          </div>
+          <div className="report-info">
+            <h3>Estoque Consolidado</h3>
+            <p className="report-description">Agrupa marcas equivalentes de mesma pesagem/medida, somando seus estoques.</p>
+            <button className="button" disabled={loading} onClick={() => generatePDF('estoque_agrupado')}>
+              <ChevronRight size={16} /> Gerar Relatório Agrupado
             </button>
           </div>
         </div>
