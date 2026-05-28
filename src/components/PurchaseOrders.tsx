@@ -11,6 +11,7 @@ const PurchaseOrders: React.FC = () => {
   const [slips, setSlips] = useState<any[]>([]);
   const [orders, setOrders] = useState<any[]>([]);
   const [selectedSlips, setSelectedSlips] = useState<string[]>([]);
+  const [selectedDeposit, setSelectedDeposit] = useState<'Depósito-Grupo OM' | 'Depósito-RED'>('Depósito-Grupo OM');
   const [suggestions, setSuggestions] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -21,7 +22,7 @@ const PurchaseOrders: React.FC = () => {
   const fetchInitialData = async () => {
     setLoading(true);
     const { data: productsData } = await supabase.from('products').select('*');
-    const { data: slipsData } = await supabase.from('slips').select('*, products(name)').order('date', { ascending: false });
+    const { data: slipsData } = await supabase.from('slips').select('*, products(name, deposit)').order('date', { ascending: false });
     const { data: ordersData } = await supabase.from('purchase_orders').select('*').order('created_at', { ascending: false });
     
     if (productsData) setProducts(productsData);
@@ -39,11 +40,13 @@ const PurchaseOrders: React.FC = () => {
     setLoading(false);
   };
 
+  const filteredSlips = slips.filter(s => s.products?.deposit === selectedDeposit);
+
   const toggleSelectAll = () => {
-    if (selectedSlips.length === slips.length) {
+    if (selectedSlips.length === filteredSlips.length) {
       setSelectedSlips([]);
     } else {
-      setSelectedSlips(slips.map(s => s.id));
+      setSelectedSlips(filteredSlips.map(s => s.id));
     }
   };
 
@@ -237,11 +240,22 @@ const PurchaseOrders: React.FC = () => {
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '2rem' }}>
           {/* Selection Area */}
           <div className="card" style={{ padding: '1.5rem' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem', flexWrap: 'wrap', gap: '0.5rem' }}>
               <h3 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                 <ListChecks size={20} /> 1. Selecione os Romaneios
               </h3>
-              <span className="badge badge-blue">{selectedSlips.length} selecionados</span>
+              <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                <select 
+                  className="input-field" 
+                  style={{ width: '180px', padding: '0.2rem 0.5rem', height: '32px', fontSize: '0.85rem' }}
+                  value={selectedDeposit}
+                  onChange={e => { setSelectedDeposit(e.target.value as any); setSelectedSlips([]); }}
+                >
+                  <option value="Depósito-Grupo OM">Depósito-Grupo OM</option>
+                  <option value="Depósito-RED">Depósito-RED</option>
+                </select>
+                <span className="badge badge-blue">{selectedSlips.length} selecionados</span>
+              </div>
             </div>
             
             <div style={{ maxHeight: '500px', overflowY: 'auto' }}>
@@ -251,7 +265,7 @@ const PurchaseOrders: React.FC = () => {
                     <th style={{ width: '40px' }}>
                       <input 
                         type="checkbox" 
-                        checked={selectedSlips.length === slips.length && slips.length > 0} 
+                        checked={selectedSlips.length === filteredSlips.length && filteredSlips.length > 0} 
                         onChange={toggleSelectAll}
                         style={{ width: '18px', height: '18px', cursor: 'pointer' }}
                         title="Selecionar Tudo"
@@ -263,7 +277,7 @@ const PurchaseOrders: React.FC = () => {
                   </tr>
                 </thead>
                 <tbody>
-                  {slips.map((s) => (
+                  {filteredSlips.map((s) => (
                     <tr 
                       key={s.id} 
                       onClick={() => toggleSlip(s.id)}
@@ -282,8 +296,8 @@ const PurchaseOrders: React.FC = () => {
                       <td style={{ fontWeight: 700 }}>{s.quantity}</td>
                     </tr>
                   ))}
-                  {slips.length === 0 && (
-                    <tr><td colSpan={4} style={{ textAlign: 'center', padding: '2rem' }}>Nenhum romaneio pendente.</td></tr>
+                  {filteredSlips.length === 0 && (
+                    <tr><td colSpan={4} style={{ textAlign: 'center', padding: '2rem' }}>Nenhum romaneio pendente neste depósito.</td></tr>
                   )}
                 </tbody>
               </table>

@@ -6,10 +6,12 @@ import type { Product, Slip } from '../types';
 import * as XLSX from 'xlsx';
 
 const Slips: React.FC = () => {
-  const [slips, setSlips] = useState<Slip[]>([]);
+  const [slips, setSlips] = useState<any[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
   const [loading, setLoading] = useState(true);
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [selectedDeposit, setSelectedDeposit] = useState<'TODOS' | 'Depósito-Grupo OM' | 'Depósito-RED'>('TODOS');
+  const [formDeposit, setFormDeposit] = useState<'Depósito-Grupo OM' | 'Depósito-RED'>('Depósito-Grupo OM');
   const [formData, setFormData] = useState<Partial<Slip>>({
     date: new Date().toISOString().split('T')[0],
     category: 'Estocáveis',
@@ -24,7 +26,7 @@ const Slips: React.FC = () => {
 
   const fetchData = async () => {
     setLoading(true);
-    const { data: slipsData } = await supabase.from('slips').select('*, products(name)').order('created_at', { ascending: false });
+    const { data: slipsData } = await supabase.from('slips').select('*, products(name, deposit)').order('created_at', { ascending: false });
     const { data: productsData } = await supabase.from('products').select('*');
     if (slipsData) setSlips(slipsData);
     if (productsData) setProducts(productsData);
@@ -86,7 +88,8 @@ const Slips: React.FC = () => {
             category: 'Estocáveis',
             unit: 'UN',
             quantity: 0,
-            min_stock: 10
+            min_stock: 10,
+            deposit: 'Depósito-Grupo OM'
           }))
         );
         if (pError) {
@@ -166,6 +169,11 @@ const Slips: React.FC = () => {
     }
   };
 
+  const filteredSlips = slips.filter(s => {
+    if (selectedDeposit === 'TODOS') return true;
+    return s.products?.deposit === selectedDeposit;
+  });
+
   return (
     <div>
       <div className="view-header">
@@ -173,7 +181,18 @@ const Slips: React.FC = () => {
           <h1>Romaneios</h1>
           <p>Lançamento de entradas e saídas de mercadorias.</p>
         </div>
-        <div style={{ display: 'flex', gap: '1rem' }}>
+        <div style={{ display: 'flex', gap: '1rem', flexWrap: 'wrap' }}>
+          <select 
+            className="input-field" 
+            style={{ width: '220px', height: '42px' }}
+            value={selectedDeposit}
+            onChange={(e) => setSelectedDeposit(e.target.value as any)}
+          >
+            <option value="TODOS">Todos os Depósitos</option>
+            <option value="Depósito-Grupo OM">Depósito-Grupo OM</option>
+            <option value="Depósito-RED">Depósito-RED</option>
+          </select>
+
           <button className="button" style={{ backgroundColor: '#ef4444', border: 'none' }} onClick={clearAllSlips}>
             <Trash2 size={18} style={{ marginRight: '0.5rem' }} />
             Limpar Tudo
@@ -200,19 +219,24 @@ const Slips: React.FC = () => {
             <tr>
               <th>Data</th>
               <th>Produto</th>
+              <th>Depósito</th>
               <th>Categoria</th>
               <th>QTD</th>
               <th>Destino</th>
               <th>Tipo</th>
+              <th>Ações</th>
             </tr>
           </thead>
           <tbody>
             {loading ? (
-              <tr><td colSpan={6} style={{ textAlign: 'center', padding: '2rem' }}>Carregando...</td></tr>
-            ) : slips.map((s: any) => (
+              <tr><td colSpan={8} style={{ textAlign: 'center', padding: '2rem' }}>Carregando...</td></tr>
+            ) : filteredSlips.length === 0 ? (
+              <tr><td colSpan={8} style={{ textAlign: 'center', padding: '2rem' }}>Nenhum romaneio encontrado.</td></tr>
+            ) : filteredSlips.map((s: any) => (
               <tr key={s.id}>
                 <td>{s.date.split('-').reverse().join('/')}</td>
                 <td style={{ fontWeight: 600 }}>{s.products?.name || 'Produto Removido'}</td>
+                <td><span className="badge">{s.products?.deposit || '-'}</span></td>
                 <td><span className="badge badge-blue">{s.category}</span></td>
                 <td style={{ fontWeight: 700 }}>{s.quantity}</td>
                 <td>{s.destination}</td>
@@ -256,13 +280,20 @@ const Slips: React.FC = () => {
                 </select>
               </div>
               <div style={{ gridColumn: 'span 2' }}>
+                <label>Depósito do Produto</label>
+                <select className="input-field" value={formDeposit} onChange={e => { setFormDeposit(e.target.value as any); setFormData({...formData, product_id: ''}); }}>
+                  <option value="Depósito-Grupo OM">Depósito-Grupo OM</option>
+                  <option value="Depósito-RED">Depósito-RED</option>
+                </select>
+              </div>
+              <div style={{ gridColumn: 'span 2' }}>
                 <label>Produto</label>
-                <select className="input-field" required value={formData.product_id} onChange={e => {
+                <select className="input-field" required value={formData.product_id || ''} onChange={e => {
                   const p = products.find(x => x.id === e.target.value);
                   setFormData({...formData, product_id: e.target.value, category: p?.category, unit: p?.unit});
                 }}>
                   <option value="">Selecione um produto...</option>
-                  {products.map(p => <option key={p.id} value={p.id}>{p.name} ({p.unit})</option>)}
+                  {products.filter(p => p.deposit === formDeposit).map(p => <option key={p.id} value={p.id}>{p.name} ({p.unit})</option>)}
                 </select>
               </div>
               <div>

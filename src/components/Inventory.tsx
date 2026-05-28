@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Plus, Search, X, Trash2, Edit3, Save, Layers } from 'lucide-react';
+import { Plus, Search, X, Trash2, Edit3, Save, Layers, ArrowRight } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { saveLog } from '../lib/logger';
 import type { Product, Category, Deposit, Role } from '../types';
@@ -26,8 +26,10 @@ const Inventory: React.FC<InventoryProps> = ({ userRole }) => {
   const [selectedCategory, setSelectedCategory] = useState<Category | 'TODAS'>('TODAS');
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isBulkOpen, setIsBulkOpen] = useState(false);
+  const [isTransferOpen, setIsTransferOpen] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
   const [bulkData, setBulkData] = useState<Record<string, { qty: number, type: 'ENTRADA' | 'SAIDA' }>>({});
+  const [transferData, setTransferData] = useState<Record<string, number>>({});
   const [formData, setFormData] = useState<Partial<Product>>({
     name: '',
     category: 'Estocáveis',
@@ -140,6 +142,89 @@ const Inventory: React.FC<InventoryProps> = ({ userRole }) => {
     }
   };
 
+  const handleTransfer = async () => {
+    const itemsToTransfer = Object.entries(transferData)
+      .filter(([_, qty]) => qty > 0)
+      .map(([id, qty]) => {
+        const p = products.find(prod => prod.id === id);
+        return { product: p!, qty };
+      });
+
+    if (itemsToTransfer.length === 0) return;
+
+    setLoading(true);
+
+    try {
+      const { data: redProducts } = await supabase.from('products').select('*').eq('deposit', 'Depósito-RED');
+      const currentRedProducts = redProducts || [];
+
+      const slipsToInsert = [];
+
+      for (const item of itemsToTransfer) {
+        const pOM = item.product;
+        const qty = item.qty;
+
+        if (pOM.quantity < qty) {
+          alert(`Quantidade insuficiente de ${pOM.name} para transferência.`);
+          setLoading(false);
+          return;
+        }
+
+        let pRED = currentRedProducts.find(r => r.name.toLowerCase() === pOM.name.toLowerCase());
+
+        if (!pRED) {
+          const newProductData = {
+            name: pOM.name,
+            category: pOM.category,
+            unit: pOM.unit,
+            brand: pOM.brand,
+            batch: pOM.batch,
+            quantity: 0,
+            min_stock: pOM.min_stock,
+            deposit: 'Depósito-RED'
+          };
+          const { data: createdData, error: createError } = await supabase.from('products').insert([newProductData]).select().single();
+          if (createError) throw createError;
+          pRED = createdData;
+        }
+
+        slipsToInsert.push({
+          date: new Date().toISOString().split('T')[0],
+          category: pOM.category,
+          product_id: pOM.id,
+          unit: pOM.unit,
+          quantity: qty,
+          destination: 'Transf. para Depósito-RED',
+          type: 'SAIDA'
+        });
+
+        slipsToInsert.push({
+          date: new Date().toISOString().split('T')[0],
+          category: pRED.category,
+          product_id: pRED.id,
+          unit: pRED.unit,
+          quantity: qty,
+          destination: 'Transf. de Depósito-Grupo OM',
+          type: 'ENTRADA'
+        });
+      }
+
+      const { error: slipsError } = await supabase.from('slips').insert(slipsToInsert);
+      if (slipsError) throw slipsError;
+
+      saveLog('TRANSFERIR', 'ESTOQUE', `Transferidos ${itemsToTransfer.length} produtos estocáveis de OM para RED`);
+      alert('Transferência concluída com sucesso!');
+      setIsTransferOpen(false);
+      setTransferData({});
+      fetchProducts();
+    } catch (err: any) {
+      console.error('Erro na transferência:', err);
+      alert('Erro na transferência: ' + err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const filteredProducts = products.filter(p => {
     if (selectedDeposit === 'SELECIONE') return false;
     const matchSearch = p.name.toLowerCase().includes(search.toLowerCase()) || p.category.toLowerCase().includes(search.toLowerCase());
@@ -155,7 +240,11 @@ const Inventory: React.FC<InventoryProps> = ({ userRole }) => {
           <h1>ESTOQUE</h1>
           <p>Gerencie seus produtos, marcas e quantidades.</p>
         </div>
-        <div style={{ display: 'flex', gap: '1rem' }}>
+        <div style={{ display: 'flex', gap: '1rem', flexWrap: 'wrap' }}>
+          <button className="button" style={{ backgroundColor: '#10b981', border: 'none' }} onClick={() => setIsTransferOpen(true)}>
+            <ArrowRight size={18} style={{ marginRight: '0.5rem' }} />
+            Transferir Estocáveis (OM para RED)
+          </button>
           <button className="button" style={{ backgroundColor: '#4f46e5', border: 'none' }} onClick={() => setIsBulkOpen(true)}>
             <Layers size={18} style={{ marginRight: '0.5rem' }} />
             Lançar em Massa
@@ -379,6 +468,76 @@ const Inventory: React.FC<InventoryProps> = ({ userRole }) => {
               <button className="button" onClick={handleBulkSubmit} style={{ flex: '1 1 auto', minWidth: '220px' }}>
                 <Save size={18} style={{ marginRight: '0.5rem' }} />
                 Confirmar Todos os Lançamentos
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {isTransferOpen && (
+        <div className="modal-overlay">
+          <div className="card" style={{ width: '100%', maxWidth: '850px', maxHeight: '90vh', overflowY: 'auto' }}>
+            <div className="view-header" style={{ marginBottom: '1.5rem' }}>
+              <div>
+                <h2>Transferência de Estocáveis</h2>
+                <p style={{ fontSize: '0.9rem', opacity: 0.7 }}>Mova produtos estocáveis do Depósito-Grupo OM para o Depósito-RED.</p>
+              </div>
+              <button onClick={() => setIsTransferOpen(false)} style={{ background: 'none', border: 'none', color: 'white', cursor: 'pointer' }}><X size={24} /></button>
+            </div>
+            
+            <div style={{ overflowX: 'auto', width: '100%', borderRadius: '0.5rem', border: '1px solid var(--border)' }}>
+              <table className="data-table" style={{ width: '100%', borderCollapse: 'collapse', border: 'none' }}>
+                <thead>
+                  <tr>
+                    <th>Produto</th>
+                    <th>Marca</th>
+                    <th>UND</th>
+                    <th>Saldo Atual OM</th>
+                    <th>Quantidade a Transferir</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {products
+                    .filter(p => p.category === 'Estocáveis' && p.deposit === 'Depósito-Grupo OM' && p.quantity > 0)
+                    .map(p => (
+                      <tr key={p.id}>
+                        <td style={{ fontWeight: 600 }}>{p.name}</td>
+                        <td>{p.brand || '-'}</td>
+                        <td>{p.unit || '-'}</td>
+                        <td style={{ fontWeight: 700 }}>{p.quantity}</td>
+                        <td>
+                          <input 
+                            type="number" 
+                            className="input-field" 
+                            style={{ padding: '0.4rem', height: 'auto', width: '120px' }}
+                            placeholder="0"
+                            min="0"
+                            max={p.quantity}
+                            value={transferData[p.id] || ''}
+                            onChange={e => {
+                              const val = Math.min(p.quantity, Math.max(0, Number(e.target.value)));
+                              setTransferData({...transferData, [p.id]: val});
+                            }}
+                          />
+                        </td>
+                      </tr>
+                    ))}
+                  {products.filter(p => p.category === 'Estocáveis' && p.deposit === 'Depósito-Grupo OM' && p.quantity > 0).length === 0 && (
+                    <tr>
+                      <td colSpan={5} style={{ textAlign: 'center', padding: '2rem', color: 'var(--text-muted)' }}>
+                        Nenhum produto estocável com saldo disponível no Depósito-Grupo OM.
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+            
+            <div style={{ marginTop: '2rem', display: 'flex', justifyContent: 'flex-end', gap: '1rem', flexWrap: 'wrap' }}>
+              <button className="button button-outline" onClick={() => setIsTransferOpen(false)} style={{ flex: '1 1 auto', minWidth: '120px' }}>Cancelar</button>
+              <button className="button" onClick={handleTransfer} style={{ flex: '1 1 auto', minWidth: '220px', backgroundColor: '#10b981' }}>
+                <ArrowRight size={18} style={{ marginRight: '0.5rem' }} />
+                Confirmar Transferência
               </button>
             </div>
           </div>

@@ -96,12 +96,13 @@ const Reports: React.FC<ReportsProps> = ({ userRole }) => {
             p.category,
             p.unit,
             p.brand || '-',
+            p.expiry_date ? p.expiry_date.split('-').reverse().join('/') : '-',
             p.quantity
           ]);
 
         autoTable(doc, {
           startY: startY,
-          head: [['Produto', 'Categoria', 'UND', 'Marca', 'Saldo']],
+          head: [['Produto', 'Categoria', 'UND', 'Marca', 'Vencimento', 'Saldo']],
           body: tableData,
           headStyles: { fillColor: [79, 70, 229] }, // Indigo
           theme: 'grid'
