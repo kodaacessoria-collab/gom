@@ -62,28 +62,98 @@ const PurchaseOrders: React.FC = () => {
       return;
     }
 
-    const demandMap: Record<string, number> = {};
-    
-    slips.filter(s => selectedSlips.includes(s.id)).forEach(s => {
-      demandMap[s.product_id] = (demandMap[s.product_id] || 0) + Number(s.quantity);
+    // Helper to normalize product group key based on name and unit (ignoring brand)
+    const getProductGroupKey = (p: Product) => {
+      let name = p.name.toLowerCase().trim();
+      
+      // Remove brand from name if present to group different brands of same product
+      if (p.brand) {
+        const brandLower = p.brand.toLowerCase().trim();
+        if (brandLower && brandLower !== 'null' && brandLower !== 'diversos' && brandLower !== 'variadas marcas') {
+          const escapedBrand = brandLower.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');
+          const regex = new RegExp(`\\b${escapedBrand}\\b`, 'gi');
+          name = name.replace(regex, '').replace(/\s+/g, ' ').trim();
+        }
+      }
+      
+      // Strip trailing or leading punctuation/hyphens/parentheses left after stripping brand
+      name = name.replace(/[\s\-\/\(\)]+$/, '').replace(/^\s*[\s\-\/\(\)]+/, '').replace(/\s+/g, ' ').trim();
+
+      // Normalize common weight and packaging units
+      let unit = (p.unit || 'UN').toLowerCase().trim().replace(/\s+/g, '');
+      if (unit === '1kilo' || unit === 'kilo' || unit === '1kg' || unit === 'kg') {
+        unit = '1kg';
+      } else if (unit === '5kg') {
+        unit = '5kg';
+      } else if (unit === '5l' || unit === '5lt' || unit === '5lts') {
+        unit = '5l';
+      } else if (unit === '1l' || unit === '1lt' || unit === '1lts') {
+        unit = '1l';
+      } else if (unit === '500g' || unit === '500gr') {
+        unit = '500g';
+      } else if (unit === '300g' || unit === '300gr') {
+        unit = '300g';
+      } else if (unit === '250g' || unit === '250gr') {
+        unit = '250g';
+      } else if (unit === '200g' || unit === '200gr') {
+        unit = '200g';
+      } else if (unit === '170g' || unit === '170gr') {
+        unit = '170g';
+      }
+
+      return `${name} | ${unit}`;
+    };
+
+    // 1. Group all available products by normalized key and sum their stock
+    const productGroups: Record<string, {
+      representative: Product;
+      totalStock: number;
+      allProducts: Product[];
+    }> = {};
+
+    products.forEach(p => {
+      const key = getProductGroupKey(p);
+      if (!productGroups[key]) {
+        productGroups[key] = {
+          representative: p,
+          totalStock: 0,
+          allProducts: []
+        };
+      }
+      productGroups[key].totalStock += Number(p.quantity || 0);
+      productGroups[key].allProducts.push(p);
     });
 
-    const newSuggestions = Object.keys(demandMap).map(productId => {
-      const product = products.find(p => p.id === productId);
-      if (!product) return null;
+    // 2. Sum the demand from selected slips grouped by product key
+    const groupDemand: Record<string, number> = {};
+    
+    slips.filter(s => selectedSlips.includes(s.id)).forEach(s => {
+      const product = products.find(p => p.id === s.product_id);
+      if (product) {
+        const key = getProductGroupKey(product);
+        groupDemand[key] = (groupDemand[key] || 0) + Number(s.quantity);
+      }
+    });
 
-      const currentStock = Number(product.quantity || 0);
-      const demandQty = demandMap[productId];
-      const balance = currentStock - demandQty;
+    // 3. Generate suggestions based on grouped stock and demand
+    const newSuggestions = Object.keys(groupDemand).map(key => {
+      const group = productGroups[key];
+      if (!group) return null;
 
-      // Only generate suggestion if balance is less than zero (estoque atual - romaneio < 0)
+      const totalStock = group.totalStock;
+      const demandQty = groupDemand[key];
+      const balance = totalStock - demandQty;
+
+      // Only generate suggestion if balance is less than zero (estoque total - demanda total < 0)
       if (balance >= 0) return null;
 
       const suggestedQty = Math.abs(balance);
 
+      // Return a suggestion matching the representative product structure
       return {
-        ...product,
-        neededQty: demandQty,
+        ...group.representative,
+        quantity: totalStock, // display the combined stock of all matching products/brands
+        neededQty: demandQty, // total demand across matching products/brands
         balance: balance,
         suggestedQty: suggestedQty
       };
