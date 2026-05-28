@@ -124,16 +124,38 @@ const Slips: React.FC = () => {
       const ws = wb.Sheets[wb.SheetNames[0]];
       const rawData = XLSX.utils.sheet_to_json(ws);
 
-      // 1. Identify missing products and create them
-      const missingProducts: string[] = [];
+      // Helper to extract deposit from an item
+      const extractDeposit = (item: any) => {
+        const keys = Object.keys(item);
+        const depKey = keys.find(k => ['DEPOSITO', 'DEPÓSITO', 'DEPOSIT', 'ALMOXARIFADO'].includes(k.toUpperCase().trim()));
+        const rawDep = depKey ? item[depKey]?.toString().trim() : '';
+        if (rawDep && rawDep.toUpperCase().includes('RED')) {
+          return 'Depósito-RED';
+        }
+        return 'Depósito-Grupo OM'; // default fallback
+      };
+
+      // 1. Identify missing products (by name and deposit combination) and create them
+      const missingProducts: { name: string; deposit: 'Depósito-Grupo OM' | 'Depósito-RED' }[] = [];
       rawData.forEach((item: any) => {
         const keys = Object.keys(item);
         const nameKey = keys.find(k => ['PRODUTO', 'NOME', 'PRODUCT', 'ITEM'].includes(k.toUpperCase().trim()));
         const productName = nameKey ? item[nameKey]?.toString().trim() : null;
+        const targetDeposit = extractDeposit(item);
         
-        if (productName && !products.find(p => p.name.toLowerCase() === productName.toLowerCase())) {
-          if (!missingProducts.includes(productName)) {
-            missingProducts.push(productName);
+        if (productName) {
+          const exists = products.find(p => 
+            p.name.toLowerCase() === productName.toLowerCase() && 
+            p.deposit === targetDeposit
+          );
+          if (!exists) {
+            const alreadyInMissing = missingProducts.find(mp => 
+              mp.name.toLowerCase() === productName.toLowerCase() && 
+              mp.deposit === targetDeposit
+            );
+            if (!alreadyInMissing) {
+              missingProducts.push({ name: productName, deposit: targetDeposit });
+            }
           }
         }
       });
@@ -141,13 +163,13 @@ const Slips: React.FC = () => {
       let currentProducts: Product[];
       if (missingProducts.length > 0) {
         const { error: pError } = await supabase.from('products').insert(
-          missingProducts.map(name => ({
-            name,
+          missingProducts.map(mp => ({
+            name: mp.name,
             category: 'Estocáveis',
             unit: 'UN',
             quantity: 0,
             min_stock: 10,
-            deposit: 'Depósito-Grupo OM'
+            deposit: mp.deposit
           }))
         );
         if (pError) {
@@ -173,7 +195,11 @@ const Slips: React.FC = () => {
           };
 
           const productName = (findValue(['PRODUTO', 'NOME', 'PRODUCT', 'ITEM']) || '').toString().trim();
-          const product = currentProducts.find(p => p.name.toLowerCase() === productName.toLowerCase());
+          const targetDeposit = extractDeposit(item);
+          const product = currentProducts.find(p => 
+            p.name.toLowerCase() === productName.toLowerCase() && 
+            p.deposit === targetDeposit
+          );
           
           if (!productName || !product) return null;
 
