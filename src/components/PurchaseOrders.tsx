@@ -163,6 +163,9 @@ const PurchaseOrders: React.FC = () => {
       };
     }).filter((s): s is NonNullable<typeof s> => s !== null);
 
+    // Sort suggestions alphabetically by product name
+    newSuggestions.sort((a, b) => a.name.localeCompare(b.name));
+
     setSuggestions(newSuggestions);
   };
 
@@ -275,8 +278,11 @@ const PurchaseOrders: React.FC = () => {
     doc.setFontSize(12);
     doc.text(`Status: ${order.status}`, 20, 50);
     
-    // Items Table
-    const tableData = order.items.map((item: any) => [
+    // Items Table sorted alphabetically by product name
+    const sortedItems = [...order.items].sort((a: any, b: any) =>
+      a.product_name.localeCompare(b.product_name)
+    );
+    const tableData = sortedItems.map((item: any) => [
       item.product_name,
       item.quantity,
       item.unit || 'UN'
