@@ -140,11 +140,15 @@ const PurchaseOrders: React.FC = () => {
       const group = productGroups[key];
       if (!group) return null;
 
-      const totalStock = group.totalStock;
+      const totalStockInDb = group.totalStock;
       const demandQty = groupDemand[key];
-      const balance = totalStock - demandQty;
+      
+      // Since slips are already subtracted from the product quantity in the DB by the trigger,
+      // the stock BEFORE these slips were applied is (totalStockInDb + demandQty).
+      const estoqueAtual = totalStockInDb + demandQty;
+      const balance = totalStockInDb; // The projected balance is the database quantity
 
-      // Only generate suggestion if balance is less than zero (estoque total - demanda total < 0)
+      // Only generate suggestion if balance is less than zero
       if (balance >= 0) return null;
 
       const suggestedQty = Math.abs(balance);
@@ -152,9 +156,9 @@ const PurchaseOrders: React.FC = () => {
       // Return a suggestion matching the representative product structure
       return {
         ...group.representative,
-        quantity: totalStock, // display the combined stock of all matching products/brands
+        quantity: estoqueAtual, // display the stock BEFORE the selected slips
         neededQty: demandQty, // total demand across matching products/brands
-        balance: balance,
+        balance: balance, // projected balance
         suggestedQty: suggestedQty
       };
     }).filter((s): s is NonNullable<typeof s> => s !== null);
