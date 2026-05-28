@@ -47,12 +47,70 @@ const Slips: React.FC = () => {
   const deleteSlip = async (id: string) => {
     if (!confirm('Tem certeza que deseja excluir este lançamento? O estoque será ajustado automaticamente.')) return;
     
-    const { error } = await supabase.from('slips').delete().eq('id', id);
-    if (error) alert(error.message);
-    else {
+    try {
+      // 1. Fetch slip details
+      const { data: slip, error: fetchSlipError } = await supabase
+        .from('slips')
+        .select('*')
+        .eq('id', id)
+        .single();
+      
+      if (fetchSlipError) throw fetchSlipError;
+      if (!slip) throw new Error('Lançamento não encontrado.');
+
+      // 2. Fetch current product stock
+      const { data: product, error: fetchProductError } = await supabase
+        .from('products')
+        .select('quantity')
+        .eq('id', slip.product_id)
+        .single();
+
+      if (fetchProductError) throw fetchProductError;
+      if (product) {
+        // 3. Calculate reverted quantity
+        const currentQty = Number(product.quantity || 0);
+        const slipQty = Number(slip.quantity || 0);
+        const revertedQty = slip.type === 'ENTRADA' ? (currentQty - slipQty) : (currentQty + slipQty);
+
+        // 4. Update product quantity
+        const { error: updateProductError } = await supabase
+          .from('products')
+          .update({ quantity: revertedQty })
+          .eq('id', slip.product_id);
+
+        if (updateProductError) throw updateProductError;
+      }
+
+      // 5. Delete the slip
+      const { error: deleteError } = await supabase.from('slips').delete().eq('id', id);
+      if (deleteError) throw deleteError;
+
       saveLog('EXCLUIR', 'ROMANEIO', `Lançamento removido ID: ${id}`);
       fetchData();
+    } catch (err: any) {
+      alert('Erro ao excluir lançamento e atualizar estoque: ' + err.message);
     }
+  };
+
+  const deleteLastSlip = async () => {
+    if (slips.length === 0) {
+      alert('Nenhum lançamento de romaneio encontrado.');
+      return;
+    }
+    
+    // Find the latest slip. Since they are fetched with .order('created_at', { ascending: false }),
+    // the first item slips[0] is the latest one.
+    const latestSlip = slips[0];
+    
+    const productName = latestSlip.products?.name || 'Produto';
+    const slipType = latestSlip.type;
+    const qty = latestSlip.quantity;
+    
+    if (!confirm(`Tem certeza que deseja excluir o ÚLTIMO lançamento?\n\nProduto: ${productName}\nTipo: ${slipType}\nQuantidade: ${qty}\n\nO estoque anterior será restaurado automaticamente.`)) {
+      return;
+    }
+    
+    await deleteSlip(latestSlip.id);
   };
 
   const handleImport = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -192,6 +250,11 @@ const Slips: React.FC = () => {
             <option value="Depósito-Grupo OM">Depósito-Grupo OM</option>
             <option value="Depósito-RED">Depósito-RED</option>
           </select>
+
+          <button className="button" style={{ backgroundColor: '#f97316', border: 'none' }} onClick={deleteLastSlip}>
+            <Trash2 size={18} style={{ marginRight: '0.5rem' }} />
+            Excluir Último
+          </button>
 
           <button className="button" style={{ backgroundColor: '#ef4444', border: 'none' }} onClick={clearAllSlips}>
             <Trash2 size={18} style={{ marginRight: '0.5rem' }} />

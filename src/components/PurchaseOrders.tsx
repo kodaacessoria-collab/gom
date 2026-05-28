@@ -72,14 +72,22 @@ const PurchaseOrders: React.FC = () => {
       const product = products.find(p => p.id === productId);
       if (!product) return null;
 
-      const needed = demandMap[productId];
-      
+      const currentStock = Number(product.quantity || 0);
+      const demandQty = demandMap[productId];
+      const balance = currentStock - demandQty;
+
+      // Only generate suggestion if balance is less than zero (estoque atual - romaneio < 0)
+      if (balance >= 0) return null;
+
+      const suggestedQty = Math.abs(balance);
+
       return {
         ...product,
-        neededQty: needed,
-        suggestedQty: needed
+        neededQty: demandQty,
+        balance: balance,
+        suggestedQty: suggestedQty
       };
-    }).filter(s => s !== null);
+    }).filter((s): s is NonNullable<typeof s> => s !== null);
 
     setSuggestions(newSuggestions);
   };
@@ -338,8 +346,10 @@ const PurchaseOrders: React.FC = () => {
                   <thead>
                     <tr>
                       <th>Produto</th>
-                      <th>Estoque</th>
-                      <th>Falta</th>
+                      <th>Estoque Atual</th>
+                      <th>Demanda (Romaneios)</th>
+                      <th>Saldo Projetado</th>
+                      <th>Falta (A Comprar)</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -347,6 +357,8 @@ const PurchaseOrders: React.FC = () => {
                       <tr key={s.id}>
                         <td style={{ fontWeight: 600 }}>{s.name}</td>
                         <td>{s.quantity}</td>
+                        <td>{s.neededQty}</td>
+                        <td style={{ color: '#f87171', fontWeight: 600 }}>{s.balance}</td>
                         <td style={{ fontWeight: 800, color: '#f87171' }}>
                           <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                             <ArrowRight size={14} /> {s.suggestedQty}

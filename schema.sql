@@ -40,22 +40,30 @@ CREATE TABLE IF NOT EXISTS purchase_orders (
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- Trigger to update product quantity on slip insertion
+-- Trigger to update product quantity on slip insertion and deletion
 CREATE OR REPLACE FUNCTION update_stock_level()
 RETURNS TRIGGER AS $$
 BEGIN
-  IF (NEW.type = 'ENTRADA') THEN
-    UPDATE products SET quantity = quantity + NEW.quantity WHERE id = NEW.product_id;
-  ELSIF (NEW.type = 'SAIDA') THEN
-    UPDATE products SET quantity = quantity - NEW.quantity WHERE id = NEW.product_id;
+  IF (TG_OP = 'INSERT') THEN
+    IF (NEW.type = 'ENTRADA') THEN
+      UPDATE products SET quantity = quantity + NEW.quantity WHERE id = NEW.product_id;
+    ELSIF (NEW.type = 'SAIDA') THEN
+      UPDATE products SET quantity = quantity - NEW.quantity WHERE id = NEW.product_id;
+    END IF;
+  ELSIF (TG_OP = 'DELETE') THEN
+    IF (OLD.type = 'ENTRADA') THEN
+      UPDATE products SET quantity = quantity - OLD.quantity WHERE id = OLD.product_id;
+    ELSIF (OLD.type = 'SAIDA') THEN
+      UPDATE products SET quantity = quantity + OLD.quantity WHERE id = OLD.product_id;
+    END IF;
   END IF;
-  RETURN NEW;
+  RETURN NULL;
 END;
 $$ LANGUAGE plpgsql;
 
 DROP TRIGGER IF EXISTS trg_update_stock_level ON slips;
 CREATE TRIGGER trg_update_stock_level
-AFTER INSERT ON slips
+AFTER INSERT OR DELETE ON slips
 FOR EACH ROW
 EXECUTE FUNCTION update_stock_level();
 
