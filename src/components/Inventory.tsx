@@ -241,10 +241,6 @@ const Inventory: React.FC<InventoryProps> = ({ userRole }) => {
           <p>Gerencie seus produtos, marcas e quantidades.</p>
         </div>
         <div style={{ display: 'flex', gap: '1rem', flexWrap: 'wrap' }}>
-          <button className="button" style={{ backgroundColor: '#10b981', border: 'none' }} onClick={() => setIsTransferOpen(true)}>
-            <ArrowRight size={18} style={{ marginRight: '0.5rem' }} />
-            Transferir Estocáveis (OM para RED)
-          </button>
           <button className="button" style={{ backgroundColor: '#4f46e5', border: 'none' }} onClick={() => setIsBulkOpen(true)}>
             <Layers size={18} style={{ marginRight: '0.5rem' }} />
             Lançar em Massa
