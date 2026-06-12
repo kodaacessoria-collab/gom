@@ -1,5 +1,5 @@
 import React, { useEffect } from 'react';
-import { LayoutDashboard, Package, FileText, ShoppingCart, BarChart3, X, History, Users, LogOut, Lock } from 'lucide-react';
+import { LayoutDashboard, Package, FileText, ShoppingCart, BarChart3, X, History, Users, LogOut, Lock, ClipboardCheck } from 'lucide-react';
 import type { Role } from '../types';
 
 interface SidebarProps {
@@ -19,6 +19,7 @@ const Sidebar: React.FC<SidebarProps> = ({ activeTab, setActiveTab, isOpen, togg
     { id: 'slips', label: 'Romaneios', icon: FileText },
     { id: 'purchase-orders', label: 'Pedidos de Compra', icon: ShoppingCart },
     { id: 'reports', label: 'Relatórios', icon: BarChart3 },
+    { id: 'audit', label: 'Auditoria', icon: ClipboardCheck, adminOnly: true },
     { id: 'logs', label: 'Logs', icon: History },
     { id: 'users', label: 'Usuários', icon: Users },
   ];
@@ -29,6 +30,9 @@ const Sidebar: React.FC<SidebarProps> = ({ activeTab, setActiveTab, isOpen, togg
       items = allMenuItems.filter(i => ['inventory', 'reports'].includes(i.id));
     } else if (userRole === 'red') {
       items = allMenuItems.filter(i => ['reports'].includes(i.id));
+    } else {
+      // admin: show all, but filter out adminOnly if not admin (safety)
+      items = allMenuItems.filter(i => !i.adminOnly || userRole === 'admin');
     }
     
     // Todos os usuários têm acesso à aba "Minha Conta" para alterar senha

@@ -13,6 +13,7 @@ const Reports: React.FC<ReportsProps> = ({ userRole }) => {
   const [dateStart, setDateStart] = useState('');
   const [dateEnd, setDateEnd] = useState('');
   const [selectedCategory, setSelectedCategory] = useState('TODAS');
+  const [validityCategory, setValidityCategory] = useState('TODAS');
   const [selectedDeposit, setSelectedDeposit] = useState<Deposit | 'TODOS'>('TODOS');
   const [categories, setCategories] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
@@ -58,6 +59,10 @@ const Reports: React.FC<ReportsProps> = ({ userRole }) => {
           return;
         }
         queryProducts = queryProducts.eq('category', selectedCategory);
+      }
+
+      if (mode === 'validade' && validityCategory !== 'TODAS') {
+        queryProducts = queryProducts.eq('category', validityCategory);
       }
 
       const { data: products, error: pError } = await queryProducts;
@@ -199,14 +204,54 @@ const Reports: React.FC<ReportsProps> = ({ userRole }) => {
           theme: 'grid'
         });
       } else if (mode === 'validade') {
-        const tableData = products
-          .filter(p => p.quantity > 0 && p.expiry_date) // Only items with stock and expiry
-          .sort((a, b) => {
-            if (!a.expiry_date) return 1;
-            if (!b.expiry_date) return -1;
-            return new Date(a.expiry_date).getTime() - new Date(b.expiry_date).getTime();
-          })
-          .map(p => [
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+
+        const buckets = {
+          'Vencidos': [] as any[],
+          'Próximos 15 dias': [] as any[],
+          'Próximos 30 dias': [] as any[],
+          'Próximos 45 dias': [] as any[],
+          'Próximos 60 dias': [] as any[],
+          'Próximos 75 dias': [] as any[],
+          'Próximos 95 dias': [] as any[],
+          'Demais Longo Prazo': [] as any[],
+        };
+
+        products
+          .filter(p => p.quantity > 0 && p.expiry_date)
+          .sort((a, b) => new Date(a.expiry_date).getTime() - new Date(b.expiry_date).getTime())
+          .forEach(p => {
+            const expDate = new Date(p.expiry_date + 'T00:00:00');
+            const diffTime = expDate.getTime() - today.getTime();
+            const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+
+            if (diffDays < 0) buckets['Vencidos'].push(p);
+            else if (diffDays <= 15) buckets['Próximos 15 dias'].push(p);
+            else if (diffDays <= 30) buckets['Próximos 30 dias'].push(p);
+            else if (diffDays <= 45) buckets['Próximos 45 dias'].push(p);
+            else if (diffDays <= 60) buckets['Próximos 60 dias'].push(p);
+            else if (diffDays <= 75) buckets['Próximos 75 dias'].push(p);
+            else if (diffDays <= 95) buckets['Próximos 95 dias'].push(p);
+            else buckets['Demais Longo Prazo'].push(p);
+          });
+
+        let currentY = startY;
+
+        Object.entries(buckets).forEach(([bucketName, items]) => {
+          if (items.length === 0) return;
+
+          // Add a new page if we are too close to the bottom
+          if (currentY > 260) {
+            doc.addPage();
+            currentY = 20;
+          }
+
+          doc.setFontSize(12);
+          doc.setTextColor(bucketName === 'Vencidos' ? 220 : 31, bucketName === 'Vencidos' ? 38 : 41, bucketName === 'Vencidos' ? 38 : 55);
+          doc.text(`${bucketName} (${items.length} itens)`, 14, currentY);
+
+          const tableData = items.map(p => [
             p.name,
             p.deposit || '-',
             p.category,
@@ -215,12 +260,15 @@ const Reports: React.FC<ReportsProps> = ({ userRole }) => {
             p.quantity
           ]);
 
-        autoTable(doc, {
-          startY: startY,
-          head: [['Produto', 'Depósito', 'Categoria', 'Lote', 'Vencimento', 'Saldo']],
-          body: tableData,
-          headStyles: { fillColor: [153, 27, 27] }, // Dark Red for Expiry
-          theme: 'grid'
+          autoTable(doc, {
+            startY: currentY + 4,
+            head: [['Produto', 'Depósito', 'Categoria', 'Lote', 'Vencimento', 'Saldo']],
+            body: tableData,
+            headStyles: { fillColor: bucketName === 'Vencidos' ? [220, 38, 38] : [153, 27, 27] }, 
+            theme: 'grid'
+          });
+
+          currentY = (doc as any).lastAutoTable.finalY + 10;
         });
       } else if (mode === 'movimentacao') {
         if (!dateStart || !dateEnd) {
@@ -396,10 +444,22 @@ const Reports: React.FC<ReportsProps> = ({ userRole }) => {
           </div>
           <div className="report-info">
             <h3>Relatório de Validade</h3>
-            <p className="report-description">Produtos com saldo, ordenado pela data de vencimento mais próxima.</p>
-            <button className="button" disabled={loading} onClick={() => generatePDF('validade')}>
-              <ChevronRight size={16} /> Gerar Relatório de Validade
-            </button>
+            <p className="report-description">Produtos agrupados por períodos de vencimento.</p>
+            <div className="report-filter">
+              <label>Filtrar por Categoria:</label>
+              <select className="input-field" value={validityCategory} onChange={e => setValidityCategory(e.target.value)}>
+                <option value="TODAS">Todas as Categorias</option>
+                {categories.map(c => <option key={c} value={c}>{c}</option>)}
+              </select>
+              <button 
+                className="button" 
+                style={{ marginTop: '0.5rem' }} 
+                disabled={loading} 
+                onClick={() => generatePDF('validade')}
+              >
+                <ChevronRight size={16} /> Gerar Relatório de Validade
+              </button>
+            </div>
           </div>
         </div>
 

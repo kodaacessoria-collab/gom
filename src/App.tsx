@@ -9,6 +9,7 @@ import Logs from './components/Logs';
 import Users from './components/Users';
 import Auth from './components/Auth';
 import Settings from './components/Settings';
+import StockAudit from './components/StockAudit';
 import { supabase } from './lib/supabase';
 import type { Role } from './types';
 import { mapDbRoleToRole } from './types';
@@ -116,7 +117,7 @@ function App() {
   const renderContent = () => {
     // Role-based route protection
     const allowedTabs: Record<Role, string[]> = {
-      admin: ['dashboard', 'inventory', 'slips', 'purchase-orders', 'reports', 'logs', 'users', 'settings'],
+      admin: ['dashboard', 'inventory', 'slips', 'purchase-orders', 'reports', 'audit', 'logs', 'users', 'settings'],
       om: ['inventory', 'reports', 'settings'],
       red: ['reports', 'settings']
     };
@@ -141,6 +142,7 @@ function App() {
       case 'reports': return <Reports userRole={userRole} />;
       case 'logs': return <Logs />;
       case 'users': return <Users />;
+      case 'audit': return <StockAudit />;
       case 'settings': return <Settings userEmail={session?.user?.email} />;
       default: return <Dashboard />;
     }

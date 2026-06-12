@@ -1,9 +1,11 @@
 import React, { useState, useEffect } from 'react';
-import { ShoppingCart, CheckCircle, ListChecks, ArrowRight, FileText, History, Plus, Trash2 } from 'lucide-react';
+import { ShoppingCart, ListChecks, ArrowRight, FileText, FileSpreadsheet, History, Plus, Trash2, CheckCircle } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import type { Product } from '../types';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
+import * as XLSX from 'xlsx';
+
 
 const PurchaseOrders: React.FC = () => {
   const [activeView, setActiveView] = useState<'create' | 'history'>('create');
@@ -214,48 +216,10 @@ const PurchaseOrders: React.FC = () => {
   };
 
   const deleteOrder = async (id: string) => {
-    if (!confirm('Tem certeza que deseja excluir este pedido? Se ele estiver EFETIVADO, as entradas de estoque correspondentes também serão removidas.')) return;
-    
-    // Find the order to check its ID for slip cleanup
-    const orderToDelete = orders.find(o => o.id === id);
-    
-    if (orderToDelete && orderToDelete.status === 'EFETIVADO') {
-      const ref = orderToDelete.id.split('-')[0];
-      await supabase.from('slips').delete().like('destination', `%Ref: ${ref}%`);
-    }
-
+    if (!confirm('Tem certeza que deseja excluir este pedido de compra?')) return;
     const { error } = await supabase.from('purchase_orders').delete().eq('id', id);
     if (error) alert(error.message);
     else fetchInitialData();
-  };
-
-  const confirmPurchase = async (order: any) => {
-    if (!confirm('Deseja confirmar a compra destes itens? O estoque será atualizado automaticamente.')) return;
-    
-    // 1. Create ENTRADA slips for each item
-    const slipsToCreate = order.items.map((item: any) => ({
-      date: new Date().toISOString().split('T')[0],
-      product_id: item.product_id,
-      quantity: item.quantity,
-      type: 'ENTRADA',
-      category: 'ESTOCAVEIS', // Default category
-      unit: item.unit || 'UN',
-      destination: `Compra Efetivada (Ref: ${order.id.split('-')[0]})`
-    }));
-
-    const { error: slipError } = await supabase.from('slips').insert(slipsToCreate);
-    if (slipError) {
-      alert('Erro ao gerar entradas: ' + slipError.message);
-      return;
-    }
-
-    // 2. Update order status
-    const { error: orderError } = await supabase.from('purchase_orders').update({ status: 'EFETIVADO' }).eq('id', order.id);
-    if (orderError) alert('Erro ao atualizar pedido: ' + orderError.message);
-    else {
-      alert('Compra efetivada e estoque atualizado!');
-      fetchInitialData();
-    }
   };
 
   const generatePDF = (order: any) => {
@@ -298,6 +262,27 @@ const PurchaseOrders: React.FC = () => {
 
     doc.save(`pedido_compra_${order.date}.pdf`);
   };
+
+  const generateExcel = (order: any) => {
+    const sortedItems = [...order.items].sort((a: any, b: any) =>
+      a.product_name.localeCompare(b.product_name)
+    );
+
+    const data = sortedItems.map((item: any) => ({
+      'Produto': item.product_name,
+      'Quantidade': item.quantity,
+      'Unidade': item.unit || 'UN'
+    }));
+
+    const ws = XLSX.utils.json_to_sheet(data);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Itens do Pedido');
+
+    const dateStr = order.date.split('-').reverse().join('_');
+    const orderRef = order.id.split('-')[0];
+    XLSX.writeFile(wb, `pedido_compra_${dateStr}_ref_${orderRef}.xlsx`);
+  };
+
 
   return (
     <div>
@@ -468,7 +453,7 @@ const PurchaseOrders: React.FC = () => {
                 <tr key={o.id}>
                   <td>{o.date.split('-').reverse().join('/')}</td>
                   <td>
-                    <span className={`badge ${o.status === 'EFETIVADO' ? 'badge-green' : 'badge-yellow'}`}>
+                    <span className="badge badge-yellow">
                       {o.status}
                     </span>
                   </td>
@@ -483,17 +468,15 @@ const PurchaseOrders: React.FC = () => {
                       >
                         <FileText size={14} />
                       </button>
-                      
-                      {o.status === 'PENDENTE' && (
-                        <button 
-                          className="button" 
-                          style={{ padding: '0.4rem 0.8rem', fontSize: '0.8rem', display: 'flex', alignItems: 'center', gap: '0.4rem', backgroundColor: '#10b981', border: 'none' }}
-                          onClick={() => confirmPurchase(o)}
-                          title="Efetivar Compra"
-                        >
-                          <CheckCircle size={14} /> Efetivar
-                        </button>
-                      )}
+
+                      <button 
+                        className="button" 
+                        style={{ padding: '0.4rem 0.8rem', fontSize: '0.8rem', display: 'flex', alignItems: 'center', gap: '0.4rem', backgroundColor: 'var(--card-bg)', border: '1px solid var(--border)' }}
+                        onClick={() => generateExcel(o)}
+                        title="Gerar Excel"
+                      >
+                        <FileSpreadsheet size={14} />
+                      </button>
 
                       <button 
                         className="button" 
