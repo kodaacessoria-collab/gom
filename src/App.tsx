@@ -108,7 +108,11 @@ function App() {
     }
   }, [userRole]);
 
-  if (loading) return null;
+  if (loading) return (
+    <div style={{ height: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', backgroundColor: '#0f172a', color: 'white' }}>
+      <h1>Carregando o sistema...</h1>
+    </div>
+  );
 
   if (!session) {
     return <Auth onLogin={checkSession} />;
