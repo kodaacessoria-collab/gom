@@ -31,11 +31,22 @@ const PurchaseOrders: React.FC = () => {
     if (ordersData) setOrders(ordersData);
     
     // Filter: Only show 'SAIDA' slips that aren't already marked as [COMPRADO]
+    // and exclude internal movements like audits, transfers, and write-offs (baixas)
     if (slipsData) {
-      const pendingSlips = slipsData.filter(s => 
-        s.type === 'SAIDA' && 
-        !s.destination.startsWith('[COMPRADO]')
-      );
+      const pendingSlips = slipsData.filter(s => {
+        if (s.type !== 'SAIDA') return false;
+        
+        const dest = s.destination || '';
+        const destLower = dest.toLowerCase();
+        
+        if (destLower.startsWith('[comprado]')) return false;
+        if (destLower.includes('ajuste')) return false;
+        if (destLower.includes('transf.')) return false;
+        if (destLower.includes('baixa -')) return false;
+        if (destLower.includes('lançamento em massa')) return false;
+        
+        return true;
+      });
       setSlips(pendingSlips);
     }
     

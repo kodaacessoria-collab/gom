@@ -26,13 +26,14 @@ const Sidebar: React.FC<SidebarProps> = ({ activeTab, setActiveTab, isOpen, togg
 
   const getMenuItems = () => {
     let items = [...allMenuItems];
-    if (userRole === 'om') {
+    const currentRole = userRole || 'admin'; // fallback for safety, matching App.tsx
+    if (currentRole === 'om') {
       items = allMenuItems.filter(i => ['inventory', 'reports'].includes(i.id));
-    } else if (userRole === 'red') {
+    } else if (currentRole === 'red') {
       items = allMenuItems.filter(i => ['reports'].includes(i.id));
     } else {
       // admin: show all, but filter out adminOnly if not admin (safety)
-      items = allMenuItems.filter(i => !i.adminOnly || userRole === 'admin');
+      items = allMenuItems.filter(i => !i.adminOnly || currentRole === 'admin');
     }
     
     // Todos os usuários têm acesso à aba "Minha Conta" para alterar senha
