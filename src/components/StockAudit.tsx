@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import {
   Plus, X, FileText, ArrowLeft, Search, UserPlus,
-  ClipboardCheck, CheckCircle2, Save, AlertTriangle, Download, Trash2
+  ClipboardCheck, CheckCircle2, Save, Download, Trash2
 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { saveLog } from '../lib/logger';

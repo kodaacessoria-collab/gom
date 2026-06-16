@@ -29,15 +29,6 @@ const Inventory: React.FC<InventoryProps> = ({ userRole }) => {
   const [isTransferOpen, setIsTransferOpen] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
   const [isEntradaOpen, setIsEntradaOpen] = useState(false);
-  const [entradaProduct, setEntradaProduct] = useState<Product | null>(null);
-  const [entradaForm, setEntradaForm] = useState({
-    date: new Date().toISOString().split('T')[0],
-    batch: '',
-    expiry_date: '',
-    cost: '',
-    brand: '',
-    quantity: 0,
-  });
   const [isBaixaOpen, setIsBaixaOpen] = useState(false);
   const [baixaProduct, setBaixaProduct] = useState<Product | null>(null);
   const [baixaForm, setBaixaForm] = useState({
