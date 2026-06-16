@@ -8,8 +8,8 @@ import { mapDbRoleToRole, mapRoleToDbRole } from '../types';
 // Separate client for user creation to avoid session conflicts
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || 'https://placeholder.supabase.co';
 const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY || 'placeholder-key';
-const authClient = createClient(supabaseUrl, supabaseAnonKey, {
-  auth: { persistSession: false }
+const getAuthClient = () => createClient(supabaseUrl, supabaseAnonKey, {
+  auth: { persistSession: false, storageKey: 'admin-auth-client' }
 });
 
 interface Profile {
@@ -54,7 +54,7 @@ const Users: React.FC = () => {
     
     try {
       // 1. Create Auth User
-      const { data: authData, error: authError } = await authClient.auth.signUp({
+      const { data: authData, error: authError } = await getAuthClient().auth.signUp({
         email: formData.email,
         password: formData.password,
       });
