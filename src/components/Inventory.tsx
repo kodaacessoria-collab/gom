@@ -487,9 +487,9 @@ const Inventory: React.FC<InventoryProps> = ({ userRole }) => {
     setNfeItems(prev => prev.map((it, i) => i === idx ? { ...it, ...patch } : it));
 
   const handleNFeSubmit = async () => {
-    const validItems = nfeItems.filter(it => it.selectedProductId || (nfeType === 'ENTRADA' && it.createNew && it.newName.trim() && it.newBatch.trim() && it.newExpiry));
+    const validItems = nfeItems.filter(it => it.selectedProductId || (it.createNew && it.newName.trim() && it.newBatch.trim() && it.newExpiry));
     if (validItems.length === 0) {
-      alert('Vincule ao menos um item da NF a um produto válido.');
+      alert('Vincule ao menos um item da NF a um produto válido ou crie um novo.');
       return;
     }
     setNfeSaving(true);
@@ -498,53 +498,75 @@ const Inventory: React.FC<InventoryProps> = ({ userRole }) => {
         if (!item.selectedProductId && !item.createNew) continue;
         let productId = item.selectedProductId;
 
-        if (nfeType === 'SAIDA') {
-          if (!productId) continue;
-          const prod = products.find(p => p.id === productId);
-          if (!prod) continue;
-          if (prod.quantity < item.qCom) {
-            throw new Error(`Estoque insuficiente para "${prod.name}" (Necessário: ${item.qCom}, Disponível: ${prod.quantity}).`);
+        if (item.createNew) {
+          // Try to find existing same name+batch
+          const { data: existing } = await supabase
+            .from('products').select('id, quantity').eq('deposit', nfeDeposit)
+            .ilike('name', item.newName.trim()).ilike('batch', item.newBatch.trim()).maybeSingle();
+          if (existing) {
+            productId = existing.id;
+            if (item.newBrand || item.newExpiry) {
+              await supabase.from('products').update({ brand: item.newBrand || undefined, expiry_date: item.newExpiry || undefined }).eq('id', existing.id);
+            }
+          } else {
+            const { data: created, error: cErr } = await supabase.from('products').insert([{
+              name: item.newName.trim(),
+              category: 'Estocáveis',
+              unit: item.uCom || 'UN',
+              brand: item.newBrand || null,
+              batch: item.newBatch.trim(),
+              expiry_date: item.newExpiry || null,
+              quantity: 0,
+              min_stock: 10,
+              deposit: nfeDeposit,
+            }]).select().single();
+            if (cErr) throw cErr;
+            productId = created.id;
           }
+        }
+
+        if (!productId) continue;
+        const prod = products.find(p => p.id === productId);
+
+        if (nfeType === 'SAIDA') {
+          // Verify stock only if it's an existing product without createNew flag. If it's a new product or existing found via createNew, we'll allow it (or we can just fetch the current quantity).
+          let currentQuantity = 0;
+          if (prod) {
+             currentQuantity = prod.quantity;
+          } else if (item.createNew) {
+             // For newly created products, fetch the latest quantity from DB to be sure, though it's 0 if just created.
+             const { data: freshProd } = await supabase.from('products').select('quantity').eq('id', productId).single();
+             if (freshProd) currentQuantity = freshProd.quantity;
+          }
+          
+          if (!item.createNew && prod && prod.quantity < item.qCom) {
+            throw new Error(`Estoque insuficiente para "${prod.name}" (Necessário: ${item.qCom}, Disponível: ${prod.quantity}).`);
+          } else if (item.createNew && currentQuantity < item.qCom) {
+             // Let it pass with negative stock or maybe show a warning later? The user requested to create new. So we allow the SAIDA slip.
+          }
+
           const { error: slipErr } = await supabase.from('slips').insert([{
             product_id: productId,
             quantity: item.qCom,
             type: 'SAIDA',
             date: nfeDate,
-            category: prod.category || 'Estocáveis',
-            unit: item.uCom || prod.unit || 'UN',
+            category: prod?.category || 'Estocáveis',
+            unit: item.uCom || prod?.unit || 'UN',
             destination: `Baixa NFe nº${nfeInfo?.nNF || '?'} - ${nfeInfo?.xNome || 'Cliente'}`,
           }]);
           if (slipErr) throw slipErr;
         } else {
-          if (item.createNew) {
-            // Try to find existing same name+batch
-            const { data: existing } = await supabase
-              .from('products').select('id').eq('deposit', nfeDeposit)
-              .ilike('name', item.newName.trim()).ilike('batch', item.newBatch.trim()).maybeSingle();
-            if (existing) {
-              productId = existing.id;
-              if (item.newBrand || item.newExpiry) {
-                await supabase.from('products').update({ brand: item.newBrand || undefined, expiry_date: item.newExpiry || undefined }).eq('id', existing.id);
-              }
-            } else {
-              const { data: created, error: cErr } = await supabase.from('products').insert([{
-                name: item.newName.trim(),
-                category: 'Estocáveis',
-                unit: item.uCom || 'UN',
-                brand: item.newBrand || null,
-                batch: item.newBatch.trim(),
-                expiry_date: item.newExpiry || null,
-                quantity: 0,
-                min_stock: 10,
-                deposit: nfeDeposit,
-              }]).select().single();
-              if (cErr) throw cErr;
-              productId = created.id;
-            }
-          }
-
-          if (!productId) continue;
-          const prod = products.find(p => p.id === productId);
+          const { error: slipErr } = await supabase.from('slips').insert([{
+            product_id: productId,
+            quantity: item.qCom,
+            type: 'ENTRADA',
+            date: nfeDate,
+            category: prod?.category || 'Estocáveis',
+            unit: item.uCom || prod?.unit || 'UN',
+            destination: `Entrada NFe nº${nfeInfo?.nNF || '?'} - ${nfeInfo?.xNome || 'Fornecedor'}${item.vUnCom ? ` - R$${item.vUnCom.toFixed(2)}/un` : ''}`,
+          }]);
+          if (slipErr) throw slipErr;
+        }
           const { error: slipErr } = await supabase.from('slips').insert([{
             product_id: productId,
             quantity: item.qCom,
@@ -1321,7 +1343,7 @@ const Inventory: React.FC<InventoryProps> = ({ userRole }) => {
                               }}
                             >
                               <option value="">— Ignorar este item —</option>
-                              {nfeType === 'ENTRADA' && <option value="__NEW__">✦ Criar novo produto</option>}
+                              <option value="__NEW__">✦ Criar novo produto</option>
                               {Array.from(new Set(products.filter(p => p.deposit === nfeDeposit).map(p => p.name))).sort().map(name => {
                                 const prod = products.filter(p => p.deposit === nfeDeposit && p.name === name);
                                 return prod.map(p => (
@@ -1331,7 +1353,7 @@ const Inventory: React.FC<InventoryProps> = ({ userRole }) => {
                             </select>
                           </td>
                           <td style={{ padding: '0.5rem 0.5rem', minWidth: '260px' }}>
-                            {item.createNew && nfeType === 'ENTRADA' ? (
+                            {item.createNew ? (
                               <div style={{ display: 'flex', flexDirection: 'column', gap: '0.3rem' }}>
                                 <input className="input-field" style={{ height: '30px', fontSize: '0.78rem' }} placeholder="Nome do produto *" value={item.newName} onChange={e => updateNfeItem(idx, { newName: e.target.value })} />
                                 <div style={{ display: 'flex', gap: '0.3rem' }}>
@@ -1372,7 +1394,7 @@ const Inventory: React.FC<InventoryProps> = ({ userRole }) => {
                     disabled={nfeSaving}
                   >
                     <ArrowDownCircle size={18} style={{ marginRight: '0.5rem' }} />
-                    {nfeSaving ? 'Registrando...' : `Confirmar ${nfeType === 'ENTRADA' ? 'Entrada' : 'Baixa'} (${nfeItems.filter(it => it.selectedProductId || (nfeType === 'ENTRADA' && it.createNew && it.newName.trim() && it.newBatch.trim() && it.newExpiry)).length} itens)`}
+                    {nfeSaving ? 'Registrando...' : `Confirmar ${nfeType === 'ENTRADA' ? 'Entrada' : 'Baixa'} (${nfeItems.filter(it => it.selectedProductId || (it.createNew && it.newName.trim() && it.newBatch.trim() && it.newExpiry)).length} itens)`}
                   </button>
                 </div>
               </>
