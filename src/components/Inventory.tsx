@@ -71,6 +71,7 @@ const Inventory: React.FC<InventoryProps> = ({ userRole }) => {
     newBrand: string;
   }
   const [nfeItems, setNfeItems] = useState<NFeItem[]>([]);
+  const [nfeType, setNfeType] = useState<'ENTRADA' | 'SAIDA'>('ENTRADA');
   const [nfeInfo, setNfeInfo] = useState<{ nNF: string; dhEmi: string; xNome: string } | null>(null);
   const [nfeDeposit, setNfeDeposit] = useState<Deposit>('Depósito-Grupo OM');
   const [nfeDate, setNfeDate] = useState(new Date().toISOString().split('T')[0]);
@@ -486,9 +487,9 @@ const Inventory: React.FC<InventoryProps> = ({ userRole }) => {
     setNfeItems(prev => prev.map((it, i) => i === idx ? { ...it, ...patch } : it));
 
   const handleNFeSubmit = async () => {
-    const validItems = nfeItems.filter(it => it.selectedProductId || (it.createNew && it.newName.trim() && it.newBatch.trim() && it.newExpiry));
+    const validItems = nfeItems.filter(it => it.selectedProductId || (nfeType === 'ENTRADA' && it.createNew && it.newName.trim() && it.newBatch.trim() && it.newExpiry));
     if (validItems.length === 0) {
-      alert('Vincule ao menos um item da NF a um produto ou marque para criar novo.');
+      alert('Vincule ao menos um item da NF a um produto válido.');
       return;
     }
     setNfeSaving(true);
@@ -497,48 +498,67 @@ const Inventory: React.FC<InventoryProps> = ({ userRole }) => {
         if (!item.selectedProductId && !item.createNew) continue;
         let productId = item.selectedProductId;
 
-        if (item.createNew) {
-          // Try to find existing same name+batch
-          const { data: existing } = await supabase
-            .from('products').select('id').eq('deposit', nfeDeposit)
-            .ilike('name', item.newName.trim()).ilike('batch', item.newBatch.trim()).maybeSingle();
-          if (existing) {
-            productId = existing.id;
-            if (item.newBrand || item.newExpiry) {
-              await supabase.from('products').update({ brand: item.newBrand || undefined, expiry_date: item.newExpiry || undefined }).eq('id', existing.id);
-            }
-          } else {
-            const { data: created, error: cErr } = await supabase.from('products').insert([{
-              name: item.newName.trim(),
-              category: 'Estocáveis',
-              unit: item.uCom || 'UN',
-              brand: item.newBrand || null,
-              batch: item.newBatch.trim(),
-              expiry_date: item.newExpiry || null,
-              quantity: 0,
-              min_stock: 10,
-              deposit: nfeDeposit,
-            }]).select().single();
-            if (cErr) throw cErr;
-            productId = created.id;
+        if (nfeType === 'SAIDA') {
+          if (!productId) continue;
+          const prod = products.find(p => p.id === productId);
+          if (!prod) continue;
+          if (prod.quantity < item.qCom) {
+            throw new Error(`Estoque insuficiente para "${prod.name}" (Necessário: ${item.qCom}, Disponível: ${prod.quantity}).`);
           }
-        }
+          const { error: slipErr } = await supabase.from('slips').insert([{
+            product_id: productId,
+            quantity: item.qCom,
+            type: 'SAIDA',
+            date: nfeDate,
+            category: prod.category || 'Estocáveis',
+            unit: item.uCom || prod.unit || 'UN',
+            destination: `Baixa NFe nº${nfeInfo?.nNF || '?'} - ${nfeInfo?.xNome || 'Cliente'}`,
+          }]);
+          if (slipErr) throw slipErr;
+        } else {
+          if (item.createNew) {
+            // Try to find existing same name+batch
+            const { data: existing } = await supabase
+              .from('products').select('id').eq('deposit', nfeDeposit)
+              .ilike('name', item.newName.trim()).ilike('batch', item.newBatch.trim()).maybeSingle();
+            if (existing) {
+              productId = existing.id;
+              if (item.newBrand || item.newExpiry) {
+                await supabase.from('products').update({ brand: item.newBrand || undefined, expiry_date: item.newExpiry || undefined }).eq('id', existing.id);
+              }
+            } else {
+              const { data: created, error: cErr } = await supabase.from('products').insert([{
+                name: item.newName.trim(),
+                category: 'Estocáveis',
+                unit: item.uCom || 'UN',
+                brand: item.newBrand || null,
+                batch: item.newBatch.trim(),
+                expiry_date: item.newExpiry || null,
+                quantity: 0,
+                min_stock: 10,
+                deposit: nfeDeposit,
+              }]).select().single();
+              if (cErr) throw cErr;
+              productId = created.id;
+            }
+          }
 
-        if (!productId) continue;
-        const prod = products.find(p => p.id === productId);
-        const { error: slipErr } = await supabase.from('slips').insert([{
-          product_id: productId,
-          quantity: item.qCom,
-          type: 'ENTRADA',
-          date: nfeDate,
-          category: prod?.category || 'Estocáveis',
-          unit: item.uCom || prod?.unit || 'UN',
-          destination: `Entrada NFe nº${nfeInfo?.nNF || '?'} - ${nfeInfo?.xNome || 'Fornecedor'}${item.vUnCom ? ` - R$${item.vUnCom.toFixed(2)}/un` : ''}`,
-        }]);
-        if (slipErr) throw slipErr;
+          if (!productId) continue;
+          const prod = products.find(p => p.id === productId);
+          const { error: slipErr } = await supabase.from('slips').insert([{
+            product_id: productId,
+            quantity: item.qCom,
+            type: 'ENTRADA',
+            date: nfeDate,
+            category: prod?.category || 'Estocáveis',
+            unit: item.uCom || prod?.unit || 'UN',
+            destination: `Entrada NFe nº${nfeInfo?.nNF || '?'} - ${nfeInfo?.xNome || 'Fornecedor'}${item.vUnCom ? ` - R$${item.vUnCom.toFixed(2)}/un` : ''}`,
+          }]);
+          if (slipErr) throw slipErr;
+        }
       }
-      saveLog('ENTRADA', 'ESTOQUE', `Entrada via NFe nº${nfeInfo?.nNF} — ${validItems.length} item(ns)`);
-      alert(`✅ Entrada da NFe nº${nfeInfo?.nNF} registrada com sucesso!\n${validItems.length} item(ns) lançados no estoque.`);
+      saveLog(nfeType, 'ESTOQUE', `${nfeType === 'ENTRADA' ? 'Entrada' : 'Baixa'} via NFe nº${nfeInfo?.nNF} — ${validItems.length} item(ns)`);
+      alert(`✅ ${nfeType === 'ENTRADA' ? 'Entrada' : 'Baixa'} da NFe nº${nfeInfo?.nNF} registrada com sucesso!\n${validItems.length} item(ns) lançados.`);
       setIsNFeOpen(false);
       setNfeItems([]);
       setNfeInfo(null);
@@ -570,10 +590,18 @@ const Inventory: React.FC<InventoryProps> = ({ userRole }) => {
           <button
             className="button"
             style={{ backgroundColor: '#0e7490', border: 'none' }}
-            onClick={() => { setIsNFeOpen(true); setNfeItems([]); setNfeInfo(null); }}
+            onClick={() => { setNfeType('ENTRADA'); setIsNFeOpen(true); setNfeItems([]); setNfeInfo(null); }}
           >
             <FileInput size={18} style={{ marginRight: '0.5rem' }} />
             Entrada NFe (XML)
+          </button>
+          <button
+            className="button"
+            style={{ backgroundColor: '#b91c1c', border: 'none' }}
+            onClick={() => { setNfeType('SAIDA'); setIsNFeOpen(true); setNfeItems([]); setNfeInfo(null); }}
+          >
+            <FileInput size={18} style={{ marginRight: '0.5rem' }} />
+            Baixa NFe (XML)
           </button>
           <button className="button" style={{ backgroundColor: '#4f46e5', border: 'none' }} onClick={() => setIsBulkOpen(true)}>
             <Layers size={18} style={{ marginRight: '0.5rem' }} />
@@ -1200,11 +1228,11 @@ const Inventory: React.FC<InventoryProps> = ({ userRole }) => {
             <div className="view-header" style={{ marginBottom: '1.5rem' }}>
               <div>
                 <h2 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                  <FileInput size={22} color="#22d3ee" />
-                  Entrada por NFe (XML)
+                  <FileInput size={22} color={nfeType === 'ENTRADA' ? "#22d3ee" : "#f87171"} />
+                  {nfeType === 'ENTRADA' ? 'Entrada por NFe (XML)' : 'Baixa por NFe (XML)'}
                 </h2>
                 <p style={{ fontSize: '0.85rem', opacity: 0.7, marginTop: '0.2rem' }}>
-                  Importe o XML da Nota Fiscal de Entrada para registrar as entradas no estoque automaticamente.
+                  {nfeType === 'ENTRADA' ? 'Importe o XML da Nota Fiscal de Entrada para registrar as entradas no estoque automaticamente.' : 'Importe o XML da Nota Fiscal de Saída para dar baixa no estoque automaticamente.'}
                 </p>
               </div>
               <button onClick={() => { setIsNFeOpen(false); setNfeItems([]); setNfeInfo(null); if (nfeFileRef.current) nfeFileRef.current.value = ''; }} style={{ background: 'none', border: 'none', color: 'white', cursor: 'pointer' }}>
@@ -1218,7 +1246,7 @@ const Inventory: React.FC<InventoryProps> = ({ userRole }) => {
                 <label style={{ fontSize: '0.8rem', color: 'var(--text-muted)', display: 'block', marginBottom: '0.4rem' }}>📎 Arquivo XML da NFe *</label>
                 <label
                   htmlFor="nfe-xml-upload"
-                  style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer', background: 'rgba(34,211,238,0.07)', border: '1.5px dashed #22d3ee', borderRadius: '0.5rem', padding: '0.6rem 1rem', color: '#22d3ee', fontSize: '0.85rem', fontWeight: 600 }}
+                  style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer', background: nfeType === 'ENTRADA' ? 'rgba(34,211,238,0.07)' : 'rgba(248,113,113,0.07)', border: nfeType === 'ENTRADA' ? '1.5px dashed #22d3ee' : '1.5px dashed #f87171', borderRadius: '0.5rem', padding: '0.6rem 1rem', color: nfeType === 'ENTRADA' ? '#22d3ee' : '#f87171', fontSize: '0.85rem', fontWeight: 600 }}
                 >
                   <Upload size={16} /> Selecionar XML
                 </label>
@@ -1246,10 +1274,10 @@ const Inventory: React.FC<InventoryProps> = ({ userRole }) => {
 
             {/* NF Info */}
             {nfeInfo && (
-              <div style={{ background: 'rgba(34,211,238,0.07)', border: '1px solid rgba(34,211,238,0.25)', borderRadius: '0.5rem', padding: '0.75rem 1rem', marginBottom: '1.25rem', display: 'flex', gap: '2rem', flexWrap: 'wrap', fontSize: '0.85rem' }}>
+              <div style={{ background: nfeType === 'ENTRADA' ? 'rgba(34,211,238,0.07)' : 'rgba(248,113,113,0.07)', border: nfeType === 'ENTRADA' ? '1px solid rgba(34,211,238,0.25)' : '1px solid rgba(248,113,113,0.25)', borderRadius: '0.5rem', padding: '0.75rem 1rem', marginBottom: '1.25rem', display: 'flex', gap: '2rem', flexWrap: 'wrap', fontSize: '0.85rem' }}>
                 <span>📄 <strong>NF nº</strong> {nfeInfo.nNF}</span>
                 <span>📅 <strong>Emissão:</strong> {nfeInfo.dhEmi ? nfeInfo.dhEmi.split('-').reverse().join('/') : '-'}</span>
-                <span>🏭 <strong>Fornecedor:</strong> {nfeInfo.xNome}</span>
+                <span>🏭 <strong>{nfeType === 'ENTRADA' ? 'Fornecedor' : 'Cliente'}:</strong> {nfeInfo.xNome}</span>
                 <span>📦 <strong>Itens:</strong> {nfeItems.length}</span>
               </div>
             )}
@@ -1257,19 +1285,19 @@ const Inventory: React.FC<InventoryProps> = ({ userRole }) => {
             {/* Items table */}
             {nfeItems.length > 0 && (
               <>
-                <p style={{ fontSize: '0.78rem', color: '#22d3ee', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: '0.6rem' }}>
+                <p style={{ fontSize: '0.78rem', color: nfeType === 'ENTRADA' ? '#22d3ee' : '#f87171', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: '0.6rem' }}>
                   Vincule cada item da NF ao produto correspondente no estoque:
                 </p>
                 <div style={{ overflowX: 'auto', border: '1px solid var(--border)', borderRadius: '0.5rem', marginBottom: '1.25rem' }}>
                   <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: '800px' }}>
                     <thead>
-                      <tr style={{ background: 'rgba(34,211,238,0.08)' }}>
-                        <th style={{ padding: '0.5rem 0.75rem', textAlign: 'left', fontSize: '0.75rem', color: '#22d3ee', fontWeight: 600 }}>Descrição (NF)</th>
-                        <th style={{ padding: '0.5rem 0.75rem', textAlign: 'left', fontSize: '0.75rem', color: '#22d3ee', fontWeight: 600 }}>UND</th>
-                        <th style={{ padding: '0.5rem 0.75rem', textAlign: 'left', fontSize: '0.75rem', color: '#22d3ee', fontWeight: 600 }}>Qtd</th>
-                        <th style={{ padding: '0.5rem 0.75rem', textAlign: 'left', fontSize: '0.75rem', color: '#22d3ee', fontWeight: 600 }}>R$/un</th>
-                        <th style={{ padding: '0.5rem 0.75rem', textAlign: 'left', fontSize: '0.75rem', color: '#22d3ee', fontWeight: 600 }}>Vincular ao Produto</th>
-                        <th style={{ padding: '0.5rem 0.75rem', textAlign: 'left', fontSize: '0.75rem', color: '#22d3ee', fontWeight: 600 }}>Lote / Validade / Marca</th>
+                      <tr style={{ background: nfeType === 'ENTRADA' ? 'rgba(34,211,238,0.08)' : 'rgba(248,113,113,0.08)' }}>
+                        <th style={{ padding: '0.5rem 0.75rem', textAlign: 'left', fontSize: '0.75rem', color: nfeType === 'ENTRADA' ? '#22d3ee' : '#f87171', fontWeight: 600 }}>Descrição (NF)</th>
+                        <th style={{ padding: '0.5rem 0.75rem', textAlign: 'left', fontSize: '0.75rem', color: nfeType === 'ENTRADA' ? '#22d3ee' : '#f87171', fontWeight: 600 }}>UND</th>
+                        <th style={{ padding: '0.5rem 0.75rem', textAlign: 'left', fontSize: '0.75rem', color: nfeType === 'ENTRADA' ? '#22d3ee' : '#f87171', fontWeight: 600 }}>Qtd</th>
+                        <th style={{ padding: '0.5rem 0.75rem', textAlign: 'left', fontSize: '0.75rem', color: nfeType === 'ENTRADA' ? '#22d3ee' : '#f87171', fontWeight: 600 }}>R$/un</th>
+                        <th style={{ padding: '0.5rem 0.75rem', textAlign: 'left', fontSize: '0.75rem', color: nfeType === 'ENTRADA' ? '#22d3ee' : '#f87171', fontWeight: 600 }}>Vincular ao Produto</th>
+                        <th style={{ padding: '0.5rem 0.75rem', textAlign: 'left', fontSize: '0.75rem', color: nfeType === 'ENTRADA' ? '#22d3ee' : '#f87171', fontWeight: 600 }}>Status</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -1293,7 +1321,7 @@ const Inventory: React.FC<InventoryProps> = ({ userRole }) => {
                               }}
                             >
                               <option value="">— Ignorar este item —</option>
-                              <option value="__NEW__">✦ Criar novo produto</option>
+                              {nfeType === 'ENTRADA' && <option value="__NEW__">✦ Criar novo produto</option>}
                               {Array.from(new Set(products.filter(p => p.deposit === nfeDeposit).map(p => p.name))).sort().map(name => {
                                 const prod = products.filter(p => p.deposit === nfeDeposit && p.name === name);
                                 return prod.map(p => (
@@ -1303,7 +1331,7 @@ const Inventory: React.FC<InventoryProps> = ({ userRole }) => {
                             </select>
                           </td>
                           <td style={{ padding: '0.5rem 0.5rem', minWidth: '260px' }}>
-                            {item.createNew ? (
+                            {item.createNew && nfeType === 'ENTRADA' ? (
                               <div style={{ display: 'flex', flexDirection: 'column', gap: '0.3rem' }}>
                                 <input className="input-field" style={{ height: '30px', fontSize: '0.78rem' }} placeholder="Nome do produto *" value={item.newName} onChange={e => updateNfeItem(idx, { newName: e.target.value })} />
                                 <div style={{ display: 'flex', gap: '0.3rem' }}>
@@ -1313,9 +1341,9 @@ const Inventory: React.FC<InventoryProps> = ({ userRole }) => {
                                 <input className="input-field" style={{ height: '30px', fontSize: '0.78rem' }} placeholder="Marca" value={item.newBrand} onChange={e => updateNfeItem(idx, { newBrand: e.target.value })} />
                               </div>
                             ) : item.selectedProductId ? (
-                              <span style={{ fontSize: '0.78rem', color: '#34d399' }}>
+                              <span style={{ fontSize: '0.78rem', color: nfeType === 'ENTRADA' ? '#34d399' : '#f87171' }}>
                                 <Link2 size={12} style={{ marginRight: '0.3rem', verticalAlign: 'middle' }} />
-                                Entrada de <strong>{item.qCom}</strong> {item.uCom} será lançada
+                                {nfeType === 'ENTRADA' ? 'Entrada' : 'Baixa'} de <strong>{item.qCom}</strong> {item.uCom} será lançada
                               </span>
                             ) : (
                               <span style={{ fontSize: '0.78rem', color: 'var(--text-muted)', fontStyle: 'italic' }}>Selecione um produto →</span>
@@ -1339,12 +1367,12 @@ const Inventory: React.FC<InventoryProps> = ({ userRole }) => {
                   <button
                     type="button"
                     className="button"
-                    style={{ flex: 2, backgroundColor: '#0e7490', border: 'none' }}
+                    style={{ flex: 2, backgroundColor: nfeType === 'ENTRADA' ? '#0e7490' : '#b91c1c', border: 'none' }}
                     onClick={handleNFeSubmit}
                     disabled={nfeSaving}
                   >
                     <ArrowDownCircle size={18} style={{ marginRight: '0.5rem' }} />
-                    {nfeSaving ? 'Registrando...' : `Confirmar Entrada (${nfeItems.filter(it => it.selectedProductId || (it.createNew && it.newName.trim() && it.newBatch.trim() && it.newExpiry)).length} itens)`}
+                    {nfeSaving ? 'Registrando...' : `Confirmar ${nfeType === 'ENTRADA' ? 'Entrada' : 'Baixa'} (${nfeItems.filter(it => it.selectedProductId || (nfeType === 'ENTRADA' && it.createNew && it.newName.trim() && it.newBatch.trim() && it.newExpiry)).length} itens)`}
                   </button>
                 </div>
               </>
