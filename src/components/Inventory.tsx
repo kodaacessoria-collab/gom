@@ -567,17 +567,6 @@ const Inventory: React.FC<InventoryProps> = ({ userRole }) => {
           }]);
           if (slipErr) throw slipErr;
         }
-          const { error: slipErr } = await supabase.from('slips').insert([{
-            product_id: productId,
-            quantity: item.qCom,
-            type: 'ENTRADA',
-            date: nfeDate,
-            category: prod?.category || 'Estocáveis',
-            unit: item.uCom || prod?.unit || 'UN',
-            destination: `Entrada NFe nº${nfeInfo?.nNF || '?'} - ${nfeInfo?.xNome || 'Fornecedor'}${item.vUnCom ? ` - R$${item.vUnCom.toFixed(2)}/un` : ''}`,
-          }]);
-          if (slipErr) throw slipErr;
-        }
       }
       saveLog(nfeType, 'ESTOQUE', `${nfeType === 'ENTRADA' ? 'Entrada' : 'Baixa'} via NFe nº${nfeInfo?.nNF} — ${validItems.length} item(ns)`);
       alert(`✅ ${nfeType === 'ENTRADA' ? 'Entrada' : 'Baixa'} da NFe nº${nfeInfo?.nNF} registrada com sucesso!\n${validItems.length} item(ns) lançados.`);
