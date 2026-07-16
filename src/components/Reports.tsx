@@ -9,6 +9,15 @@ interface ReportsProps {
   userRole?: Role | null;
 }
 
+const REPORT_FONT = 'courier';
+const REPORT_FONT_SIZE = 10;
+
+const reportTableOptions = {
+  styles: { font: REPORT_FONT, fontSize: REPORT_FONT_SIZE },
+  headStyles: { font: REPORT_FONT, fontSize: REPORT_FONT_SIZE, fontStyle: 'bold' as const },
+  bodyStyles: { font: REPORT_FONT, fontSize: REPORT_FONT_SIZE },
+};
+
 const Reports: React.FC<ReportsProps> = ({ userRole }) => {
   const [dateStart, setDateStart] = useState('');
   const [dateEnd, setDateEnd] = useState('');
@@ -75,6 +84,8 @@ const Reports: React.FC<ReportsProps> = ({ userRole }) => {
       }
 
       const doc = new jsPDF();
+      doc.setFont(REPORT_FONT, 'normal');
+      doc.setFontSize(REPORT_FONT_SIZE);
       let title = 'Relatório de Estoque';
       
       if (mode === 'estoque_total') title = 'Relatório de Estoque Total (Saldos > 0)';
@@ -84,11 +95,13 @@ const Reports: React.FC<ReportsProps> = ({ userRole }) => {
       if (mode === 'estoque_agrupado') title = 'Relatório de Estoque Consolidado (Por Peso/Medida)';
 
       // Header
-      doc.setFontSize(20);
+      doc.setFont(REPORT_FONT, 'bold');
+      doc.setFontSize(REPORT_FONT_SIZE);
       doc.setTextColor(31, 41, 55);
       doc.text(title, 14, 22);
       
-      doc.setFontSize(10);
+      doc.setFont(REPORT_FONT, 'normal');
+      doc.setFontSize(REPORT_FONT_SIZE);
       doc.setTextColor(107, 114, 128);
       doc.text(`Gerado em: ${new Date().toLocaleString('pt-BR')} | Depósito: ${depositToQuery === 'TODOS' ? 'Todos os Depósitos' : depositToQuery}`, 14, 30);
       
@@ -177,10 +190,11 @@ const Reports: React.FC<ReportsProps> = ({ userRole }) => {
           ]);
 
         autoTable(doc, {
+          ...reportTableOptions,
           startY: startY,
           head: [['Produto (Agrupado)', 'Depósito', 'Categoria', 'UND', 'Marcas Encontradas', 'Saldo Consolidado']],
           body: tableData,
-          headStyles: { fillColor: [124, 58, 237] }, // Purple
+          headStyles: { ...reportTableOptions.headStyles, fillColor: [124, 58, 237] }, // Purple
           theme: 'grid'
         });
       } else if (mode === 'estoque_total' || mode === 'estoque_categoria') {
@@ -197,10 +211,11 @@ const Reports: React.FC<ReportsProps> = ({ userRole }) => {
           ]);
 
         autoTable(doc, {
+          ...reportTableOptions,
           startY: startY,
           head: [['Produto', 'Depósito', 'Categoria', 'UND', 'Marca', 'Vencimento', 'Saldo']],
           body: tableData,
-          headStyles: { fillColor: [79, 70, 229] }, // Indigo
+          headStyles: { ...reportTableOptions.headStyles, fillColor: [79, 70, 229] }, // Indigo
           theme: 'grid'
         });
       } else if (mode === 'validade') {
@@ -247,7 +262,8 @@ const Reports: React.FC<ReportsProps> = ({ userRole }) => {
             currentY = 20;
           }
 
-          doc.setFontSize(12);
+          doc.setFont(REPORT_FONT, 'bold');
+          doc.setFontSize(REPORT_FONT_SIZE);
           doc.setTextColor(bucketName === 'Vencidos' ? 220 : 31, bucketName === 'Vencidos' ? 38 : 41, bucketName === 'Vencidos' ? 38 : 55);
           doc.text(`${bucketName} (${items.length} itens)`, 14, currentY);
 
@@ -261,10 +277,11 @@ const Reports: React.FC<ReportsProps> = ({ userRole }) => {
           ]);
 
           autoTable(doc, {
+            ...reportTableOptions,
             startY: currentY + 4,
             head: [['Produto', 'Depósito', 'Categoria', 'Lote', 'Vencimento', 'Saldo']],
             body: tableData,
-            headStyles: { fillColor: bucketName === 'Vencidos' ? [220, 38, 38] : [153, 27, 27] }, 
+            headStyles: { ...reportTableOptions.headStyles, fillColor: bucketName === 'Vencidos' ? [220, 38, 38] : [153, 27, 27] },
             theme: 'grid'
           });
 
@@ -277,7 +294,8 @@ const Reports: React.FC<ReportsProps> = ({ userRole }) => {
           return;
         }
 
-        doc.setFontSize(11);
+        doc.setFont(REPORT_FONT, 'normal');
+        doc.setFontSize(REPORT_FONT_SIZE);
         doc.text(`Período: ${dateStart.split('-').reverse().join('/')} até ${dateEnd.split('-').reverse().join('/')}`, 14, startY);
 
         let querySlips = supabase.from('slips').select('*, products(name, deposit)')
@@ -315,10 +333,11 @@ const Reports: React.FC<ReportsProps> = ({ userRole }) => {
           ]);
 
           autoTable(doc, {
+            ...reportTableOptions,
             startY: startY + 10,
             head: [['Data', 'Produto', 'Depósito', 'QTD', 'Tipo', 'Destino/Origem']],
             body: tableData,
-            headStyles: { fillColor: [5, 150, 105] }, // Green for Movement
+            headStyles: { ...reportTableOptions.headStyles, fillColor: [5, 150, 105] }, // Green for Movement
             theme: 'grid'
           });
         } else {
@@ -340,10 +359,11 @@ const Reports: React.FC<ReportsProps> = ({ userRole }) => {
           ]);
 
           autoTable(doc, {
+            ...reportTableOptions,
             startY: startY + 10,
             head: [['Produto', 'Categoria', 'Entradas', 'Saídas', 'Saldo Período']],
             body: tableData,
-            headStyles: { fillColor: [5, 150, 105] }, // Green for Movement
+            headStyles: { ...reportTableOptions.headStyles, fillColor: [5, 150, 105] }, // Green for Movement
             theme: 'grid'
           });
         }
