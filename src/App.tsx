@@ -16,6 +16,25 @@ import { mapDbRoleToRole } from './types';
 import { Menu, LogOut } from 'lucide-react';
 import './index.css';
 
+const STARTUP_TIMEOUT_MS = 8000;
+
+const withTimeout = async <T, F>(promise: PromiseLike<T>, fallback: F, label: string): Promise<T | F> => {
+  let timeoutId: ReturnType<typeof setTimeout>;
+
+  const timeout = new Promise<F>((resolve) => {
+    timeoutId = setTimeout(() => {
+      console.warn(`${label} demorou demais. Continuando sem travar a tela inicial.`);
+      resolve(fallback);
+    }, STARTUP_TIMEOUT_MS);
+  });
+
+  try {
+    return await Promise.race([promise, timeout]);
+  } finally {
+    clearTimeout(timeoutId!);
+  }
+};
+
 function App() {
   const [activeTab, setActiveTab] = useState('dashboard');
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
@@ -48,12 +67,20 @@ function App() {
 
     // 2. Se não houver bypass, verifica a sessão real do Supabase
     try {
-      const { data: { session: currentSession } } = await supabase.auth.getSession();
+      const currentSession = await withTimeout(
+        supabase.auth.getSession().then(({ data }) => data.session),
+        null,
+        'Verificação de sessão'
+      );
       setSession(currentSession);
       
       if (currentSession?.user) {
-        const { data } = await supabase.from('profiles').select('role').eq('id', currentSession.user.id).single();
-        if (data) setUserRole(mapDbRoleToRole(data.role));
+        const profileResult = await withTimeout(
+          supabase.from('profiles').select('role').eq('id', currentSession.user.id).single(),
+          null,
+          'Busca do perfil do usuário'
+        );
+        if (profileResult?.data) setUserRole(mapDbRoleToRole(profileResult.data.role));
       }
     } catch (err) {
       console.error('Erro ao verificar sessão do Supabase:', err);
@@ -83,8 +110,12 @@ function App() {
         if (localStorage.getItem('gom_admin_bypass') !== 'true') {
           setSession(newSession);
           if (newSession?.user) {
-            const { data: profileData } = await supabase.from('profiles').select('role').eq('id', newSession.user.id).single();
-            if (profileData) setUserRole(mapDbRoleToRole(profileData.role));
+            const profileResult = await withTimeout(
+              supabase.from('profiles').select('role').eq('id', newSession.user.id).single(),
+              null,
+              'Busca do perfil do usuário'
+            );
+            if (profileResult?.data) setUserRole(mapDbRoleToRole(profileResult.data.role));
           } else {
             setUserRole(null);
           }
