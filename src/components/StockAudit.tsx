@@ -9,6 +9,9 @@ import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import type { Category, Deposit } from '../types';
 
+const REPORT_FONT = 'courier';
+const REPORT_FONT_SIZE = 8;
+
 /* ────────────── Types ────────────── */
 interface Audit {
   id: string;
@@ -517,45 +520,48 @@ const StockAudit: React.FC = () => {
   const generatePDF = (audit: Audit, items: AuditItem[]) => {
     items = items.filter((item) => !(item.system_qty === 0 && item.audited_qty === 0));
     const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+    doc.setFont(REPORT_FONT, 'normal');
+    doc.setFontSize(REPORT_FONT_SIZE);
 
     /* ── Header ── */
     doc.setFillColor(15, 23, 42);
-    doc.rect(0, 0, 210, 38, 'F');
+    doc.rect(0, 0, 210, 26, 'F');
 
-    doc.setFontSize(20);
+    doc.setFontSize(REPORT_FONT_SIZE);
     doc.setTextColor(129, 140, 248);
-    doc.setFont('helvetica', 'bold');
-    doc.text('GOM ESTOQUE', 14, 16);
+    doc.setFont(REPORT_FONT, 'bold');
+    doc.text('GOM ESTOQUE', 14, 11);
 
-    doc.setFontSize(11);
+    doc.setFontSize(REPORT_FONT_SIZE);
     doc.setTextColor(192, 132, 252);
-    doc.text('RELATÓRIO DE AUDITORIA DE ESTOQUE', 14, 25);
+    doc.text('RELATÓRIO DE AUDITORIA DE ESTOQUE', 14, 17);
 
-    doc.setFontSize(8);
+    doc.setFontSize(REPORT_FONT_SIZE);
+    doc.setFont(REPORT_FONT, 'normal');
     doc.setTextColor(148, 163, 184);
-    doc.text(`Código: ${audit.audit_code}`, 14, 33);
-    doc.text(`Data/Hora: ${new Date(audit.audit_date).toLocaleString('pt-BR')}`, 100, 33);
+    doc.text(`Código: ${audit.audit_code}`, 14, 23);
+    doc.text(`Data/Hora: ${new Date(audit.audit_date).toLocaleString('pt-BR')}`, 100, 23);
 
     /* ── Info section ── */
-    let y = 48;
-    doc.setFontSize(9);
+    let y = 34;
+    doc.setFontSize(REPORT_FONT_SIZE);
     doc.setTextColor(30, 30, 30);
 
     doc.setFillColor(241, 245, 249);
-    doc.roundedRect(10, y - 5, 190, 35, 2, 2, 'F');
+    doc.roundedRect(10, y - 5, 190, 28, 2, 2, 'F');
 
-    doc.setFont('helvetica', 'bold');
+    doc.setFont(REPORT_FONT, 'bold');
     doc.setTextColor(99, 102, 241);
     doc.text('INFORMAÇÕES DA AUDITORIA', 14, y + 1);
 
-    doc.setFont('helvetica', 'normal');
+    doc.setFont(REPORT_FONT, 'normal');
     doc.setTextColor(50, 50, 50);
-    doc.text(`Depósito: ${audit.deposit}`, 14, y + 8);
-    doc.text(`Status: ${audit.status}`, 110, y + 8);
-    doc.text(`Auditor: ${audit.auditor_name || '-'}`, 14, y + 15);
-    doc.text(`CPF Auditor: ${audit.auditor_cpf || '-'}`, 110, y + 15);
-    doc.text(`Conferente: ${audit.responsible_name || '-'}`, 14, y + 22);
-    doc.text(`CPF Conferente: ${audit.responsible_cpf || '-'}`, 110, y + 22);
+    doc.text(`Depósito: ${audit.deposit}`, 14, y + 7);
+    doc.text(`Status: ${audit.status}`, 110, y + 7);
+    doc.text(`Auditor: ${audit.auditor_name || '-'}`, 14, y + 13);
+    doc.text(`CPF Auditor: ${audit.auditor_cpf || '-'}`, 110, y + 13);
+    doc.text(`Conferente: ${audit.responsible_name || '-'}`, 14, y + 19);
+    doc.text(`CPF Conferente: ${audit.responsible_cpf || '-'}`, 110, y + 19);
 
     if (audit.observations) {
       y += 32;
@@ -570,7 +576,7 @@ const StockAudit: React.FC = () => {
     const withDiff = items.filter((i) => i.difference !== null && i.difference !== 0).length;
     const newProds = items.filter((i) => i.is_new_product).length;
 
-    y = audit.observations ? y + 20 : y + 42;
+    y = audit.observations ? y + 20 : y + 34;
 
     doc.setFillColor(239, 246, 255);
     doc.roundedRect(10, y - 4, 58, 18, 2, 2, 'F');
@@ -579,8 +585,8 @@ const StockAudit: React.FC = () => {
     doc.setFillColor(255, 241, 242);
     doc.roundedRect(142, y - 4, 58, 18, 2, 2, 'F');
 
-    doc.setFontSize(16);
-    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(REPORT_FONT_SIZE);
+    doc.setFont(REPORT_FONT, 'bold');
     doc.setTextColor(37, 99, 235);
     doc.text(String(totalItems), 39, y + 8, { align: 'center' });
     doc.setTextColor(22, 163, 74);
@@ -588,8 +594,8 @@ const StockAudit: React.FC = () => {
     doc.setTextColor(220, 38, 38);
     doc.text(String(newProds), 171, y + 8, { align: 'center' });
 
-    doc.setFontSize(7);
-    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(REPORT_FONT_SIZE);
+    doc.setFont(REPORT_FONT, 'normal');
     doc.setTextColor(70, 70, 70);
     doc.text('Total de Itens', 39, y + 14, { align: 'center' });
     doc.text('Com Divergência', 105, y + 14, { align: 'center' });
@@ -613,13 +619,15 @@ const StockAudit: React.FC = () => {
         item.audited_qty ?? '-',
         fmtDiff(item.difference),
       ]),
-      styles: { fontSize: 7, cellPadding: 2.5, lineColor: [226, 232, 240], lineWidth: 0.2 },
+      styles: { font: REPORT_FONT, fontSize: REPORT_FONT_SIZE, cellPadding: 1.5, lineColor: [226, 232, 240], lineWidth: 0.2 },
       headStyles: {
         fillColor: [99, 102, 241],
         textColor: 255,
+        font: REPORT_FONT,
         fontStyle: 'bold',
-        fontSize: 7,
+        fontSize: REPORT_FONT_SIZE,
       },
+      bodyStyles: { font: REPORT_FONT, fontSize: REPORT_FONT_SIZE },
       columnStyles: {
         0: { cellWidth: 10, halign: 'center' },
         3: { cellWidth: 14, halign: 'center' },
@@ -645,7 +653,8 @@ const StockAudit: React.FC = () => {
     /* ── Legend ── */
     let ly = finalY + 6;
     if (newProds > 0) {
-      doc.setFontSize(7);
+      doc.setFont(REPORT_FONT, 'normal');
+      doc.setFontSize(REPORT_FONT_SIZE);
       doc.setTextColor(100, 100, 100);
       doc.text('✦ Produto cadastrado durante a auditoria', 14, ly);
       ly += 6;
@@ -661,8 +670,8 @@ const StockAudit: React.FC = () => {
     }
     const sy = needNewPage ? 30 : sigY;
 
-    doc.setFontSize(9);
-    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(REPORT_FONT_SIZE);
+    doc.setFont(REPORT_FONT, 'bold');
     doc.setTextColor(40, 40, 40);
     doc.text('ASSINATURAS', 105, sy, { align: 'center' });
 
@@ -677,8 +686,8 @@ const StockAudit: React.FC = () => {
     doc.setLineWidth(0.3);
     doc.roundedRect(10, sy + 8, 90, 50, 2, 2, 'S');
 
-    doc.setFont('helvetica', 'bold');
-    doc.setFontSize(8);
+    doc.setFont(REPORT_FONT, 'bold');
+    doc.setFontSize(REPORT_FONT_SIZE);
     doc.setTextColor(99, 102, 241);
     doc.text('AUDITOR', 55, sy + 16, { align: 'center' });
 
@@ -686,8 +695,8 @@ const StockAudit: React.FC = () => {
     doc.setLineWidth(0.5);
     doc.line(20, sy + 40, 90, sy + 40);
 
-    doc.setFont('helvetica', 'normal');
-    doc.setFontSize(8);
+    doc.setFont(REPORT_FONT, 'normal');
+    doc.setFontSize(REPORT_FONT_SIZE);
     doc.setTextColor(50, 50, 50);
     doc.text(`Nome: ${audit.auditor_name || '_______________________'}`, 14, sy + 46);
     doc.text(`CPF: ${audit.auditor_cpf || '___.___.___-__'}`, 14, sy + 52);
@@ -698,8 +707,8 @@ const StockAudit: React.FC = () => {
     doc.setDrawColor(203, 213, 225);
     doc.roundedRect(110, sy + 8, 90, 50, 2, 2, 'S');
 
-    doc.setFont('helvetica', 'bold');
-    doc.setFontSize(8);
+    doc.setFont(REPORT_FONT, 'bold');
+    doc.setFontSize(REPORT_FONT_SIZE);
     doc.setTextColor(16, 185, 129);
     doc.text('CONFERENTE RESPONSÁVEL', 155, sy + 16, { align: 'center' });
 
@@ -707,8 +716,8 @@ const StockAudit: React.FC = () => {
     doc.setLineWidth(0.5);
     doc.line(120, sy + 40, 190, sy + 40);
 
-    doc.setFont('helvetica', 'normal');
-    doc.setFontSize(8);
+    doc.setFont(REPORT_FONT, 'normal');
+    doc.setFontSize(REPORT_FONT_SIZE);
     doc.setTextColor(50, 50, 50);
     doc.text(`Nome: ${audit.responsible_name || '_______________________'}`, 114, sy + 46);
     doc.text(`CPF: ${audit.responsible_cpf || '___.___.___-__'}`, 114, sy + 52);
@@ -717,7 +726,8 @@ const StockAudit: React.FC = () => {
     const pageCount = (doc as any).getNumberOfPages ? (doc as any).getNumberOfPages() : 1;
     for (let i = 1; i <= pageCount; i++) {
       doc.setPage(i);
-      doc.setFontSize(7);
+      doc.setFont(REPORT_FONT, 'normal');
+      doc.setFontSize(REPORT_FONT_SIZE);
       doc.setTextColor(180, 180, 180);
       doc.text(
         `GOM ESTOQUE — Auditoria ${audit.audit_code} — Pág. ${i}/${pageCount} — Gerado em: ${new Date().toLocaleString('pt-BR')}`,

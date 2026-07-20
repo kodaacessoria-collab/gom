@@ -10,10 +10,10 @@ interface ReportsProps {
 }
 
 const REPORT_FONT = 'courier';
-const REPORT_FONT_SIZE = 10;
+const REPORT_FONT_SIZE = 8;
 
 const reportTableOptions = {
-  styles: { font: REPORT_FONT, fontSize: REPORT_FONT_SIZE },
+  styles: { font: REPORT_FONT, fontSize: REPORT_FONT_SIZE, cellPadding: 1.5 },
   headStyles: { font: REPORT_FONT, fontSize: REPORT_FONT_SIZE, fontStyle: 'bold' as const },
   bodyStyles: { font: REPORT_FONT, fontSize: REPORT_FONT_SIZE },
 };
@@ -98,14 +98,14 @@ const Reports: React.FC<ReportsProps> = ({ userRole }) => {
       doc.setFont(REPORT_FONT, 'bold');
       doc.setFontSize(REPORT_FONT_SIZE);
       doc.setTextColor(31, 41, 55);
-      doc.text(title, 14, 22);
+      doc.text(title, 14, 14);
       
       doc.setFont(REPORT_FONT, 'normal');
       doc.setFontSize(REPORT_FONT_SIZE);
       doc.setTextColor(107, 114, 128);
-      doc.text(`Gerado em: ${new Date().toLocaleString('pt-BR')} | Depósito: ${depositToQuery === 'TODOS' ? 'Todos os Depósitos' : depositToQuery}`, 14, 30);
+      doc.text(`Gerado em: ${new Date().toLocaleString('pt-BR')} | Depósito: ${depositToQuery === 'TODOS' ? 'Todos os Depósitos' : depositToQuery}`, 14, 20);
       
-      let startY = 40;
+      let startY = 28;
 
       if (mode === 'estoque_agrupado') {
         const getProductGroupKey = (p: any) => {
