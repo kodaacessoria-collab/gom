@@ -48,7 +48,6 @@ const Slips: React.FC = () => {
     if (!confirm('Tem certeza que deseja excluir este lançamento? O estoque será ajustado automaticamente.')) return;
     
     try {
-      // 1. Fetch slip details
       const { data: slip, error: fetchSlipError } = await supabase
         .from('slips')
         .select('*')
@@ -58,34 +57,10 @@ const Slips: React.FC = () => {
       if (fetchSlipError) throw fetchSlipError;
       if (!slip) throw new Error('Lançamento não encontrado.');
 
-      // 2. Fetch current product stock
-      const { data: product, error: fetchProductError } = await supabase
-        .from('products')
-        .select('quantity')
-        .eq('id', slip.product_id)
-        .single();
-
-      if (fetchProductError) throw fetchProductError;
-      if (product) {
-        // 3. Calculate reverted quantity
-        const currentQty = Number(product.quantity || 0);
-        const slipQty = Number(slip.quantity || 0);
-        const revertedQty = slip.type === 'ENTRADA' ? (currentQty - slipQty) : (currentQty + slipQty);
-
-        // 4. Update product quantity
-        const { error: updateProductError } = await supabase
-          .from('products')
-          .update({ quantity: revertedQty })
-          .eq('id', slip.product_id);
-
-        if (updateProductError) throw updateProductError;
-      }
-
-      // 5. Delete the slip
       const { error: deleteError } = await supabase.from('slips').delete().eq('id', id);
       if (deleteError) throw deleteError;
 
-      saveLog('EXCLUIR', 'ROMANEIO', `Lançamento removido ID: ${id}`);
+      saveLog('EXCLUIR', 'ROMANEIO', `${slip.type} de ${slip.quantity} unidades removida. ID: ${id}`);
       fetchData();
     } catch (err: any) {
       alert('Erro ao excluir lançamento e atualizar estoque: ' + err.message);
