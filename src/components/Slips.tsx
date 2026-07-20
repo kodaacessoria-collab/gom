@@ -48,6 +48,7 @@ const Slips: React.FC = () => {
     if (!confirm('Tem certeza que deseja excluir este lançamento? O estoque será ajustado automaticamente.')) return;
     
     try {
+      // Busca o romaneio antes de excluir para devolver o saldo ao produto.
       const { data: slip, error: fetchSlipError } = await supabase
         .from('slips')
         .select('*')
@@ -56,6 +57,26 @@ const Slips: React.FC = () => {
       
       if (fetchSlipError) throw fetchSlipError;
       if (!slip) throw new Error('Lançamento não encontrado.');
+
+      const { data: product, error: fetchProductError } = await supabase
+        .from('products')
+        .select('quantity')
+        .eq('id', slip.product_id)
+        .single();
+
+      if (fetchProductError) throw fetchProductError;
+      if (product) {
+        const currentQty = Number(product.quantity || 0);
+        const slipQty = Number(slip.quantity || 0);
+        const revertedQty = slip.type === 'ENTRADA' ? (currentQty - slipQty) : (currentQty + slipQty);
+
+        const { error: updateProductError } = await supabase
+          .from('products')
+          .update({ quantity: revertedQty })
+          .eq('id', slip.product_id);
+
+        if (updateProductError) throw updateProductError;
+      }
 
       const { error: deleteError } = await supabase.from('slips').delete().eq('id', id);
       if (deleteError) throw deleteError;
