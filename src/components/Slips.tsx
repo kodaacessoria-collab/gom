@@ -120,11 +120,17 @@ const Slips: React.FC = () => {
       const ws = wb.Sheets[wb.SheetNames[0]];
       const rawData = XLSX.utils.sheet_to_json(ws);
 
-      // Helper to extract deposit from an item
+      const normalizeHeader = (value: string) =>
+        value.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toUpperCase().trim();
+
+      const findValue = (item: any, possibleNames: string[]) => {
+        const normalizedNames = possibleNames.map(normalizeHeader);
+        const key = Object.keys(item).find(k => normalizedNames.includes(normalizeHeader(k)));
+        return key ? item[key] : null;
+      };
+
       const extractDeposit = (item: any) => {
-        const keys = Object.keys(item);
-        const depKey = keys.find(k => ['DEPOSITO', 'DEPÓSITO', 'DEPOSIT', 'ALMOXARIFADO'].includes(k.toUpperCase().trim()));
-        const rawDep = depKey ? item[depKey]?.toString().trim() : '';
+        const rawDep = findValue(item, ['DEPOSITO', 'DEPÓSITO', 'DEPOSIT', 'ALMOXARIFADO'])?.toString().trim() || '';
         if (rawDep && rawDep.toUpperCase().includes('RED')) {
           return 'Depósito-RED';
         }
@@ -134,9 +140,7 @@ const Slips: React.FC = () => {
       // 1. Identify missing products (by name and deposit combination) and create them
       const missingProducts: { name: string; deposit: 'Depósito-Grupo OM' | 'Depósito-RED' }[] = [];
       rawData.forEach((item: any) => {
-        const keys = Object.keys(item);
-        const nameKey = keys.find(k => ['PRODUTO', 'NOME', 'PRODUCT', 'ITEM'].includes(k.toUpperCase().trim()));
-        const productName = nameKey ? item[nameKey]?.toString().trim() : null;
+        const productName = findValue(item, ['PRODUTO', 'NOME', 'PRODUCT', 'ITEM'])?.toString().trim() || null;
         const targetDeposit = extractDeposit(item);
         
         if (productName) {
@@ -184,13 +188,7 @@ const Slips: React.FC = () => {
       // 2. Prepare slips for insertion
       const slipsToInsert = rawData
         .map((item: any) => {
-          const keys = Object.keys(item);
-          const findValue = (possibleNames: string[]) => {
-            const key = keys.find(k => possibleNames.includes(k.toUpperCase().trim()));
-            return key ? item[key] : null;
-          };
-
-          const productName = (findValue(['PRODUTO', 'NOME', 'PRODUCT', 'ITEM']) || '').toString().trim();
+          const productName = (findValue(item, ['PRODUTO', 'NOME', 'PRODUCT', 'ITEM']) || '').toString().trim();
           const targetDeposit = extractDeposit(item);
           const product = currentProducts.find(p => 
             p.name.toLowerCase() === productName.toLowerCase() && 
@@ -199,23 +197,26 @@ const Slips: React.FC = () => {
           
           if (!productName || !product) return null;
 
-          let slipDate = findValue(['DATA', 'DATE']);
+          let slipDate = findValue(item, ['DATA', 'DATE']);
           if (typeof slipDate === 'number') {
             const date = new Date((slipDate - 25569) * 86400 * 1000);
             slipDate = date.toISOString().split('T')[0];
+          } else if (typeof slipDate === 'string' && slipDate.includes('/')) {
+            const [day, month, year] = slipDate.split('/').map(part => part.trim());
+            slipDate = `${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`;
           } else if (!slipDate) {
             slipDate = new Date().toISOString().split('T')[0];
           }
 
           return {
             date: slipDate,
-            category: findValue(['CATEGORIA', 'CATEGORY']) || product.category || 'Estocáveis',
+            category: findValue(item, ['CATEGORIA', 'CATEGORY']) || product.category || 'Estocáveis',
             product_id: product.id,
-            unit: findValue(['UND', 'UNIDADE', 'UNIT']) || product.unit || 'UN',
-            quantity: Number(findValue(['QTD', 'QUANTIDADE', 'AMOUNT']) || 0),
-            destination: findValue(['DESTINO', 'DESTINATION', 'ORIGEM']) || '',
+            unit: findValue(item, ['UND', 'UNIDADE', 'UNIT']) || product.unit || 'UN',
+            quantity: Number(findValue(item, ['QTD', 'QUANTIDADE', 'AMOUNT']) || 0),
+            destination: findValue(item, ['MUNICIPIO', 'MUNICÍPIO', 'DESTINO', 'DESTINATION', 'ORIGEM']) || '',
             type: (() => {
-              const val = (findValue(['TIPO', 'TYPE']) || 'SAIDA').toString().toUpperCase().trim();
+              const val = (findValue(item, ['TIPO', 'TYPE']) || 'SAIDA').toString().toUpperCase().trim();
               if (['E', 'ENT', 'ENTRADA', 'IN'].includes(val)) return 'ENTRADA';
               if (['S', 'SAI', 'SAIDA', 'SAÍDA', 'OUT'].includes(val)) return 'SAIDA';
               return 'SAIDA'; // Default fallback

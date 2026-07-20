@@ -25,22 +25,22 @@ const productData = [
 // Template for Slips (Romaneios)
 const slipData = [
   {
-    PRODUTO: 'Arroz 5kg',
-    DATA: new Date().toISOString().split('T')[0],
-    CATEGORIA: 'Estocáveis',
-    UND: 'UN',
-    QTD: 5,
-    DESTINO: 'Cozinha Central',
-    TIPO: 'SAIDA'
+    tipo: 'SAIDA',
+    Depósito: 'Depósito-Grupo OM',
+    produto: 'Arroz 5kg',
+    und: 'UN',
+    qtd: 5,
+    Municipio: 'Cozinha Central',
+    data: new Date().toISOString().split('T')[0]
   },
   {
-    PRODUTO: 'Feijão 1kg',
-    DATA: new Date().toISOString().split('T')[0],
-    CATEGORIA: 'Estocáveis',
-    UND: 'UN',
-    QTD: 10,
-    DESTINO: 'Doação',
-    TIPO: 'SAIDA'
+    tipo: 'SAIDA',
+    Depósito: 'Depósito-Grupo OM',
+    produto: 'Feijão 1kg',
+    und: 'UN',
+    qtd: 10,
+    Municipio: 'Doação',
+    data: new Date().toISOString().split('T')[0]
   }
 ];
 
