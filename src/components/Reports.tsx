@@ -18,6 +18,26 @@ const reportTableOptions = {
   bodyStyles: { font: REPORT_FONT, fontSize: REPORT_FONT_SIZE },
 };
 
+const reportFileNames: Record<'estoque_total' | 'estoque_categoria' | 'validade' | 'movimentacao' | 'estoque_agrupado', string> = {
+  estoque_total: 'Relatório de Estoque Total',
+  estoque_categoria: 'Relatório de Estoque por Categoria',
+  validade: 'Relatório de Validade',
+  movimentacao: 'Relatório de Movimentação',
+  estoque_agrupado: 'Relatório de Estoque Consolidado',
+};
+
+const sanitizeFileNamePart = (value: string) =>
+  value
+    .replace(/[<>:"/\\|?*]+/g, '-')
+    .replace(/\s+/g, ' ')
+    .replace(/\s-\s/g, ' - ')
+    .trim();
+
+const formatReportDateTime = (date: Date) => {
+  const pad = (value: number) => String(value).padStart(2, '0');
+  return `${pad(date.getDate())}${pad(date.getMonth() + 1)}${date.getFullYear()}-${pad(date.getHours())}${pad(date.getMinutes())}`;
+};
+
 const Reports: React.FC<ReportsProps> = ({ userRole }) => {
   const [dateStart, setDateStart] = useState('');
   const [dateEnd, setDateEnd] = useState('');
@@ -93,6 +113,17 @@ const Reports: React.FC<ReportsProps> = ({ userRole }) => {
       if (mode === 'validade') title = 'Relatório de Vencimentos (Saldos > 0)';
       if (mode === 'movimentacao') title = 'Relatório de Movimentação';
       if (mode === 'estoque_agrupado') title = 'Relatório de Estoque Consolidado (Por Peso/Medida)';
+
+      const reportName = reportFileNames[mode];
+      const reportCategory =
+        mode === 'estoque_categoria'
+          ? selectedCategory
+          : mode === 'validade'
+            ? validityCategory
+            : selectedCategory !== 'TODAS' && mode === 'movimentacao'
+              ? selectedCategory
+              : 'TODAS';
+      const reportDateTime = formatReportDateTime(new Date());
 
       // Header
       doc.setFont(REPORT_FONT, 'bold');
@@ -369,7 +400,15 @@ const Reports: React.FC<ReportsProps> = ({ userRole }) => {
         }
       }
 
-      const fileName = `relatorio_${mode}_${new Date().getTime()}`.toLowerCase();
+      const fileName = [
+        sanitizeFileNamePart(reportName),
+        '_',
+        sanitizeFileNamePart(depositToQuery === 'TODOS' ? 'Todos os Depósitos' : depositToQuery),
+        '-',
+        sanitizeFileNamePart(reportCategory),
+        ' - ',
+        reportDateTime,
+      ].join('');
       doc.save(`${fileName}.pdf`);
       
     } catch (err: any) {
