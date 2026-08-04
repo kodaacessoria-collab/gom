@@ -9,6 +9,7 @@ import * as XLSX from 'xlsx';
 const REPORT_FONT = 'courier';
 const REPORT_FONT_SIZE = 8;
 const COMPATIBILITY_STORAGE_KEY = 'gom_product_compatibilities';
+const ORDER_SLIPS_STORAGE_KEY = 'gom_purchase_order_slips';
 
 
 const PurchaseOrders: React.FC = () => {
@@ -21,6 +22,19 @@ const PurchaseOrders: React.FC = () => {
   const [suggestions, setSuggestions] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [compatibilities, setCompatibilities] = useState<Record<string, string>>({});
+
+  const readOrderSlipMap = () => {
+    try {
+      return JSON.parse(localStorage.getItem(ORDER_SLIPS_STORAGE_KEY) || '{}') as Record<string, string[]>;
+    } catch {
+      localStorage.removeItem(ORDER_SLIPS_STORAGE_KEY);
+      return {};
+    }
+  };
+
+  const saveOrderSlipMap = (map: Record<string, string[]>) => {
+    localStorage.setItem(ORDER_SLIPS_STORAGE_KEY, JSON.stringify(map));
+  };
 
   useEffect(() => {
     try {
@@ -257,10 +271,16 @@ const PurchaseOrders: React.FC = () => {
       }))
     };
 
-    const { error: orderError } = await supabase.from('purchase_orders').insert([order]);
+    const { data: createdOrder, error: orderError } = await supabase.from('purchase_orders').insert([order]).select('id').single();
     if (orderError) {
       alert(orderError.message);
       return;
+    }
+
+    if (createdOrder?.id) {
+      const orderSlipMap = readOrderSlipMap();
+      orderSlipMap[createdOrder.id] = selectedSlips;
+      saveOrderSlipMap(orderSlipMap);
     }
 
     // Mark selected slips as processed by updating their destination
@@ -285,9 +305,41 @@ const PurchaseOrders: React.FC = () => {
 
   const deleteOrder = async (id: string) => {
     if (!confirm('Tem certeza que deseja excluir este pedido de compra?')) return;
+    const orderSlipMap = readOrderSlipMap();
+    const slipIds = orderSlipMap[id] || [];
+
+    if (slipIds.length > 0) {
+      const { data: markedSlips, error: slipsError } = await supabase
+        .from('slips')
+        .select('id, destination')
+        .in('id', slipIds);
+
+      if (slipsError) {
+        alert(slipsError.message);
+        return;
+      }
+
+      for (const slip of markedSlips || []) {
+        const destination = (slip.destination || '').replace(/^\[COMPRADO\]\s*/i, '');
+        const { error: updateError } = await supabase
+          .from('slips')
+          .update({ destination })
+          .eq('id', slip.id);
+
+        if (updateError) {
+          alert(updateError.message);
+          return;
+        }
+      }
+    }
+
     const { error } = await supabase.from('purchase_orders').delete().eq('id', id);
     if (error) alert(error.message);
-    else fetchInitialData();
+    else {
+      delete orderSlipMap[id];
+      saveOrderSlipMap(orderSlipMap);
+      fetchInitialData();
+    }
   };
 
   const generatePDF = (order: any) => {

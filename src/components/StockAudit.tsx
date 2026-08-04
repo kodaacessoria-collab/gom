@@ -408,6 +408,19 @@ const StockAudit: React.FC = () => {
         if (slipsErr) throw slipsErr;
       }
 
+      await Promise.all(auditItems.map(async (item) => {
+        const raw = getQty(item.id);
+        const auditedQty = raw !== '' ? Number(raw) : 0;
+        if (!item.product_id) return;
+
+        const { error: productQtyErr } = await supabase
+          .from('products')
+          .update({ quantity: auditedQty })
+          .eq('id', item.product_id);
+
+        if (productQtyErr) throw productQtyErr;
+      }));
+
       /* Mark audit as finalized */
       await supabase
         .from('stock_audits')

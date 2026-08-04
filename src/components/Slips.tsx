@@ -35,6 +35,31 @@ const Slips: React.FC = () => {
     setLoading(false);
   };
 
+  const getSlipDelta = (slip: Partial<Slip>) => {
+    const quantity = Number(slip.quantity || 0);
+    return slip.type === 'ENTRADA' ? quantity : -quantity;
+  };
+
+  const fetchProductQuantity = async (productId: string) => {
+    const { data: product, error: fetchError } = await supabase
+      .from('products')
+      .select('quantity')
+      .eq('id', productId)
+      .single();
+
+    if (fetchError) throw fetchError;
+    return Number(product.quantity || 0);
+  };
+
+  const setProductQuantity = async (productId: string, quantity: number) => {
+    const { error: updateError } = await supabase
+      .from('products')
+      .update({ quantity })
+      .eq('id', productId);
+
+    if (updateError) throw updateError;
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     const payload = {
@@ -47,17 +72,48 @@ const Slips: React.FC = () => {
       type: formData.type,
     };
 
-    const { error } = isEditing && editingSlipId
-      ? await supabase.from('slips').update(payload).eq('id', editingSlipId)
-      : await supabase.from('slips').insert([payload]);
+    try {
+      if (isEditing && editingSlipId) {
+        const { data: oldSlip, error: fetchError } = await supabase
+          .from('slips')
+          .select('*')
+          .eq('id', editingSlipId)
+          .single();
 
-    if (error) alert(error.message);
-    else {
+        if (fetchError) throw fetchError;
+        if (!oldSlip.product_id || !payload.product_id) throw new Error('Produto do romaneio não informado.');
+
+        const oldProductQuantity = await fetchProductQuantity(oldSlip.product_id);
+        const newProductQuantity = oldSlip.product_id === payload.product_id
+          ? oldProductQuantity
+          : await fetchProductQuantity(payload.product_id);
+
+        const { error } = await supabase.from('slips').update(payload).eq('id', editingSlipId);
+        if (error) throw error;
+
+        if (oldSlip.product_id === payload.product_id) {
+          await setProductQuantity(payload.product_id, oldProductQuantity + getSlipDelta(payload) - getSlipDelta(oldSlip));
+        } else {
+          await setProductQuantity(oldSlip.product_id, oldProductQuantity - getSlipDelta(oldSlip));
+          await setProductQuantity(payload.product_id, newProductQuantity + getSlipDelta(payload));
+        }
+      } else {
+        if (!payload.product_id) throw new Error('Produto do romaneio não informado.');
+        const productQuantity = await fetchProductQuantity(payload.product_id);
+
+        const { error } = await supabase.from('slips').insert([payload]);
+        if (error) throw error;
+
+        await setProductQuantity(payload.product_id, productQuantity + getSlipDelta(payload));
+      }
+
       saveLog(isEditing ? 'EDITAR' : 'CRIAR', 'ROMANEIO', `${formData.type} de ${formData.quantity} unidades para ${formData.destination}`);
       setIsModalOpen(false);
       setIsEditing(false);
       setEditingSlipId(null);
       fetchData();
+    } catch (err: any) {
+      alert('Erro ao salvar lançamento e atualizar estoque: ' + err.message);
     }
   };
 
@@ -73,9 +129,14 @@ const Slips: React.FC = () => {
       
       if (fetchSlipError) throw fetchSlipError;
       if (!slip) throw new Error('Lançamento não encontrado.');
+      if (!slip.product_id) throw new Error('Produto do romaneio não informado.');
+
+      const productQuantity = await fetchProductQuantity(slip.product_id);
 
       const { error: deleteError } = await supabase.from('slips').delete().eq('id', id);
       if (deleteError) throw deleteError;
+
+      await setProductQuantity(slip.product_id, productQuantity - getSlipDelta(slip));
 
       saveLog('EXCLUIR', 'ROMANEIO', `${slip.type} de ${slip.quantity} unidades removida. ID: ${id}`);
       fetchData();
@@ -243,9 +304,21 @@ const Slips: React.FC = () => {
         return;
       }
 
+      const quantityByProduct: Record<string, number> = {};
+      for (const slip of slipsToInsert) {
+        const productId = slip.product_id;
+        if (!quantityByProduct[productId]) {
+          quantityByProduct[productId] = await fetchProductQuantity(productId);
+        }
+        quantityByProduct[productId] += getSlipDelta(slip as Partial<Slip>);
+      }
+
       const { error } = await supabase.from('slips').insert(slipsToInsert);
       if (error) alert('Erro ao importar romaneios: ' + error.message);
       else {
+        for (const [productId, quantity] of Object.entries(quantityByProduct)) {
+          await setProductQuantity(productId, quantity);
+        }
         saveLog('IMPORTAR_XLSX', 'ROMANEIO', `Importação de ${slipsToInsert.length} romaneios via Excel`);
         fetchData();
       }
@@ -255,9 +328,27 @@ const Slips: React.FC = () => {
 
   const clearAllSlips = async () => {
     if (!confirm('ATENÇÃO: Isso apagará TODO o histórico de romaneios. O estoque será recalculado com base nos produtos restantes. Deseja continuar?')) return;
+    const { data: slipsToClear, error: fetchError } = await supabase.from('slips').select('*');
+    if (fetchError) {
+      alert(fetchError.message);
+      return;
+    }
+
+    const quantityByProduct: Record<string, number> = {};
+    for (const slip of slipsToClear || []) {
+      if (!slip.product_id) continue;
+      if (!quantityByProduct[slip.product_id]) {
+        quantityByProduct[slip.product_id] = await fetchProductQuantity(slip.product_id);
+      }
+      quantityByProduct[slip.product_id] -= getSlipDelta(slip);
+    }
+
     const { error } = await supabase.from('slips').delete().neq('id', '00000000-0000-0000-0000-000000000000');
     if (error) alert(error.message);
     else {
+      for (const [productId, quantity] of Object.entries(quantityByProduct)) {
+        await setProductQuantity(productId, quantity);
+      }
       saveLog('LIMPAR_TUDO', 'ROMANEIO', 'Todo o histórico de romaneios foi apagado');
       fetchData();
     }
