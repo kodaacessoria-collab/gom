@@ -40,7 +40,16 @@ CREATE TABLE IF NOT EXISTS purchase_orders (
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- Trigger to update product quantity on slip insertion and deletion
+-- Product compatibilities for purchase planning when the same item has different names
+CREATE TABLE IF NOT EXISTS product_compatibilities (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  source_product_id UUID REFERENCES products(id) ON DELETE CASCADE,
+  compatible_product_id UUID REFERENCES products(id) ON DELETE CASCADE,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  UNIQUE (source_product_id, compatible_product_id)
+);
+
+-- Trigger to update product quantity on slip insertion, update and deletion
 CREATE OR REPLACE FUNCTION update_stock_level()
 RETURNS TRIGGER AS $$
 BEGIN
@@ -49,6 +58,22 @@ BEGIN
       UPDATE products SET quantity = quantity + NEW.quantity WHERE id = NEW.product_id;
     ELSIF (NEW.type = 'SAIDA') THEN
       UPDATE products SET quantity = quantity - NEW.quantity WHERE id = NEW.product_id;
+    END IF;
+  ELSIF (TG_OP = 'UPDATE') THEN
+    IF (OLD.product_id IS DISTINCT FROM NEW.product_id)
+      OR (OLD.quantity IS DISTINCT FROM NEW.quantity)
+      OR (OLD.type IS DISTINCT FROM NEW.type) THEN
+      IF (OLD.type = 'ENTRADA') THEN
+        UPDATE products SET quantity = quantity - OLD.quantity WHERE id = OLD.product_id;
+      ELSIF (OLD.type = 'SAIDA') THEN
+        UPDATE products SET quantity = quantity + OLD.quantity WHERE id = OLD.product_id;
+      END IF;
+
+      IF (NEW.type = 'ENTRADA') THEN
+        UPDATE products SET quantity = quantity + NEW.quantity WHERE id = NEW.product_id;
+      ELSIF (NEW.type = 'SAIDA') THEN
+        UPDATE products SET quantity = quantity - NEW.quantity WHERE id = NEW.product_id;
+      END IF;
     END IF;
   ELSIF (TG_OP = 'DELETE') THEN
     IF (OLD.type = 'ENTRADA') THEN
@@ -63,7 +88,7 @@ $$ LANGUAGE plpgsql;
 
 DROP TRIGGER IF EXISTS trg_update_stock_level ON slips;
 CREATE TRIGGER trg_update_stock_level
-AFTER INSERT OR DELETE ON slips
+AFTER INSERT OR UPDATE OR DELETE ON slips
 FOR EACH ROW
 EXECUTE FUNCTION update_stock_level();
 
@@ -71,6 +96,7 @@ EXECUTE FUNCTION update_stock_level();
 ALTER TABLE products ENABLE ROW LEVEL SECURITY;
 ALTER TABLE slips ENABLE ROW LEVEL SECURITY;
 ALTER TABLE purchase_orders ENABLE ROW LEVEL SECURITY;
+ALTER TABLE product_compatibilities ENABLE ROW LEVEL SECURITY;
 
 DO $$
 BEGIN
@@ -82,6 +108,9 @@ BEGIN
     END IF;
     IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'Allow all access to purchase_orders') THEN
         CREATE POLICY "Allow all access to purchase_orders" ON purchase_orders FOR ALL USING (true) WITH CHECK (true);
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'Allow all access to product_compatibilities') THEN
+        CREATE POLICY "Allow all access to product_compatibilities" ON product_compatibilities FOR ALL USING (true) WITH CHECK (true);
     END IF;
 END
 $$;

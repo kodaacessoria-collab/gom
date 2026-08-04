@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Plus, Upload, X, Trash2 } from 'lucide-react';
+import { Plus, Upload, X, Trash2, Edit3 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import { saveLog } from '../lib/logger';
 import type { Product, Slip } from '../types';
@@ -10,6 +10,8 @@ const Slips: React.FC = () => {
   const [products, setProducts] = useState<Product[]>([]);
   const [loading, setLoading] = useState(true);
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [isEditing, setIsEditing] = useState(false);
+  const [editingSlipId, setEditingSlipId] = useState<string | null>(null);
   const [selectedDeposit, setSelectedDeposit] = useState<'TODOS' | 'Depósito-Grupo OM' | 'Depósito-RED'>('TODOS');
   const [formDeposit, setFormDeposit] = useState<'Depósito-Grupo OM' | 'Depósito-RED'>('Depósito-Grupo OM');
   const [formData, setFormData] = useState<Partial<Slip>>({
@@ -35,11 +37,26 @@ const Slips: React.FC = () => {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    const { error } = await supabase.from('slips').insert([formData]);
+    const payload = {
+      date: formData.date,
+      category: formData.category,
+      product_id: formData.product_id,
+      unit: formData.unit,
+      quantity: Number(formData.quantity || 0),
+      destination: formData.destination,
+      type: formData.type,
+    };
+
+    const { error } = isEditing && editingSlipId
+      ? await supabase.from('slips').update(payload).eq('id', editingSlipId)
+      : await supabase.from('slips').insert([payload]);
+
     if (error) alert(error.message);
     else {
-      saveLog('CRIAR', 'ROMANEIO', `${formData.type} de ${formData.quantity} unidades para ${formData.destination}`);
+      saveLog(isEditing ? 'EDITAR' : 'CRIAR', 'ROMANEIO', `${formData.type} de ${formData.quantity} unidades para ${formData.destination}`);
       setIsModalOpen(false);
+      setIsEditing(false);
+      setEditingSlipId(null);
       fetchData();
     }
   };
@@ -48,7 +65,6 @@ const Slips: React.FC = () => {
     if (!confirm('Tem certeza que deseja excluir este lançamento? O estoque será ajustado automaticamente.')) return;
     
     try {
-      // Busca o romaneio antes de excluir para devolver o saldo ao produto.
       const { data: slip, error: fetchSlipError } = await supabase
         .from('slips')
         .select('*')
@@ -58,26 +74,6 @@ const Slips: React.FC = () => {
       if (fetchSlipError) throw fetchSlipError;
       if (!slip) throw new Error('Lançamento não encontrado.');
 
-      const { data: product, error: fetchProductError } = await supabase
-        .from('products')
-        .select('quantity')
-        .eq('id', slip.product_id)
-        .single();
-
-      if (fetchProductError) throw fetchProductError;
-      if (product) {
-        const currentQty = Number(product.quantity || 0);
-        const slipQty = Number(slip.quantity || 0);
-        const revertedQty = slip.type === 'ENTRADA' ? (currentQty - slipQty) : (currentQty + slipQty);
-
-        const { error: updateProductError } = await supabase
-          .from('products')
-          .update({ quantity: revertedQty })
-          .eq('id', slip.product_id);
-
-        if (updateProductError) throw updateProductError;
-      }
-
       const { error: deleteError } = await supabase.from('slips').delete().eq('id', id);
       if (deleteError) throw deleteError;
 
@@ -86,6 +82,23 @@ const Slips: React.FC = () => {
     } catch (err: any) {
       alert('Erro ao excluir lançamento e atualizar estoque: ' + err.message);
     }
+  };
+
+  const openEditModal = (slip: any) => {
+    setFormData({
+      id: slip.id,
+      date: slip.date,
+      category: slip.category,
+      product_id: slip.product_id,
+      unit: slip.unit,
+      quantity: Number(slip.quantity || 0),
+      destination: slip.destination,
+      type: slip.type,
+    });
+    setFormDeposit(slip.products?.deposit || 'Depósito-Grupo OM');
+    setEditingSlipId(slip.id);
+    setIsEditing(true);
+    setIsModalOpen(true);
   };
 
   const deleteLastSlip = async () => {
@@ -292,7 +305,7 @@ const Slips: React.FC = () => {
             Importar Romaneio
             <input type="file" hidden onChange={handleImport} accept=".xlsx, .xls" />
           </label>
-          <button className="button" onClick={() => { setFormData({ date: new Date().toISOString().split('T')[0], category: 'Estocáveis', type: 'SAIDA', quantity: 0, destination: '' }); setIsModalOpen(true); }}>
+          <button className="button" onClick={() => { setFormData({ date: new Date().toISOString().split('T')[0], category: 'Estocáveis', type: 'SAIDA', quantity: 0, destination: '' }); setIsEditing(false); setEditingSlipId(null); setIsModalOpen(true); }}>
             <Plus size={18} style={{ marginRight: '0.5rem' }} />
             Novo Lançamento
           </button>
@@ -333,6 +346,13 @@ const Slips: React.FC = () => {
                 </td>
                 <td>
                   <button 
+                    onClick={() => openEditModal(s)} 
+                    style={{ background: 'none', border: 'none', color: '#60a5fa', cursor: 'pointer', padding: '0.5rem' }}
+                    title="Editar Lançamento"
+                  >
+                    <Edit3 size={18} />
+                  </button>
+                  <button 
                     onClick={() => deleteSlip(s.id)} 
                     style={{ background: 'none', border: 'none', color: '#f87171', cursor: 'pointer', padding: '0.5rem' }}
                     title="Excluir Lançamento"
@@ -350,8 +370,8 @@ const Slips: React.FC = () => {
         <div className="sidebar-overlay" style={{ alignItems: 'flex-start' }}>
           <div className="card" style={{ width: '100%', maxWidth: '600px', position: 'relative' }}>
             <div className="view-header">
-              <h2>Novo Lançamento</h2>
-              <button onClick={() => setIsModalOpen(false)} style={{ background: 'none', border: 'none', color: 'white', cursor: 'pointer' }}><X size={24} /></button>
+              <h2>{isEditing ? 'Editar Lançamento' : 'Novo Lançamento'}</h2>
+              <button onClick={() => { setIsModalOpen(false); setIsEditing(false); setEditingSlipId(null); }} style={{ background: 'none', border: 'none', color: 'white', cursor: 'pointer' }}><X size={24} /></button>
             </div>
             <form onSubmit={handleSubmit} style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
               <div>
@@ -391,7 +411,7 @@ const Slips: React.FC = () => {
                 <input className="input-field" required value={formData.destination} onChange={e => setFormData({...formData, destination: e.target.value})} />
               </div>
               <div style={{ gridColumn: 'span 2', marginTop: '1rem' }}>
-                <button type="submit" className="button">Confirmar Lançamento</button>
+                <button type="submit" className="button">{isEditing ? 'Salvar Alterações' : 'Confirmar Lançamento'}</button>
               </div>
             </form>
           </div>

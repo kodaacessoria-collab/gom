@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { ShoppingCart, ListChecks, ArrowRight, FileText, FileSpreadsheet, History, Plus, Trash2, CheckCircle } from 'lucide-react';
+import { ShoppingCart, ListChecks, ArrowRight, FileText, FileSpreadsheet, History, Plus, Trash2, CheckCircle, Link2 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import type { Product } from '../types';
 import jsPDF from 'jspdf';
@@ -8,6 +8,7 @@ import * as XLSX from 'xlsx';
 
 const REPORT_FONT = 'courier';
 const REPORT_FONT_SIZE = 8;
+const COMPATIBILITY_STORAGE_KEY = 'gom_product_compatibilities';
 
 
 const PurchaseOrders: React.FC = () => {
@@ -19,19 +20,43 @@ const PurchaseOrders: React.FC = () => {
   const [selectedDeposit, setSelectedDeposit] = useState<'Depósito-Grupo OM' | 'Depósito-RED'>('Depósito-Grupo OM');
   const [suggestions, setSuggestions] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [compatibilities, setCompatibilities] = useState<Record<string, string>>({});
 
   useEffect(() => {
+    try {
+      const savedCompatibilities = localStorage.getItem(COMPATIBILITY_STORAGE_KEY);
+      if (savedCompatibilities) {
+        setCompatibilities(JSON.parse(savedCompatibilities));
+      }
+    } catch {
+      localStorage.removeItem(COMPATIBILITY_STORAGE_KEY);
+    }
     fetchInitialData();
   }, []);
+
+  useEffect(() => {
+    localStorage.setItem(COMPATIBILITY_STORAGE_KEY, JSON.stringify(compatibilities));
+  }, [compatibilities]);
 
   const fetchInitialData = async () => {
     setLoading(true);
     const { data: productsData } = await supabase.from('products').select('*');
     const { data: slipsData } = await supabase.from('slips').select('*, products(name, deposit)').order('date', { ascending: false });
     const { data: ordersData } = await supabase.from('purchase_orders').select('*').order('created_at', { ascending: false });
+    const { data: compatibilitiesData } = await supabase
+      .from('product_compatibilities')
+      .select('source_product_id, compatible_product_id');
     
     if (productsData) setProducts(productsData);
     if (ordersData) setOrders(ordersData);
+    if (compatibilitiesData) {
+      setCompatibilities(prev => ({
+        ...prev,
+        ...Object.fromEntries(
+          compatibilitiesData.map((item: any) => [item.source_product_id, item.compatible_product_id])
+        ),
+      }));
+    }
     
     // Filter: Only show 'SAIDA' slips that aren't already marked as [COMPRADO]
     // and exclude internal movements like audits, transfers, and write-offs (baixas)
@@ -56,7 +81,34 @@ const PurchaseOrders: React.FC = () => {
     setLoading(false);
   };
 
-  const filteredSlips = slips.filter(s => s.products?.deposit === selectedDeposit);
+  const depositSlips = slips.filter(s => s.products?.deposit === selectedDeposit);
+  const currentSlipDate = depositSlips[0]?.date;
+  const filteredSlips = currentSlipDate ? depositSlips.filter(s => s.date === currentSlipDate) : [];
+
+  const getCompatibleProduct = (sourceProductId: string) => {
+    const compatibleProductId = compatibilities[sourceProductId];
+    return products.find(p => p.id === compatibleProductId);
+  };
+
+  const setCompatibleProduct = async (sourceProductId: string, compatibleProductId: string) => {
+    setCompatibilities(prev => {
+      const next = { ...prev };
+      if (compatibleProductId) {
+        next[sourceProductId] = compatibleProductId;
+      } else {
+        delete next[sourceProductId];
+      }
+      return next;
+    });
+
+    await supabase.from('product_compatibilities').delete().eq('source_product_id', sourceProductId);
+    if (compatibleProductId) {
+      await supabase.from('product_compatibilities').insert([{
+        source_product_id: sourceProductId,
+        compatible_product_id: compatibleProductId,
+      }]);
+    }
+  };
 
   const toggleSelectAll = () => {
     if (selectedSlips.length === filteredSlips.length) {
@@ -127,7 +179,9 @@ const PurchaseOrders: React.FC = () => {
       allProducts: Product[];
     }> = {};
 
-    products.forEach(p => {
+    products
+      .filter(p => p.deposit === selectedDeposit)
+      .forEach(p => {
       const key = getProductGroupKey(p);
       if (!productGroups[key]) {
         productGroups[key] = {
@@ -144,7 +198,7 @@ const PurchaseOrders: React.FC = () => {
     const groupDemand: Record<string, number> = {};
     
     slips.filter(s => selectedSlips.includes(s.id)).forEach(s => {
-      const product = products.find(p => p.id === s.product_id);
+      const product = getCompatibleProduct(s.product_id) || products.find(p => p.id === s.product_id);
       if (product) {
         const key = getProductGroupKey(product);
         groupDemand[key] = (groupDemand[key] || 0) + Number(s.quantity);
@@ -187,7 +241,7 @@ const PurchaseOrders: React.FC = () => {
 
   useEffect(() => {
     calculateDemand();
-  }, [selectedSlips, products]);
+  }, [selectedSlips, products, compatibilities, selectedDeposit]);
 
   const createOrder = async () => {
     if (suggestions.length === 0) return;
@@ -348,6 +402,9 @@ const PurchaseOrders: React.FC = () => {
                   <option value="Depósito-Grupo OM">Depósito-Grupo OM</option>
                   <option value="Depósito-RED">Depósito-RED</option>
                 </select>
+                {currentSlipDate && (
+                  <span className="badge badge-green">{currentSlipDate.split('-').reverse().join('/')}</span>
+                )}
                 <span className="badge badge-blue">{selectedSlips.length} selecionados</span>
               </div>
             </div>
@@ -367,6 +424,7 @@ const PurchaseOrders: React.FC = () => {
                     </th>
                     <th>Data</th>
                     <th>Produto</th>
+                    <th>Compatível no Estoque</th>
                     <th>QTD</th>
                   </tr>
                 </thead>
@@ -387,15 +445,40 @@ const PurchaseOrders: React.FC = () => {
                       </td>
                       <td>{s.date.split('-').reverse().join('/')}</td>
                       <td style={{ fontWeight: 600 }}>{s.products?.name}</td>
+                      <td onClick={(e) => e.stopPropagation()} style={{ minWidth: '220px' }}>
+                        <select
+                          className="input-field"
+                          style={{ height: '32px', padding: '0.2rem 0.5rem', fontSize: '0.82rem' }}
+                          value={compatibilities[s.product_id] || ''}
+                          onChange={e => setCompatibleProduct(s.product_id, e.target.value)}
+                          title="Vincular item do romaneio a um produto equivalente no estoque"
+                        >
+                          <option value="">Mesmo produto</option>
+                          {products
+                            .filter(p => p.deposit === selectedDeposit)
+                            .sort((a, b) => a.name.localeCompare(b.name))
+                            .map(p => (
+                              <option key={p.id} value={p.id}>
+                                {p.name}{p.batch ? ` [${p.batch}]` : ''}{p.brand ? ` - ${p.brand}` : ''}
+                              </option>
+                            ))}
+                        </select>
+                      </td>
                       <td style={{ fontWeight: 700 }}>{s.quantity}</td>
                     </tr>
                   ))}
                   {filteredSlips.length === 0 && (
-                    <tr><td colSpan={4} style={{ textAlign: 'center', padding: '2rem' }}>Nenhum romaneio pendente neste depósito.</td></tr>
+                    <tr><td colSpan={5} style={{ textAlign: 'center', padding: '2rem' }}>Nenhum romaneio pendente na data atual deste depósito.</td></tr>
                   )}
                 </tbody>
               </table>
             </div>
+            {filteredSlips.length > 0 && (
+              <div style={{ marginTop: '0.75rem', fontSize: '0.82rem', color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+                <Link2 size={14} />
+                Mostrando apenas romaneios pendentes do lançamento atual. Use compatibilidade quando o produto tiver outro nome no estoque.
+              </div>
+            )}
           </div>
 
           {/* Results Area */}
