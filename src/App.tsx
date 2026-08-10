@@ -3,6 +3,7 @@ import Sidebar from './components/Sidebar';
 import Dashboard from './components/Dashboard';
 import Inventory from './components/Inventory';
 import Slips from './components/Slips';
+import Operations from './components/Operations';
 import PurchaseOrders from './components/PurchaseOrders';
 import Reports from './components/Reports';
 import Logs from './components/Logs';
@@ -152,7 +153,7 @@ function App() {
   const renderContent = () => {
     // Role-based route protection
     const allowedTabs: Record<Role, string[]> = {
-      admin: ['dashboard', 'inventory', 'slips', 'purchase-orders', 'reports', 'audit', 'logs', 'users', 'settings'],
+      admin: ['dashboard', 'inventory', 'slips', 'operations', 'purchase-orders', 'reports', 'audit', 'logs', 'users', 'settings'],
       om: ['inventory', 'reports', 'settings'],
       red: ['reports', 'settings']
     };
@@ -173,6 +174,7 @@ function App() {
       case 'dashboard': return <Dashboard />;
       case 'inventory': return <Inventory userRole={userRole} />;
       case 'slips': return <Slips />;
+      case 'operations': return <Operations />;
       case 'purchase-orders': return <PurchaseOrders />;
       case 'reports': return <Reports userRole={userRole} />;
       case 'logs': return <Logs />;

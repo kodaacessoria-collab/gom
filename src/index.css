@@ -463,6 +463,19 @@ label {
   background-color: rgba(255, 255, 255, 0.05) !important;
 }
 
+.operations-layout {
+  display: grid;
+  grid-template-columns: 300px 1fr;
+  gap: 1.5rem;
+  align-items: start;
+}
+
+@media (max-width: 1023px) {
+  .operations-layout {
+    grid-template-columns: 1fr;
+  }
+}
+
 /* Modal Overlay modern styles */
 .modal-overlay {
   position: fixed;
