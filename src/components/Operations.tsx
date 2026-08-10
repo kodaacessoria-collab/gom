@@ -144,6 +144,19 @@ const formatQuantity = (value: number) => Number.isInteger(value) ? String(value
 
 const stockKey = (product: string, unit: string) => `${normalizeKey(product)}|${normalizeKey(unit || 'UN')}`;
 
+const ignoredDeliveryHeaders = new Set([
+  'TOTAL',
+  'COLUNAS1',
+  'COLUNAS2',
+  'COLUNAS3',
+  'FRUTAS',
+  'VERDURAS',
+  'LEGUMES',
+  'HORTIFRUTI',
+  'HORTIFRUTIGRANJEIRO',
+  ...DELIVERY_CATEGORIES.map(normalizeKey),
+]);
+
 const categoryToInventoryCategory = (category: DeliveryCategory) => {
   if (category === 'Limpeza') return 'LIMPEZA';
   if (category === 'Dietas e Fórmulas') return 'DIETA';
@@ -174,7 +187,7 @@ const extractDateFromRows = (rows: unknown[][]) => {
 const buildSummary = (deliveries: OrderDelivery[]) => {
   const summary = new Map<string, DeliveryItem>();
   deliveries.forEach(delivery => {
-    delivery.items.filter(item => item.quantity > 0).forEach(item => {
+    aggregateDeliveryItems(delivery.items).forEach(item => {
       const key = stockKey(item.product, item.unit);
       const current = summary.get(key);
       if (current) current.quantity += item.quantity;
@@ -182,6 +195,37 @@ const buildSummary = (deliveries: OrderDelivery[]) => {
     });
   });
   return Array.from(summary.values()).sort((a, b) => a.product.localeCompare(b.product));
+};
+
+const aggregateDeliveryItems = (items: DeliveryItem[]) => {
+  const grouped = new Map<string, DeliveryItem>();
+  items.filter(item => item.product && item.quantity > 0).forEach(item => {
+    const key = `${stockKey(item.product, item.unit)}|${normalizeKey(item.notes || '')}`;
+    const current = grouped.get(key);
+    if (current) current.quantity += Number(item.quantity || 0);
+    else grouped.set(key, { ...item, quantity: Number(item.quantity || 0) });
+  });
+  return Array.from(grouped.values()).sort((a, b) => a.product.localeCompare(b.product));
+};
+
+const normalizeOrderDeliveries = (deliveries: OrderDelivery[]) => {
+  const grouped = new Map<string, OrderDelivery>();
+  deliveries.forEach(delivery => {
+    if (!delivery.deliveryPointId) return;
+    const current = grouped.get(delivery.deliveryPointId);
+    if (current) {
+      current.items.push(...delivery.items);
+    } else {
+      grouped.set(delivery.deliveryPointId, {
+        ...delivery,
+        items: [...delivery.items],
+      });
+    }
+  });
+
+  return Array.from(grouped.values())
+    .map(delivery => ({ ...delivery, items: aggregateDeliveryItems(delivery.items) }))
+    .filter(delivery => delivery.items.length > 0);
 };
 
 const getOperationTitle = (operation: OperationContract) =>
@@ -459,7 +503,7 @@ const Operations: React.FC = () => {
         category: orderForm.category,
         deliveryDate: orderForm.deliveryDate,
         consumptionPeriod: displayText(orderForm.consumptionPeriod),
-        deliveries: draftDeliveries,
+        deliveries: normalizeOrderDeliveries(draftDeliveries),
       } : order));
       setEditingOrderId(null);
       setDraftDeliveries([]);
@@ -477,7 +521,7 @@ const Operations: React.FC = () => {
       deliveryDate: orderForm.deliveryDate,
       consumptionPeriod: displayText(orderForm.consumptionPeriod),
       importedAt: new Date().toISOString(),
-      deliveries: draftDeliveries,
+      deliveries: normalizeOrderDeliveries(draftDeliveries),
     };
     persistOrders([order, ...orders]);
     setDraftDeliveries([]);
@@ -497,7 +541,7 @@ const Operations: React.FC = () => {
     }));
   };
 
-  const parseUnitSheet = (sheetName: string, rows: unknown[][], fallbackPointId: string): OrderDelivery | null => {
+  const parseUnitSheet = (sheetName: string, rows: unknown[][]): OrderDelivery | null => {
     const headerRow = findHeaderRow(rows);
     if (headerRow < 0) return null;
     const headers = rows[headerRow].map(normalizeKey);
@@ -519,7 +563,8 @@ const Operations: React.FC = () => {
     const matchedPoint = operationPoints.find(point =>
       normalizeKey(point.code) === sheetKey || normalizeKey(point.name) === sheetKey || sheetKey.includes(normalizeKey(point.code))
     );
-    return { id: makeId('delivery'), deliveryPointId: matchedPoint?.id || fallbackPointId, items };
+    if (!matchedPoint && (operationPoints.length !== 1 || ignoredDeliveryHeaders.has(sheetKey))) return null;
+    return { id: makeId('delivery'), deliveryPointId: matchedPoint?.id || operationPoints[0].id, items: aggregateDeliveryItems(items) };
   };
 
   const parseMatrixSheet = (rows: unknown[][]): OrderDelivery[] => {
@@ -527,15 +572,16 @@ const Operations: React.FC = () => {
     if (headerRow < 0) return [];
     const headers = rows[headerRow];
     return headers.map((header, index) => ({ header: displayText(header), index }))
-      .filter(col => col.index > 1 && col.header && !['TOTAL', 'COLUNAS1', 'COLUNAS2', 'COLUNAS3'].includes(normalizeKey(col.header)))
+      .filter(col => col.index > 1 && col.header && !ignoredDeliveryHeaders.has(normalizeKey(col.header)))
       .map(col => {
         const matchedPoint = operationPoints.find(point => normalizeKey(point.code) === normalizeKey(col.header) || normalizeKey(point.name) === normalizeKey(col.header));
+        if (!matchedPoint) return null;
         const items = rows.slice(headerRow + 1).map(row => ({
           product: displayText(row[0]),
           unit: displayText(row[1]) || 'UN',
           quantity: toNumber(row[col.index]),
         })).filter(item => item.product && item.quantity > 0);
-        return matchedPoint && items.length > 0 ? { id: makeId('delivery'), deliveryPointId: matchedPoint.id, items } : null;
+        return items.length > 0 ? { id: makeId('delivery'), deliveryPointId: matchedPoint.id, items: aggregateDeliveryItems(items) } : null;
       })
       .filter((delivery): delivery is OrderDelivery => Boolean(delivery));
   };
@@ -551,12 +597,15 @@ const Operations: React.FC = () => {
       const rows = XLSX.utils.sheet_to_json(workbook.Sheets[sheetName], { header: 1, defval: '' }) as unknown[][];
       if (!rows.length) return;
       deliveryDate = extractDateFromRows(rows) || deliveryDate;
-      const parsedUnit = parseUnitSheet(sheetName, rows, operationPoints[0].id);
+      const parsedUnit = parseUnitSheet(sheetName, rows);
       if (parsedUnit) deliveries.push(parsedUnit);
       if (!parsedUnit) deliveries.push(...parseMatrixSheet(rows));
     });
 
-    if (deliveries.length === 0) throw new Error('Não encontrei itens com colunas PRODUTO, UND e QTD no Excel.');
+    const normalizedDeliveries = normalizeOrderDeliveries(deliveries);
+    if (normalizedDeliveries.length === 0) {
+      throw new Error('Não encontrei locais de entrega compatíveis com os locais cadastrados. Confira se as abas/colunas do Excel usam o mesmo nome ou código dos locais.');
+    }
     return {
       id: makeId('order'),
       operationId: activeOperation.id,
@@ -566,7 +615,7 @@ const Operations: React.FC = () => {
       deliveryDate,
       consumptionPeriod: displayText(orderForm.consumptionPeriod),
       importedAt: new Date().toISOString(),
-      deliveries,
+      deliveries: normalizedDeliveries,
     };
   };
 
@@ -603,7 +652,7 @@ const Operations: React.FC = () => {
       deliveryDate: orderForm.deliveryDate || todayIso(),
       consumptionPeriod: displayText(orderForm.consumptionPeriod),
       importedAt: new Date().toISOString(),
-      deliveries: [{ id: makeId('delivery'), deliveryPointId: operationPoints[0].id, items }],
+      deliveries: [{ id: makeId('delivery'), deliveryPointId: operationPoints[0].id, items: aggregateDeliveryItems(items) }],
     };
   };
 
@@ -702,7 +751,7 @@ const Operations: React.FC = () => {
     if (!activeOperation) return;
     const point = pointById(delivery.deliveryPointId);
     const sector = sectorById(point?.sectorId);
-    const items = delivery.items.filter(item => item.quantity > 0);
+    const items = aggregateDeliveryItems(delivery.items);
     const doc = new jsPDF();
     doc.setFont(REPORT_FONT, 'normal');
     doc.setFontSize(REPORT_FONT_SIZE);
@@ -783,8 +832,8 @@ const Operations: React.FC = () => {
         delivery,
         point,
         sector,
-        totalItems: delivery.items.filter(item => item.quantity > 0).length,
-        totalQuantity: delivery.items.reduce((sum, item) => sum + Number(item.quantity || 0), 0),
+        totalItems: aggregateDeliveryItems(delivery.items).length,
+        totalQuantity: aggregateDeliveryItems(delivery.items).reduce((sum, item) => sum + Number(item.quantity || 0), 0),
       };
     })
   ), [operationOrders, deliveryPoints, sectors]);
