@@ -111,7 +111,7 @@ const REPORT_FONT_SIZE = 8;
 const DELIVERY_CATEGORIES: DeliveryCategory[] = ['Hortifrutigranjeiro', 'Estocáveis', 'Dietas e Fórmulas', 'Proteínas', 'Limpeza'];
 const DEFAULT_LOGO_VARIANT: PdfLogoVariant = 'gom';
 const LOGO_OPTIONS: { value: PdfLogoVariant; label: string }[] = [
-  { value: 'gom', label: 'Logo atual' },
+  { value: 'gom', label: 'Logo LM' },
   { value: 'igeve', label: 'IGEVÊ' },
 ];
 
@@ -713,6 +713,8 @@ const Operations: React.FC = () => {
 
   const pointById = (id: string) => deliveryPoints.find(point => point.id === id);
   const sectorById = (id?: string) => sectors.find(sector => sector.id === id);
+  const operationByOrder = (order: OperationOrder) =>
+    operations.find(operation => operation.id === order.operationId) || activeOperation;
   const findDeliveryPointByLabel = (label: string) => {
     const labelKey = normalizeKey(label);
     const simpleLabel = normalizeDeliveryLabel(label);
@@ -804,14 +806,15 @@ const Operations: React.FC = () => {
   };
 
   const generateDeliveryPdf = async (order: OperationOrder, delivery: OrderDelivery) => {
-    if (!activeOperation) return;
+    const reportOperation = operationByOrder(order);
+    if (!reportOperation) return;
     const point = pointById(delivery.deliveryPointId);
     const sector = sectorById(point?.sectorId);
     const items = aggregateDeliveryItems(delivery.items);
     const doc = new jsPDF();
     doc.setFont(REPORT_FONT, 'normal');
     doc.setFontSize(REPORT_FONT_SIZE);
-    await addHeader(doc, activeOperation, order, `${sector?.name || 'Sem setor'} | ${point?.name || 'Local de entrega'}`);
+    await addHeader(doc, reportOperation, order, `${sector?.name || 'Sem setor'} | ${point?.name || 'Local de entrega'}`);
     doc.text(`Local: ${point?.name || '-'} | Codigo: ${point?.code || '-'}`, 14, 39);
     doc.text(`Endereco: ${point?.address || '-'} | Bairro: ${point?.neighborhood || '-'}`, 14, 45);
 
@@ -828,7 +831,8 @@ const Operations: React.FC = () => {
   };
 
   const generateAllDeliveriesPdf = async (order: OperationOrder) => {
-    if (!activeOperation || order.deliveries.length === 0) return;
+    const reportOperation = operationByOrder(order);
+    if (!reportOperation || order.deliveries.length === 0) return;
     const doc = new jsPDF();
     doc.setFont(REPORT_FONT, 'normal');
     doc.setFontSize(REPORT_FONT_SIZE);
@@ -841,7 +845,7 @@ const Operations: React.FC = () => {
 
       doc.setFont(REPORT_FONT, 'normal');
       doc.setFontSize(REPORT_FONT_SIZE);
-      await addHeader(doc, activeOperation, order, `${sector?.name || 'Sem setor'} | ${point?.name || 'Local de entrega'}`);
+      await addHeader(doc, reportOperation, order, `${sector?.name || 'Sem setor'} | ${point?.name || 'Local de entrega'}`);
       doc.text(`Local: ${point?.name || '-'} | Codigo: ${point?.code || '-'}`, 14, 39);
       doc.text(`Endereco: ${point?.address || '-'} | Bairro: ${point?.neighborhood || '-'}`, 14, 45);
 
@@ -857,7 +861,7 @@ const Operations: React.FC = () => {
     }
 
     doc.addPage();
-    await addHeader(doc, activeOperation, order, 'TOTAL DA ENTREGA - todos os locais');
+    await addHeader(doc, reportOperation, order, 'TOTAL DA ENTREGA - todos os locais');
     const summary = buildSummary(order.deliveries);
     autoTable(doc, {
       startY: 39,
@@ -872,7 +876,8 @@ const Operations: React.FC = () => {
   };
 
   const generateSummaryPdf = async (order: OperationOrder, sectorId?: string) => {
-    if (!activeOperation) return;
+    const reportOperation = operationByOrder(order);
+    if (!reportOperation) return;
     const scopedDeliveries = sectorId
       ? order.deliveries.filter(delivery => pointById(delivery.deliveryPointId)?.sectorId === sectorId)
       : order.deliveries;
@@ -881,7 +886,7 @@ const Operations: React.FC = () => {
     const doc = new jsPDF();
     doc.setFont(REPORT_FONT, 'normal');
     doc.setFontSize(REPORT_FONT_SIZE);
-    await addHeader(doc, activeOperation, order, sector ? `Soma das unidades - ${sector.name}` : 'Soma de todos os setores');
+    await addHeader(doc, reportOperation, order, sector ? `Soma das unidades - ${sector.name}` : 'Soma de todos os setores');
     autoTable(doc, {
       startY: 39,
       head: [['Produto', 'UND', 'Total']],
@@ -894,13 +899,14 @@ const Operations: React.FC = () => {
   };
 
   const generateStockAnalysisPdf = async (order: OperationOrder) => {
-    if (!activeOperation) return;
+    const reportOperation = operationByOrder(order);
+    if (!reportOperation) return;
     const needs = getPurchaseNeeds(order);
     const stock = getStockMap();
     const doc = new jsPDF();
     doc.setFont(REPORT_FONT, 'normal');
     doc.setFontSize(REPORT_FONT_SIZE);
-    await addHeader(doc, activeOperation, order, 'Analise de estoque para compra');
+    await addHeader(doc, reportOperation, order, 'Analise de estoque para compra');
     autoTable(doc, {
       startY: 39,
       head: [['Produto', 'UND', 'Demanda', 'Estoque', 'Comprar', 'Status']],
