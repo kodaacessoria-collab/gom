@@ -132,6 +132,12 @@ const normalizeText = (value: unknown) =>
 
 const displayText = (value: unknown) => String(value ?? '').replace(/\s+/g, ' ').trim();
 const normalizeKey = (value: unknown) => normalizeText(value).toUpperCase();
+const normalizeDeliveryLabel = (value: unknown) =>
+  normalizeKey(value)
+    .replace(/\([^)]*\)/g, ' ')
+    .replace(/[^A-Z0-9]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
 
 const toNumber = (value: unknown) => {
   if (typeof value === 'number') return Number.isFinite(value) ? value : 0;
@@ -149,7 +155,6 @@ const ignoredDeliveryHeaders = new Set([
   'COLUNAS1',
   'COLUNAS2',
   'COLUNAS3',
-  'FRUTAS',
   'VERDURAS',
   'LEGUMES',
   'HORTIFRUTI',
@@ -566,12 +571,19 @@ const Operations: React.FC = () => {
   };
 
   const parseMatrixSheet = (rows: unknown[][]): OrderDelivery[] => {
-    const headerRow = rows.findIndex(row => normalizeKey(row[0]) === 'PRODUTO' && ['EMBALAGEM', 'UND', 'UNIDADE'].includes(normalizeKey(row[1])));
+    const headerRow = rows.findIndex(row =>
+      row.some(cell => normalizeKey(cell) === 'PRODUTO') &&
+      row.some(cell => ['EMBALAGEM', 'UND', 'UNIDADE'].includes(normalizeKey(cell)))
+    );
     if (headerRow < 0) return [];
     const headers = rows[headerRow];
+    const normalizedHeaders = headers.map(normalizeKey);
+    const productIndex = normalizedHeaders.findIndex(header => header === 'PRODUTO');
+    const unitIndex = normalizedHeaders.findIndex(header => ['EMBALAGEM', 'UND', 'UNIDADE'].includes(header));
+    if (productIndex < 0 || unitIndex < 0) return [];
     return headers.map((header, index) => ({ header: displayText(header), index }))
       .filter(col => {
-        if (col.index <= 1 || !col.header) return false;
+        if (col.index === productIndex || col.index === unitIndex || !col.header) return false;
         if (findDeliveryPointByLabel(col.header)) return true;
         return !ignoredDeliveryHeaders.has(normalizeKey(col.header));
       })
@@ -579,8 +591,8 @@ const Operations: React.FC = () => {
         const matchedPoint = findDeliveryPointByLabel(col.header);
         if (!matchedPoint) return null;
         const items = rows.slice(headerRow + 1).map(row => ({
-          product: displayText(row[0]),
-          unit: displayText(row[1]) || 'UN',
+          product: displayText(row[productIndex]),
+          unit: displayText(row[unitIndex]) || 'UN',
           quantity: toNumber(row[col.index]),
         })).filter(item => item.product && item.quantity > 0);
         return items.length > 0 ? { id: makeId('delivery'), deliveryPointId: matchedPoint.id, items: aggregateDeliveryItems(items) } : null;
@@ -679,7 +691,21 @@ const Operations: React.FC = () => {
   const sectorById = (id?: string) => sectors.find(sector => sector.id === id);
   const findDeliveryPointByLabel = (label: string) => {
     const labelKey = normalizeKey(label);
-    return operationPoints.find(point => normalizeKey(point.code) === labelKey || normalizeKey(point.name) === labelKey);
+    const simpleLabel = normalizeDeliveryLabel(label);
+    const exactMatch = operationPoints.find(point =>
+      normalizeKey(point.code) === labelKey ||
+      normalizeKey(point.name) === labelKey ||
+      normalizeDeliveryLabel(point.code) === simpleLabel ||
+      normalizeDeliveryLabel(point.name) === simpleLabel
+    );
+    if (exactMatch) return exactMatch;
+
+    return [...operationPoints]
+      .sort((a, b) => Math.max(normalizeDeliveryLabel(b.code).length, normalizeDeliveryLabel(b.name).length) - Math.max(normalizeDeliveryLabel(a.code).length, normalizeDeliveryLabel(a.name).length))
+      .find(point => {
+        const aliases = [normalizeDeliveryLabel(point.code), normalizeDeliveryLabel(point.name)].filter(alias => alias.length >= 5);
+        return aliases.some(alias => simpleLabel.includes(alias) || alias.includes(simpleLabel));
+      });
   };
 
   const getStockMap = () => {
