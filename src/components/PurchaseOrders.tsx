@@ -5,6 +5,7 @@ import type { Product } from '../types';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import * as XLSX from 'xlsx';
+import { addPdfHeader } from '../lib/pdfBranding';
 
 const REPORT_FONT = 'courier';
 const REPORT_FONT_SIZE = 8;
@@ -342,30 +343,22 @@ const PurchaseOrders: React.FC = () => {
     }
   };
 
-  const generatePDF = (order: any) => {
+  const generatePDF = async (order: any) => {
     const doc = new jsPDF();
     doc.setFont(REPORT_FONT, 'normal');
     doc.setFontSize(REPORT_FONT_SIZE);
     
-    // Header
-    doc.setFillColor(79, 70, 229);
-    doc.rect(0, 0, 210, 26, 'F');
-    
-    doc.setTextColor(255, 255, 255);
-    doc.setFont(REPORT_FONT, 'bold');
-    doc.setFontSize(REPORT_FONT_SIZE);
-    doc.text('PEDIDO DE COMPRA - GOM', 20, 13);
-    
-    doc.setTextColor(255, 255, 255);
-    doc.setFont(REPORT_FONT, 'normal');
-    doc.setFontSize(REPORT_FONT_SIZE);
-    doc.text(`Data: ${order.date.split('-').reverse().join('/')} | ID: ${order.id.split('-')[0]}`, 20, 20);
+    await addPdfHeader(doc, {
+      title: 'PEDIDO DE COMPRA - GOM',
+      subtitle: `Data: ${order.date.split('-').reverse().join('/')} | ID: ${order.id.split('-')[0]}`,
+      fillColor: [15, 23, 42],
+    });
 
     // Order Info
     doc.setTextColor(0, 0, 0);
     doc.setFont(REPORT_FONT, 'normal');
     doc.setFontSize(REPORT_FONT_SIZE);
-    doc.text(`Status: ${order.status}`, 20, 34);
+    doc.text(`Status: ${order.status}`, 14, 39);
     
     // Items Table sorted alphabetically by product name
     const sortedItems = [...order.items].sort((a: any, b: any) =>
@@ -378,7 +371,7 @@ const PurchaseOrders: React.FC = () => {
     ]);
 
     autoTable(doc, {
-      startY: 40,
+      startY: 45,
       head: [['Produto', 'Quantidade', 'Unidade']],
       body: tableData,
       styles: { font: REPORT_FONT, fontSize: REPORT_FONT_SIZE, cellPadding: 1.5 },

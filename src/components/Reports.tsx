@@ -4,6 +4,7 @@ import { supabase } from '../lib/supabase';
 import type { Deposit, Role } from '../types';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
+import { addPdfHeader } from '../lib/pdfBranding';
 
 interface ReportsProps {
   userRole?: Role | null;
@@ -125,18 +126,14 @@ const Reports: React.FC<ReportsProps> = ({ userRole }) => {
               : 'TODAS';
       const reportDateTime = formatReportDateTime(new Date());
 
-      // Header
-      doc.setFont(REPORT_FONT, 'bold');
-      doc.setFontSize(REPORT_FONT_SIZE);
-      doc.setTextColor(31, 41, 55);
-      doc.text(title, 14, 14);
+      await addPdfHeader(doc, {
+        title,
+        subtitle: `Gerado em: ${new Date().toLocaleString('pt-BR')}`,
+        footer: `Depósito: ${depositToQuery === 'TODOS' ? 'Todos os Depósitos' : depositToQuery}`,
+        fillColor: [15, 23, 42],
+      });
       
-      doc.setFont(REPORT_FONT, 'normal');
-      doc.setFontSize(REPORT_FONT_SIZE);
-      doc.setTextColor(107, 114, 128);
-      doc.text(`Gerado em: ${new Date().toLocaleString('pt-BR')} | Depósito: ${depositToQuery === 'TODOS' ? 'Todos os Depósitos' : depositToQuery}`, 14, 20);
-      
-      let startY = 28;
+      let startY = 38;
 
       if (mode === 'estoque_agrupado') {
         const getProductGroupKey = (p: any) => {

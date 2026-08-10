@@ -24,6 +24,7 @@ import * as XLSX from 'xlsx';
 import { getDocument, GlobalWorkerOptions } from 'pdfjs-dist';
 import { supabase } from '../lib/supabase';
 import type { Deposit, Product } from '../types';
+import { addPdfHeader } from '../lib/pdfBranding';
 
 GlobalWorkerOptions.workerSrc = new URL('pdfjs-dist/build/pdf.worker.mjs', import.meta.url).toString();
 
@@ -239,22 +240,18 @@ const getOperationTitle = (operation: OperationContract) =>
 const getPdfHeader = (operation: OperationContract, order: OperationOrder) =>
   `ROMANEIO - ${order.category.toUpperCase()} - ${getOperationTitle(operation).toUpperCase()} - ${formatDate(order.deliveryDate)}`;
 
-const addHeader = (doc: jsPDF, operation: OperationContract, order: OperationOrder, subtitle?: string) => {
-  doc.setFillColor(79, 70, 229);
-  doc.rect(0, 0, 210, 27, 'F');
-  doc.setTextColor(255, 255, 255);
-  doc.setFont(REPORT_FONT, 'bold');
-  doc.setFontSize(REPORT_FONT_SIZE);
-  doc.text(getPdfHeader(operation, order), 10, 10, { maxWidth: 190 });
-  doc.setFont(REPORT_FONT, 'normal');
+const addHeader = async (doc: jsPDF, operation: OperationContract, order: OperationOrder, subtitle?: string) => {
   const details = [
     operation.bidNumber ? `Ata: ${operation.bidNumber}` : '',
     operation.supplyAuthorization ? `Autorizacao: ${operation.supplyAuthorization}` : '',
     order.consumptionPeriod ? `Consumo: ${order.consumptionPeriod}` : '',
   ].filter(Boolean).join(' | ');
-  doc.text(details || 'Documentacao de entrega', 10, 18, { maxWidth: 190 });
-  if (subtitle) doc.text(subtitle, 10, 24, { maxWidth: 190 });
-  doc.setTextColor(31, 41, 55);
+  await addPdfHeader(doc, {
+    title: getPdfHeader(operation, order),
+    subtitle: details || 'Documentacao de entrega',
+    footer: subtitle,
+    fillColor: [15, 23, 42],
+  });
 };
 
 const addReceiptFields = (doc: jsPDF, startY: number) => {
@@ -779,7 +776,7 @@ const Operations: React.FC = () => {
     }
   };
 
-  const generateDeliveryPdf = (order: OperationOrder, delivery: OrderDelivery) => {
+  const generateDeliveryPdf = async (order: OperationOrder, delivery: OrderDelivery) => {
     if (!activeOperation) return;
     const point = pointById(delivery.deliveryPointId);
     const sector = sectorById(point?.sectorId);
@@ -787,12 +784,12 @@ const Operations: React.FC = () => {
     const doc = new jsPDF();
     doc.setFont(REPORT_FONT, 'normal');
     doc.setFontSize(REPORT_FONT_SIZE);
-    addHeader(doc, activeOperation, order, `${sector?.name || 'Sem setor'} | ${point?.name || 'Local de entrega'}`);
-    doc.text(`Local: ${point?.name || '-'} | Codigo: ${point?.code || '-'}`, 14, 36);
-    doc.text(`Endereco: ${point?.address || '-'} | Bairro: ${point?.neighborhood || '-'}`, 14, 42);
+    await addHeader(doc, activeOperation, order, `${sector?.name || 'Sem setor'} | ${point?.name || 'Local de entrega'}`);
+    doc.text(`Local: ${point?.name || '-'} | Codigo: ${point?.code || '-'}`, 14, 39);
+    doc.text(`Endereco: ${point?.address || '-'} | Bairro: ${point?.neighborhood || '-'}`, 14, 45);
 
     autoTable(doc, {
-      startY: 49,
+      startY: 52,
       head: [['Produto', 'UND', 'QTD', 'OBS.']],
       body: items.map(item => [item.product, item.unit, formatQuantity(item.quantity), item.notes || '']),
       styles: { font: REPORT_FONT, fontSize: REPORT_FONT_SIZE, cellPadding: 1.4 },
@@ -803,7 +800,51 @@ const Operations: React.FC = () => {
     doc.save(`romaneio_${order.category}_${point?.name || 'entrega'}_${order.deliveryDate}.pdf`.replace(/\s+/g, '_'));
   };
 
-  const generateSummaryPdf = (order: OperationOrder, sectorId?: string) => {
+  const generateAllDeliveriesPdf = async (order: OperationOrder) => {
+    if (!activeOperation || order.deliveries.length === 0) return;
+    const doc = new jsPDF();
+    doc.setFont(REPORT_FONT, 'normal');
+    doc.setFontSize(REPORT_FONT_SIZE);
+
+    for (const [index, delivery] of order.deliveries.entries()) {
+      if (index > 0) doc.addPage();
+      const point = pointById(delivery.deliveryPointId);
+      const sector = sectorById(point?.sectorId);
+      const items = aggregateDeliveryItems(delivery.items);
+
+      doc.setFont(REPORT_FONT, 'normal');
+      doc.setFontSize(REPORT_FONT_SIZE);
+      await addHeader(doc, activeOperation, order, `${sector?.name || 'Sem setor'} | ${point?.name || 'Local de entrega'}`);
+      doc.text(`Local: ${point?.name || '-'} | Codigo: ${point?.code || '-'}`, 14, 39);
+      doc.text(`Endereco: ${point?.address || '-'} | Bairro: ${point?.neighborhood || '-'}`, 14, 45);
+
+      autoTable(doc, {
+        startY: 52,
+        head: [['Produto', 'UND', 'QTD', 'OBS.']],
+        body: items.map(item => [item.product, item.unit, formatQuantity(item.quantity), item.notes || '']),
+        styles: { font: REPORT_FONT, fontSize: REPORT_FONT_SIZE, cellPadding: 1.4 },
+        headStyles: { font: REPORT_FONT, fontSize: REPORT_FONT_SIZE, fontStyle: 'bold', fillColor: [5, 150, 105] },
+        theme: 'grid',
+      } as any);
+      addReceiptFields(doc, (doc as any).lastAutoTable?.finalY || 60);
+    }
+
+    doc.addPage();
+    await addHeader(doc, activeOperation, order, 'TOTAL DA ENTREGA - todos os locais');
+    const summary = buildSummary(order.deliveries);
+    autoTable(doc, {
+      startY: 39,
+      head: [['Produto', 'UND', 'Total']],
+      body: summary.map(item => [item.product, item.unit, formatQuantity(item.quantity)]),
+      styles: { font: REPORT_FONT, fontSize: REPORT_FONT_SIZE, cellPadding: 1.4 },
+      headStyles: { font: REPORT_FONT, fontSize: REPORT_FONT_SIZE, fontStyle: 'bold', fillColor: [79, 70, 229] },
+      theme: 'grid',
+    });
+
+    doc.save(`romaneios_total_entrega_${order.category}_${order.deliveryDate}.pdf`.replace(/\s+/g, '_'));
+  };
+
+  const generateSummaryPdf = async (order: OperationOrder, sectorId?: string) => {
     if (!activeOperation) return;
     const scopedDeliveries = sectorId
       ? order.deliveries.filter(delivery => pointById(delivery.deliveryPointId)?.sectorId === sectorId)
@@ -813,9 +854,9 @@ const Operations: React.FC = () => {
     const doc = new jsPDF();
     doc.setFont(REPORT_FONT, 'normal');
     doc.setFontSize(REPORT_FONT_SIZE);
-    addHeader(doc, activeOperation, order, sector ? `Soma das unidades - ${sector.name}` : 'Soma de todos os setores');
+    await addHeader(doc, activeOperation, order, sector ? `Soma das unidades - ${sector.name}` : 'Soma de todos os setores');
     autoTable(doc, {
-      startY: 36,
+      startY: 39,
       head: [['Produto', 'UND', 'Total']],
       body: summary.map(item => [item.product, item.unit, formatQuantity(item.quantity)]),
       styles: { font: REPORT_FONT, fontSize: REPORT_FONT_SIZE, cellPadding: 1.4 },
@@ -825,16 +866,16 @@ const Operations: React.FC = () => {
     doc.save(`${sector ? 'soma_setor' : 'soma_todos_setores'}_${order.category}_${order.deliveryDate}.pdf`.replace(/\s+/g, '_'));
   };
 
-  const generateStockAnalysisPdf = (order: OperationOrder) => {
+  const generateStockAnalysisPdf = async (order: OperationOrder) => {
     if (!activeOperation) return;
     const needs = getPurchaseNeeds(order);
     const stock = getStockMap();
     const doc = new jsPDF();
     doc.setFont(REPORT_FONT, 'normal');
     doc.setFontSize(REPORT_FONT_SIZE);
-    addHeader(doc, activeOperation, order, 'Analise de estoque para compra');
+    await addHeader(doc, activeOperation, order, 'Analise de estoque para compra');
     autoTable(doc, {
-      startY: 36,
+      startY: 39,
       head: [['Produto', 'UND', 'Demanda', 'Estoque', 'Comprar', 'Status']],
       body: buildSummary(order.deliveries).map(item => {
         const available = stock.get(stockKey(item.product, item.unit)) || 0;
@@ -1140,7 +1181,7 @@ const Operations: React.FC = () => {
             <div className="view-header" style={{ marginBottom: '1rem', gap: '1rem' }}>
               <div>
                 <h2>Pedidos da operação</h2>
-                <p style={{ textAlign: 'left', marginBottom: 0 }}>Gere romaneios por local, somas por setor, soma geral e análise de compra.</p>
+                <p style={{ textAlign: 'left', marginBottom: 0 }}>Gere romaneios por local, PDF único com total da entrega, somas por setor, soma geral e análise de compra.</p>
               </div>
             </div>
             <div style={{ overflowX: 'auto' }}>
@@ -1171,6 +1212,9 @@ const Operations: React.FC = () => {
                           <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
                             <button className={`button ${editingOrderId === order.id ? '' : 'button-outline'}`} type="button" style={{ width: '42px', height: '36px', padding: 0 }} title="Editar pedido de entrega" onClick={() => startEditOrder(order)}>
                               <Edit3 size={16} />
+                            </button>
+                            <button className="button button-outline" style={{ width: '42px', height: '36px', padding: 0 }} title="PDF único: romaneios + total da entrega" onClick={() => generateAllDeliveriesPdf(order)}>
+                              <FileText size={16} />
                             </button>
                             {order.deliveries.map(delivery => (
                               <button key={delivery.id} className="button button-outline" style={{ width: '42px', height: '36px', padding: 0 }} title={`PDF ${pointById(delivery.deliveryPointId)?.name || 'Entrega'}`} onClick={() => generateDeliveryPdf(order, delivery)}>

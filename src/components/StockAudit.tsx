@@ -8,6 +8,7 @@ import { saveLog } from '../lib/logger';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import type { Category, Deposit } from '../types';
+import { addPdfHeader } from '../lib/pdfBranding';
 
 const REPORT_FONT = 'courier';
 const REPORT_FONT_SIZE = 8;
@@ -439,7 +440,7 @@ const StockAudit: React.FC = () => {
       saveLog('FINALIZAR', 'AUDITORIA',
         `Auditoria ${activeAudit.audit_code} finalizada — ${slipsToInsert.length} ajuste(s) de estoque`);
 
-      generatePDF(finalizedAudit, finalItems || []);
+      await generatePDF(finalizedAudit, finalItems || []);
 
       alert(`✅ Auditoria ${activeAudit.audit_code} finalizada!\n${slipsToInsert.length} ajuste(s) de estoque gerados.\nPDF baixado automaticamente.`);
 
@@ -530,33 +531,24 @@ const StockAudit: React.FC = () => {
   };
 
   /* ══ Generate PDF ══ */
-  const generatePDF = (audit: Audit, items: AuditItem[]) => {
+  const generatePDF = async (audit: Audit, items: AuditItem[]) => {
     items = items.filter((item) => !(item.system_qty === 0 && item.audited_qty === 0));
     const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
     doc.setFont(REPORT_FONT, 'normal');
     doc.setFontSize(REPORT_FONT_SIZE);
 
     /* ── Header ── */
-    doc.setFillColor(15, 23, 42);
-    doc.rect(0, 0, 210, 26, 'F');
-
-    doc.setFontSize(REPORT_FONT_SIZE);
-    doc.setTextColor(129, 140, 248);
-    doc.setFont(REPORT_FONT, 'bold');
-    doc.text('GOM ESTOQUE', 14, 11);
-
-    doc.setFontSize(REPORT_FONT_SIZE);
-    doc.setTextColor(192, 132, 252);
-    doc.text('RELATÓRIO DE AUDITORIA DE ESTOQUE', 14, 17);
-
-    doc.setFontSize(REPORT_FONT_SIZE);
-    doc.setFont(REPORT_FONT, 'normal');
-    doc.setTextColor(148, 163, 184);
-    doc.text(`Código: ${audit.audit_code}`, 14, 23);
-    doc.text(`Data/Hora: ${new Date(audit.audit_date).toLocaleString('pt-BR')}`, 100, 23);
+    await addPdfHeader(doc, {
+      title: 'RELATÓRIO DE AUDITORIA DE ESTOQUE',
+      subtitle: `Código: ${audit.audit_code}`,
+      footer: `Data/Hora: ${new Date(audit.audit_date).toLocaleString('pt-BR')}`,
+      fillColor: [15, 23, 42],
+      titleColor: [255, 255, 255],
+      textColor: [226, 232, 240],
+    });
 
     /* ── Info section ── */
-    let y = 34;
+    let y = 38;
     doc.setFontSize(REPORT_FONT_SIZE);
     doc.setTextColor(30, 30, 30);
 
@@ -758,7 +750,7 @@ const StockAudit: React.FC = () => {
       .select('*')
       .eq('audit_id', audit.id)
       .order('product_name');
-    generatePDF(audit, items || []);
+    await generatePDF(audit, items || []);
   };
 
   /* ══ Delete audit ══ */
