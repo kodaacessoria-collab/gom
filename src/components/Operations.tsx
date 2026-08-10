@@ -560,9 +560,7 @@ const Operations: React.FC = () => {
 
     if (items.length === 0) return null;
     const sheetKey = normalizeKey(sheetName);
-    const matchedPoint = operationPoints.find(point =>
-      normalizeKey(point.code) === sheetKey || normalizeKey(point.name) === sheetKey || sheetKey.includes(normalizeKey(point.code))
-    );
+    const matchedPoint = findDeliveryPointByLabel(sheetName) || operationPoints.find(point => sheetKey.includes(normalizeKey(point.code)));
     if (!matchedPoint && (operationPoints.length !== 1 || ignoredDeliveryHeaders.has(sheetKey))) return null;
     return { id: makeId('delivery'), deliveryPointId: matchedPoint?.id || operationPoints[0].id, items: aggregateDeliveryItems(items) };
   };
@@ -572,9 +570,13 @@ const Operations: React.FC = () => {
     if (headerRow < 0) return [];
     const headers = rows[headerRow];
     return headers.map((header, index) => ({ header: displayText(header), index }))
-      .filter(col => col.index > 1 && col.header && !ignoredDeliveryHeaders.has(normalizeKey(col.header)))
+      .filter(col => {
+        if (col.index <= 1 || !col.header) return false;
+        if (findDeliveryPointByLabel(col.header)) return true;
+        return !ignoredDeliveryHeaders.has(normalizeKey(col.header));
+      })
       .map(col => {
-        const matchedPoint = operationPoints.find(point => normalizeKey(point.code) === normalizeKey(col.header) || normalizeKey(point.name) === normalizeKey(col.header));
+        const matchedPoint = findDeliveryPointByLabel(col.header);
         if (!matchedPoint) return null;
         const items = rows.slice(headerRow + 1).map(row => ({
           product: displayText(row[0]),
@@ -675,6 +677,10 @@ const Operations: React.FC = () => {
 
   const pointById = (id: string) => deliveryPoints.find(point => point.id === id);
   const sectorById = (id?: string) => sectors.find(sector => sector.id === id);
+  const findDeliveryPointByLabel = (label: string) => {
+    const labelKey = normalizeKey(label);
+    return operationPoints.find(point => normalizeKey(point.code) === labelKey || normalizeKey(point.name) === labelKey);
+  };
 
   const getStockMap = () => {
     const map = new Map<string, number>();
