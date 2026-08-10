@@ -542,9 +542,6 @@ const StockAudit: React.FC = () => {
       title: 'RELATÓRIO DE AUDITORIA DE ESTOQUE',
       subtitle: `Código: ${audit.audit_code}`,
       footer: `Data/Hora: ${new Date(audit.audit_date).toLocaleString('pt-BR')}`,
-      fillColor: [15, 23, 42],
-      titleColor: [255, 255, 255],
-      textColor: [226, 232, 240],
     });
 
     /* ── Info section ── */

@@ -36,15 +36,18 @@ export const addPdfHeader = async (doc: jsPDF, options: PdfHeaderOptions) => {
     title,
     subtitle,
     footer,
-    fillColor = [15, 23, 42],
-    titleColor = [255, 255, 255],
-    textColor = [226, 232, 240],
+    fillColor = [255, 255, 255],
+    titleColor = [10, 48, 92],
+    textColor = [10, 48, 92],
     height = 30,
   } = options;
 
   const pageWidth = doc.internal.pageSize.getWidth();
   doc.setFillColor(...fillColor);
   doc.rect(0, 0, pageWidth, height, 'F');
+  doc.setDrawColor(226, 232, 240);
+  doc.setLineWidth(0.2);
+  doc.line(0, height, pageWidth, height);
 
   try {
     const logoDataUrl = await loadLogoDataUrl();
@@ -58,7 +61,7 @@ export const addPdfHeader = async (doc: jsPDF, options: PdfHeaderOptions) => {
   doc.setTextColor(...titleColor);
   doc.text(title, 36, 10, { maxWidth: pageWidth - 46 });
 
-  doc.setFont('courier', 'normal');
+  doc.setFont('courier', 'bold');
   doc.setFontSize(8);
   doc.setTextColor(...textColor);
   if (subtitle) doc.text(subtitle, 36, 18, { maxWidth: pageWidth - 46 });

@@ -130,7 +130,6 @@ const Reports: React.FC<ReportsProps> = ({ userRole }) => {
         title,
         subtitle: `Gerado em: ${new Date().toLocaleString('pt-BR')}`,
         footer: `Depósito: ${depositToQuery === 'TODOS' ? 'Todos os Depósitos' : depositToQuery}`,
-        fillColor: [15, 23, 42],
       });
       
       let startY = 38;

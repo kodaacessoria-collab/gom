@@ -351,7 +351,6 @@ const PurchaseOrders: React.FC = () => {
     await addPdfHeader(doc, {
       title: 'PEDIDO DE COMPRA - GOM',
       subtitle: `Data: ${order.date.split('-').reverse().join('/')} | ID: ${order.id.split('-')[0]}`,
-      fillColor: [15, 23, 42],
     });
 
     // Order Info

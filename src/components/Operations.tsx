@@ -250,7 +250,6 @@ const addHeader = async (doc: jsPDF, operation: OperationContract, order: Operat
     title: getPdfHeader(operation, order),
     subtitle: details || 'Documentacao de entrega',
     footer: subtitle,
-    fillColor: [15, 23, 42],
   });
 };
 
