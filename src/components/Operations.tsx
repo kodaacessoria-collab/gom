@@ -3,16 +3,20 @@ import {
   Building2,
   Calendar,
   Download,
+  Edit3,
   FileText,
   FolderPlus,
+  History,
   Layers,
   MapPin,
   PackagePlus,
   Plus,
   Search,
+  Save,
   ShoppingCart,
   Trash2,
   Upload,
+  X,
 } from 'lucide-react';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
@@ -220,8 +224,16 @@ const Operations: React.FC = () => {
   const [products, setProducts] = useState<Product[]>([]);
   const [activeOperationId, setActiveOperationId] = useState(() => operations[0]?.id || 'boituva');
   const [newOperation, setNewOperation] = useState({ name: '', city: '', uf: '', bidNumber: '', supplyAuthorization: '' });
+  const [editingOperationId, setEditingOperationId] = useState<string | null>(null);
+  const [operationEditForm, setOperationEditForm] = useState({ name: '', city: '', uf: '', bidNumber: '', supplyAuthorization: '' });
   const [newSector, setNewSector] = useState('Setor 01');
+  const [editingSectorId, setEditingSectorId] = useState<string | null>(null);
+  const [sectorEditName, setSectorEditName] = useState('');
   const [newPoint, setNewPoint] = useState({ sectorId: '', code: '', name: '', address: '', neighborhood: '' });
+  const [editingPointId, setEditingPointId] = useState<string | null>(null);
+  const [pointEditForm, setPointEditForm] = useState({ sectorId: '', code: '', name: '', address: '', neighborhood: '' });
+  const [editingOrderId, setEditingOrderId] = useState<string | null>(null);
+  const [orderEditForm, setOrderEditForm] = useState({ category: 'Estocáveis' as DeliveryCategory, deliveryDate: todayIso(), consumptionPeriod: '' });
   const [orderForm, setOrderForm] = useState({
     category: 'Estocáveis' as DeliveryCategory,
     deliveryDate: todayIso(),
@@ -301,12 +313,52 @@ const Operations: React.FC = () => {
     setNewOperation({ name: '', city: '', uf: '', bidNumber: '', supplyAuthorization: '' });
   };
 
+  const startEditOperation = (operation: OperationContract) => {
+    setEditingOperationId(operation.id);
+    setOperationEditForm({
+      name: operation.name,
+      city: operation.city,
+      uf: operation.uf,
+      bidNumber: operation.bidNumber || '',
+      supplyAuthorization: operation.supplyAuthorization || '',
+    });
+  };
+
+  const saveOperationEdit = (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!editingOperationId) return;
+    const name = displayText(operationEditForm.name);
+    const city = displayText(operationEditForm.city);
+    if (!name || !city) return;
+    persistOperations(operations.map(operation => operation.id === editingOperationId ? {
+      ...operation,
+      name,
+      city,
+      uf: displayText(operationEditForm.uf).toUpperCase(),
+      bidNumber: displayText(operationEditForm.bidNumber),
+      supplyAuthorization: displayText(operationEditForm.supplyAuthorization),
+    } : operation));
+    setEditingOperationId(null);
+  };
+
   const addSector = (event: React.FormEvent) => {
     event.preventDefault();
     if (!activeOperation || !displayText(newSector)) return;
     const sector = { id: makeId('sector'), operationId: activeOperation.id, name: displayText(newSector) };
     persistSectors([...sectors, sector]);
     setNewSector(`Setor ${String(operationSectors.length + 2).padStart(2, '0')}`);
+  };
+
+  const startEditSector = (sector: Sector) => {
+    setEditingSectorId(sector.id);
+    setSectorEditName(sector.name);
+  };
+
+  const saveSectorEdit = () => {
+    if (!editingSectorId || !displayText(sectorEditName)) return;
+    persistSectors(sectors.map(sector => sector.id === editingSectorId ? { ...sector, name: displayText(sectorEditName) } : sector));
+    setEditingSectorId(null);
+    setSectorEditName('');
   };
 
   const addDeliveryPoint = (event: React.FormEvent) => {
@@ -324,6 +376,50 @@ const Operations: React.FC = () => {
     persistDeliveryPoints([...deliveryPoints, point]);
     setNewPoint({ ...newPoint, code: '', name: '', address: '', neighborhood: '' });
     if (!orderForm.deliveryPointId) setOrderForm({ ...orderForm, deliveryPointId: point.id });
+  };
+
+  const startEditPoint = (point: DeliveryPoint) => {
+    setEditingPointId(point.id);
+    setPointEditForm({
+      sectorId: point.sectorId,
+      code: point.code,
+      name: point.name,
+      address: point.address,
+      neighborhood: point.neighborhood,
+    });
+  };
+
+  const savePointEdit = () => {
+    if (!editingPointId || !displayText(pointEditForm.name) || !pointEditForm.sectorId) return;
+    persistDeliveryPoints(deliveryPoints.map(point => point.id === editingPointId ? {
+      ...point,
+      sectorId: pointEditForm.sectorId,
+      code: displayText(pointEditForm.code) || displayText(pointEditForm.name),
+      name: displayText(pointEditForm.name),
+      address: displayText(pointEditForm.address),
+      neighborhood: displayText(pointEditForm.neighborhood),
+    } : point));
+    setEditingPointId(null);
+  };
+
+  const startEditOrder = (order: OperationOrder) => {
+    setEditingOrderId(order.id);
+    setOrderEditForm({
+      category: order.category,
+      deliveryDate: order.deliveryDate,
+      consumptionPeriod: order.consumptionPeriod || '',
+    });
+  };
+
+  const saveOrderEdit = () => {
+    if (!editingOrderId) return;
+    persistOrders(orders.map(order => order.id === editingOrderId ? {
+      ...order,
+      category: orderEditForm.category,
+      deliveryDate: orderEditForm.deliveryDate,
+      consumptionPeriod: displayText(orderEditForm.consumptionPeriod),
+    } : order));
+    setEditingOrderId(null);
   };
 
   const deleteOrder = (orderId: string) => {
@@ -651,6 +747,21 @@ const Operations: React.FC = () => {
     return { deliveries, items };
   }, [operationOrders]);
 
+  const deliveryHistory = useMemo(() => operationOrders.flatMap(order =>
+    order.deliveries.map(delivery => {
+      const point = pointById(delivery.deliveryPointId);
+      const sector = sectorById(point?.sectorId);
+      return {
+        order,
+        delivery,
+        point,
+        sector,
+        totalItems: delivery.items.filter(item => item.quantity > 0).length,
+        totalQuantity: delivery.items.reduce((sum, item) => sum + Number(item.quantity || 0), 0),
+      };
+    })
+  ), [operationOrders, deliveryPoints, sectors]);
+
   return (
     <div>
       <div className="view-header" style={{ flexWrap: 'wrap', gap: '1rem' }}>
@@ -672,12 +783,34 @@ const Operations: React.FC = () => {
           </h3>
           <div style={{ display: 'grid', gap: '0.5rem', marginBottom: '1.25rem' }}>
             {operations.map(operation => (
-              <button key={operation.id} className={`nav-item ${activeOperationId === operation.id ? 'active' : ''}`} onClick={() => setActiveOperationId(operation.id)} style={{ width: '100%' }}>
-                <Building2 size={18} />
-                <span>{operation.name}</span>
-              </button>
+              <div key={operation.id} style={{ display: 'flex', gap: '0.4rem' }}>
+                <button className={`nav-item ${activeOperationId === operation.id ? 'active' : ''}`} onClick={() => setActiveOperationId(operation.id)} style={{ width: '100%' }}>
+                  <Building2 size={18} />
+                  <span>{operation.name}</span>
+                </button>
+                <button className="button button-outline" type="button" title="Editar operação" onClick={() => startEditOperation(operation)} style={{ width: '40px', height: '42px', padding: 0 }}>
+                  <Edit3 size={15} />
+                </button>
+              </div>
             ))}
           </div>
+
+          {editingOperationId && (
+            <form onSubmit={saveOperationEdit} style={{ borderTop: '1px solid var(--border)', paddingTop: '1rem', display: 'grid', gap: '0.75rem', marginBottom: '1rem' }}>
+              <h4 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}><Edit3 size={18} /> Editar operação</h4>
+              <input className="input-field" placeholder="Nome da operação" value={operationEditForm.name} onChange={event => setOperationEditForm({ ...operationEditForm, name: event.target.value })} />
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 80px', gap: '0.5rem' }}>
+                <input className="input-field" placeholder="Município" value={operationEditForm.city} onChange={event => setOperationEditForm({ ...operationEditForm, city: event.target.value })} />
+                <input className="input-field" placeholder="UF" maxLength={2} value={operationEditForm.uf} onChange={event => setOperationEditForm({ ...operationEditForm, uf: event.target.value })} />
+              </div>
+              <input className="input-field" placeholder="Número da ata de licitação" value={operationEditForm.bidNumber} onChange={event => setOperationEditForm({ ...operationEditForm, bidNumber: event.target.value })} />
+              <input className="input-field" placeholder="Autorização de fornecimento" value={operationEditForm.supplyAuthorization} onChange={event => setOperationEditForm({ ...operationEditForm, supplyAuthorization: event.target.value })} />
+              <div style={{ display: 'flex', gap: '0.5rem' }}>
+                <button className="button" type="submit"><Save size={16} style={{ marginRight: '0.5rem' }} /> Salvar</button>
+                <button className="button button-outline" type="button" onClick={() => setEditingOperationId(null)}><X size={16} style={{ marginRight: '0.5rem' }} /> Cancelar</button>
+              </div>
+            </form>
+          )}
 
           <form onSubmit={addOperation} style={{ borderTop: '1px solid var(--border)', paddingTop: '1rem', display: 'grid', gap: '0.75rem' }}>
             <h4 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}><FolderPlus size={18} /> Nova operação</h4>
@@ -721,6 +854,24 @@ const Operations: React.FC = () => {
                 <label>Cadastrar setor</label>
                 <input className="input-field" placeholder="Setor 01" value={newSector} onChange={event => setNewSector(event.target.value)} />
                 <button className="button" type="submit"><Plus size={16} style={{ marginRight: '0.5rem' }} /> Adicionar setor</button>
+                <div style={{ display: 'grid', gap: '0.5rem' }}>
+                  {operationSectors.map(sector => (
+                    <div key={sector.id} style={{ display: 'flex', gap: '0.4rem', alignItems: 'center' }}>
+                      {editingSectorId === sector.id ? (
+                        <>
+                          <input className="input-field" style={{ marginTop: 0 }} value={sectorEditName} onChange={event => setSectorEditName(event.target.value)} />
+                          <button className="button" type="button" title="Salvar setor" onClick={saveSectorEdit} style={{ width: '38px', height: '38px', padding: 0 }}><Save size={14} /></button>
+                          <button className="button button-outline" type="button" title="Cancelar" onClick={() => setEditingSectorId(null)} style={{ width: '38px', height: '38px', padding: 0 }}><X size={14} /></button>
+                        </>
+                      ) : (
+                        <>
+                          <span className="badge badge-blue" style={{ flex: 1, borderRadius: '0.5rem', padding: '0.65rem' }}>{sector.name}</span>
+                          <button className="button button-outline" type="button" title="Editar setor" onClick={() => startEditSector(sector)} style={{ width: '38px', height: '38px', padding: 0 }}><Edit3 size={14} /></button>
+                        </>
+                      )}
+                    </div>
+                  ))}
+                </div>
               </form>
               <form onSubmit={addDeliveryPoint} style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
                 <div>
@@ -750,10 +901,42 @@ const Operations: React.FC = () => {
             </div>
             <div style={{ overflowX: 'auto', marginTop: '1rem' }}>
               <table className="data-table">
-                <thead><tr><th>Setor</th><th>Código</th><th>Local</th><th>Endereço</th></tr></thead>
+                <thead><tr><th>Setor</th><th>Código</th><th>Local</th><th>Endereço</th><th>Ações</th></tr></thead>
                 <tbody>
-                  {operationPoints.map(point => <tr key={point.id}><td>{sectorById(point.sectorId)?.name}</td><td>{point.code}</td><td style={{ fontWeight: 600 }}>{point.name}</td><td>{point.address || '-'}</td></tr>)}
-                  {operationPoints.length === 0 && <tr><td colSpan={4} style={{ textAlign: 'center', padding: '1.5rem' }}>Nenhum local cadastrado.</td></tr>}
+                  {operationPoints.map(point => (
+                    <tr key={point.id}>
+                      {editingPointId === point.id ? (
+                        <>
+                          <td>
+                            <select className="input-field" value={pointEditForm.sectorId} onChange={event => setPointEditForm({ ...pointEditForm, sectorId: event.target.value })}>
+                              {operationSectors.map(sector => <option key={sector.id} value={sector.id}>{sector.name}</option>)}
+                            </select>
+                          </td>
+                          <td><input className="input-field" value={pointEditForm.code} onChange={event => setPointEditForm({ ...pointEditForm, code: event.target.value })} /></td>
+                          <td><input className="input-field" value={pointEditForm.name} onChange={event => setPointEditForm({ ...pointEditForm, name: event.target.value })} /></td>
+                          <td>
+                            <input className="input-field" placeholder="Endereço" value={pointEditForm.address} onChange={event => setPointEditForm({ ...pointEditForm, address: event.target.value })} />
+                            <input className="input-field" placeholder="Bairro" value={pointEditForm.neighborhood} onChange={event => setPointEditForm({ ...pointEditForm, neighborhood: event.target.value })} />
+                          </td>
+                          <td>
+                            <div style={{ display: 'flex', gap: '0.4rem' }}>
+                              <button className="button" type="button" title="Salvar local" onClick={savePointEdit} style={{ width: '38px', height: '34px', padding: 0 }}><Save size={14} /></button>
+                              <button className="button button-outline" type="button" title="Cancelar" onClick={() => setEditingPointId(null)} style={{ width: '38px', height: '34px', padding: 0 }}><X size={14} /></button>
+                            </div>
+                          </td>
+                        </>
+                      ) : (
+                        <>
+                          <td>{sectorById(point.sectorId)?.name}</td>
+                          <td>{point.code}</td>
+                          <td style={{ fontWeight: 600 }}>{point.name}</td>
+                          <td>{point.address || '-'}</td>
+                          <td><button className="button button-outline" type="button" title="Editar local" onClick={() => startEditPoint(point)} style={{ width: '38px', height: '34px', padding: 0 }}><Edit3 size={14} /></button></td>
+                        </>
+                      )}
+                    </tr>
+                  ))}
+                  {operationPoints.length === 0 && <tr><td colSpan={5} style={{ textAlign: 'center', padding: '1.5rem' }}>Nenhum local cadastrado.</td></tr>}
                 </tbody>
               </table>
             </div>
@@ -855,14 +1038,35 @@ const Operations: React.FC = () => {
                     const needs = getPurchaseNeeds(order);
                     return (
                       <tr key={order.id}>
-                        <td>{formatDate(order.deliveryDate)}</td>
-                        <td><span className="badge badge-blue">{order.category}</span></td>
+                        <td>
+                          {editingOrderId === order.id ? (
+                            <input type="date" className="input-field" value={orderEditForm.deliveryDate} onChange={event => setOrderEditForm({ ...orderEditForm, deliveryDate: event.target.value })} />
+                          ) : formatDate(order.deliveryDate)}
+                        </td>
+                        <td>
+                          {editingOrderId === order.id ? (
+                            <select className="input-field" value={orderEditForm.category} onChange={event => setOrderEditForm({ ...orderEditForm, category: event.target.value as DeliveryCategory })}>
+                              {DELIVERY_CATEGORIES.map(category => <option key={category} value={category}>{category}</option>)}
+                            </select>
+                          ) : <span className="badge badge-blue">{order.category}</span>}
+                        </td>
                         <td>{order.sourceType}</td>
                         <td>{order.deliveries.length}</td>
                         <td>{buildSummary(order.deliveries).length}</td>
                         <td><span className={`badge ${needs.length ? 'badge-red' : 'badge-green'}`}>{needs.length ? `${needs.length} faltante(s)` : 'OK'}</span></td>
                         <td>
                           <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+                            {editingOrderId === order.id ? (
+                              <>
+                                <input className="input-field" placeholder="Período de consumo" value={orderEditForm.consumptionPeriod} onChange={event => setOrderEditForm({ ...orderEditForm, consumptionPeriod: event.target.value })} style={{ width: '180px', marginTop: 0 }} />
+                                <button className="button" type="button" style={{ width: '42px', height: '36px', padding: 0 }} title="Salvar pedido" onClick={saveOrderEdit}><Save size={16} /></button>
+                                <button className="button button-outline" type="button" style={{ width: '42px', height: '36px', padding: 0 }} title="Cancelar edição" onClick={() => setEditingOrderId(null)}><X size={16} /></button>
+                              </>
+                            ) : (
+                              <button className="button button-outline" type="button" style={{ width: '42px', height: '36px', padding: 0 }} title="Editar pedido" onClick={() => startEditOrder(order)}>
+                                <Edit3 size={16} />
+                              </button>
+                            )}
                             {order.deliveries.map(delivery => (
                               <button key={delivery.id} className="button button-outline" style={{ width: '42px', height: '36px', padding: 0 }} title={`PDF ${pointById(delivery.deliveryPointId)?.name || 'Entrega'}`} onClick={() => generateDeliveryPdf(order, delivery)}>
                                 <FileText size={16} />
@@ -891,6 +1095,50 @@ const Operations: React.FC = () => {
                     );
                   })}
                   {operationOrders.length === 0 && <tr><td colSpan={7} style={{ textAlign: 'center', padding: '2rem' }}>Nenhum pedido lançado nesta operação.</td></tr>}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <div className="card" style={{ maxWidth: 'none', padding: '1.5rem' }}>
+            <div className="view-header" style={{ marginBottom: '1rem', gap: '1rem' }}>
+              <div>
+                <h2 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}><History size={20} /> Histórico das entregas</h2>
+                <p style={{ textAlign: 'left', marginBottom: 0 }}>Cada linha representa uma unidade/local dentro dos pedidos da operação.</p>
+              </div>
+            </div>
+            <div style={{ overflowX: 'auto' }}>
+              <table className="data-table">
+                <thead>
+                  <tr>
+                    <th>Data</th>
+                    <th>Categoria</th>
+                    <th>Setor</th>
+                    <th>Local</th>
+                    <th>Itens</th>
+                    <th>Qtd total</th>
+                    <th>Origem</th>
+                    <th>Ações</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {deliveryHistory.map(entry => (
+                    <tr key={`${entry.order.id}_${entry.delivery.id}`}>
+                      <td>{formatDate(entry.order.deliveryDate)}</td>
+                      <td><span className="badge badge-blue">{entry.order.category}</span></td>
+                      <td>{entry.sector?.name || '-'}</td>
+                      <td style={{ fontWeight: 600 }}>{entry.point?.name || 'Local não cadastrado'}</td>
+                      <td>{entry.totalItems}</td>
+                      <td>{formatQuantity(entry.totalQuantity)}</td>
+                      <td>{entry.order.sourceType}</td>
+                      <td>
+                        <button className="button button-outline" style={{ width: '42px', height: '36px', padding: 0 }} title="Gerar romaneio desta entrega" onClick={() => generateDeliveryPdf(entry.order, entry.delivery)}>
+                          <FileText size={16} />
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                  {deliveryHistory.length === 0 && <tr><td colSpan={8} style={{ textAlign: 'center', padding: '2rem' }}>Nenhuma entrega no histórico.</td></tr>}
                 </tbody>
               </table>
             </div>
