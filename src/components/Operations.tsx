@@ -233,7 +233,6 @@ const Operations: React.FC = () => {
   const [editingPointId, setEditingPointId] = useState<string | null>(null);
   const [pointEditForm, setPointEditForm] = useState({ sectorId: '', code: '', name: '', address: '', neighborhood: '' });
   const [editingOrderId, setEditingOrderId] = useState<string | null>(null);
-  const [orderEditForm, setOrderEditForm] = useState({ category: 'Estocáveis' as DeliveryCategory, deliveryDate: todayIso(), consumptionPeriod: '' });
   const [orderForm, setOrderForm] = useState({
     category: 'Estocáveis' as DeliveryCategory,
     deliveryDate: todayIso(),
@@ -404,22 +403,22 @@ const Operations: React.FC = () => {
 
   const startEditOrder = (order: OperationOrder) => {
     setEditingOrderId(order.id);
-    setOrderEditForm({
+    setOrderForm(prev => ({
+      ...prev,
       category: order.category,
       deliveryDate: order.deliveryDate,
       consumptionPeriod: order.consumptionPeriod || '',
-    });
-  };
-
-  const saveOrderEdit = () => {
-    if (!editingOrderId) return;
-    persistOrders(orders.map(order => order.id === editingOrderId ? {
-      ...order,
-      category: orderEditForm.category,
-      deliveryDate: orderEditForm.deliveryDate,
-      consumptionPeriod: displayText(orderEditForm.consumptionPeriod),
-    } : order));
-    setEditingOrderId(null);
+      deliveryPointId: order.deliveries[0]?.deliveryPointId || operationPoints[0]?.id || '',
+      product: '',
+      unit: 'UN',
+      quantity: 0,
+      notes: '',
+    }));
+    setDraftDeliveries(order.deliveries.map(delivery => ({
+      ...delivery,
+      items: delivery.items.map(item => ({ ...item })),
+    })));
+    requestAnimationFrame(() => document.getElementById('operation-order-form')?.scrollIntoView({ behavior: 'smooth', block: 'start' }));
   };
 
   const deleteOrder = (orderId: string) => {
@@ -454,6 +453,21 @@ const Operations: React.FC = () => {
 
   const saveManualOrder = () => {
     if (!activeOperation || draftDeliveries.length === 0) return;
+    if (editingOrderId) {
+      persistOrders(orders.map(order => order.id === editingOrderId ? {
+        ...order,
+        category: orderForm.category,
+        deliveryDate: orderForm.deliveryDate,
+        consumptionPeriod: displayText(orderForm.consumptionPeriod),
+        deliveries: draftDeliveries,
+      } : order));
+      setEditingOrderId(null);
+      setDraftDeliveries([]);
+      setOrderForm(prev => ({ ...prev, product: '', quantity: 0, notes: '' }));
+      alert('Pedido de entrega atualizado.');
+      return;
+    }
+
     const order: OperationOrder = {
       id: makeId('order'),
       operationId: activeOperation.id,
@@ -468,6 +482,19 @@ const Operations: React.FC = () => {
     persistOrders([order, ...orders]);
     setDraftDeliveries([]);
     alert('Pedido do cliente lançado na operação.');
+  };
+
+  const cancelOrderEdit = () => {
+    setEditingOrderId(null);
+    setDraftDeliveries([]);
+    setOrderForm(prev => ({
+      ...prev,
+      deliveryPointId: operationPoints[0]?.id || '',
+      product: '',
+      unit: 'UN',
+      quantity: 0,
+      notes: '',
+    }));
   };
 
   const parseUnitSheet = (sheetName: string, rows: unknown[][], fallbackPointId: string): OrderDelivery | null => {
@@ -942,8 +969,23 @@ const Operations: React.FC = () => {
             </div>
           </div>
 
-          <div className="card" style={{ maxWidth: 'none', padding: '1.5rem' }}>
-            <h2 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '1rem' }}><PackagePlus size={20} /> Entrada de pedidos do cliente</h2>
+          <div id="operation-order-form" className="card" style={{ maxWidth: 'none', padding: '1.5rem' }}>
+            <div className="view-header" style={{ marginBottom: '1rem', gap: '1rem' }}>
+              <div>
+                <h2 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                  {editingOrderId ? <Edit3 size={20} /> : <PackagePlus size={20} />}
+                  {editingOrderId ? 'Editar pedido de entrega' : 'Entrada de pedidos do cliente'}
+                </h2>
+                <p style={{ textAlign: 'left', marginBottom: 0 }}>
+                  {editingOrderId ? 'Altere os itens, quantidades e locais desta entrega e salve novamente.' : 'Lance os itens por local de entrega para gerar os romaneios.'}
+                </p>
+              </div>
+              {editingOrderId && (
+                <button className="button button-outline" type="button" onClick={cancelOrderEdit} style={{ width: 'auto' }}>
+                  <X size={16} style={{ marginRight: '0.5rem' }} /> Cancelar edição
+                </button>
+              )}
+            </div>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '0.75rem', marginBottom: '1rem' }}>
               <div>
                 <label>Categoria</label>
@@ -1009,7 +1051,7 @@ const Operations: React.FC = () => {
               </table>
             </div>
             <button className="button" disabled={draftDeliveries.length === 0} onClick={saveManualOrder} style={{ marginTop: '1rem', opacity: draftDeliveries.length === 0 ? 0.5 : 1 }}>
-              Salvar pedido do cliente
+              {editingOrderId ? 'Salvar alterações do pedido de entrega' : 'Salvar pedido do cliente'}
             </button>
           </div>
 
@@ -1038,35 +1080,17 @@ const Operations: React.FC = () => {
                     const needs = getPurchaseNeeds(order);
                     return (
                       <tr key={order.id}>
-                        <td>
-                          {editingOrderId === order.id ? (
-                            <input type="date" className="input-field" value={orderEditForm.deliveryDate} onChange={event => setOrderEditForm({ ...orderEditForm, deliveryDate: event.target.value })} />
-                          ) : formatDate(order.deliveryDate)}
-                        </td>
-                        <td>
-                          {editingOrderId === order.id ? (
-                            <select className="input-field" value={orderEditForm.category} onChange={event => setOrderEditForm({ ...orderEditForm, category: event.target.value as DeliveryCategory })}>
-                              {DELIVERY_CATEGORIES.map(category => <option key={category} value={category}>{category}</option>)}
-                            </select>
-                          ) : <span className="badge badge-blue">{order.category}</span>}
-                        </td>
+                        <td>{formatDate(order.deliveryDate)}</td>
+                        <td><span className="badge badge-blue">{order.category}</span></td>
                         <td>{order.sourceType}</td>
                         <td>{order.deliveries.length}</td>
                         <td>{buildSummary(order.deliveries).length}</td>
                         <td><span className={`badge ${needs.length ? 'badge-red' : 'badge-green'}`}>{needs.length ? `${needs.length} faltante(s)` : 'OK'}</span></td>
                         <td>
                           <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
-                            {editingOrderId === order.id ? (
-                              <>
-                                <input className="input-field" placeholder="Período de consumo" value={orderEditForm.consumptionPeriod} onChange={event => setOrderEditForm({ ...orderEditForm, consumptionPeriod: event.target.value })} style={{ width: '180px', marginTop: 0 }} />
-                                <button className="button" type="button" style={{ width: '42px', height: '36px', padding: 0 }} title="Salvar pedido" onClick={saveOrderEdit}><Save size={16} /></button>
-                                <button className="button button-outline" type="button" style={{ width: '42px', height: '36px', padding: 0 }} title="Cancelar edição" onClick={() => setEditingOrderId(null)}><X size={16} /></button>
-                              </>
-                            ) : (
-                              <button className="button button-outline" type="button" style={{ width: '42px', height: '36px', padding: 0 }} title="Editar pedido" onClick={() => startEditOrder(order)}>
-                                <Edit3 size={16} />
-                              </button>
-                            )}
+                            <button className={`button ${editingOrderId === order.id ? '' : 'button-outline'}`} type="button" style={{ width: '42px', height: '36px', padding: 0 }} title="Editar pedido de entrega" onClick={() => startEditOrder(order)}>
+                              <Edit3 size={16} />
+                            </button>
                             {order.deliveries.map(delivery => (
                               <button key={delivery.id} className="button button-outline" style={{ width: '42px', height: '36px', padding: 0 }} title={`PDF ${pointById(delivery.deliveryPointId)?.name || 'Entrega'}`} onClick={() => generateDeliveryPdf(order, delivery)}>
                                 <FileText size={16} />
