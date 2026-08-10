@@ -1,34 +1,49 @@
 import jsPDF from 'jspdf';
 import logoUrl from '../assets/oliveira-mendes-logo.jpeg';
+import igeveLogoUrl from '../assets/igeve-logo.png';
 
 type Color = [number, number, number];
+export type PdfLogoVariant = 'gom' | 'igeve';
 
 interface PdfHeaderOptions {
   title: string;
   subtitle?: string;
   footer?: string;
+  logoVariant?: PdfLogoVariant;
   fillColor?: Color;
   titleColor?: Color;
   textColor?: Color;
   height?: number;
 }
 
-let cachedLogoDataUrl: string | null = null;
+const logoSources: Record<PdfLogoVariant, string> = {
+  gom: logoUrl,
+  igeve: igeveLogoUrl,
+};
 
-const loadLogoDataUrl = async () => {
+const logoFormats: Record<PdfLogoVariant, 'JPEG' | 'PNG'> = {
+  gom: 'JPEG',
+  igeve: 'PNG',
+};
+
+const cachedLogoDataUrls = new Map<PdfLogoVariant, string>();
+
+const loadLogoDataUrl = async (logoVariant: PdfLogoVariant) => {
+  const cachedLogoDataUrl = cachedLogoDataUrls.get(logoVariant);
   if (cachedLogoDataUrl) return cachedLogoDataUrl;
 
-  const response = await fetch(logoUrl);
+  const response = await fetch(logoSources[logoVariant]);
   const blob = await response.blob();
 
-  cachedLogoDataUrl = await new Promise<string>((resolve, reject) => {
+  const logoDataUrl = await new Promise<string>((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = () => resolve(String(reader.result));
     reader.onerror = () => reject(reader.error);
     reader.readAsDataURL(blob);
   });
 
-  return cachedLogoDataUrl;
+  cachedLogoDataUrls.set(logoVariant, logoDataUrl);
+  return logoDataUrl;
 };
 
 export const addPdfHeader = async (doc: jsPDF, options: PdfHeaderOptions) => {
@@ -36,6 +51,7 @@ export const addPdfHeader = async (doc: jsPDF, options: PdfHeaderOptions) => {
     title,
     subtitle,
     footer,
+    logoVariant = 'gom',
     fillColor = [255, 255, 255],
     titleColor = [10, 48, 92],
     textColor = [10, 48, 92],
@@ -50,8 +66,8 @@ export const addPdfHeader = async (doc: jsPDF, options: PdfHeaderOptions) => {
   doc.line(0, height, pageWidth, height);
 
   try {
-    const logoDataUrl = await loadLogoDataUrl();
-    doc.addImage(logoDataUrl, 'JPEG', 10, 4, 21, 21);
+    const logoDataUrl = await loadLogoDataUrl(logoVariant);
+    doc.addImage(logoDataUrl, logoFormats[logoVariant], 10, 4, 21, 21);
   } catch (err) {
     console.warn('Nao foi possivel carregar a logo no PDF:', err);
   }

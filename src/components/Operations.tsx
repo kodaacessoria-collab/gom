@@ -25,6 +25,7 @@ import { getDocument, GlobalWorkerOptions } from 'pdfjs-dist';
 import { supabase } from '../lib/supabase';
 import type { Deposit, Product } from '../types';
 import { addPdfHeader } from '../lib/pdfBranding';
+import type { PdfLogoVariant } from '../lib/pdfBranding';
 
 GlobalWorkerOptions.workerSrc = new URL('pdfjs-dist/build/pdf.worker.mjs', import.meta.url).toString();
 
@@ -38,6 +39,7 @@ interface OperationContract {
   uf: string;
   bidNumber?: string;
   supplyAuthorization?: string;
+  logoVariant?: PdfLogoVariant;
   createdAt: string;
 }
 
@@ -91,6 +93,15 @@ interface PurchaseNeed {
   status: 'SEM CADASTRO' | 'ESTOQUE INSUFICIENTE';
 }
 
+interface OperationForm {
+  name: string;
+  city: string;
+  uf: string;
+  bidNumber: string;
+  supplyAuthorization: string;
+  logoVariant: PdfLogoVariant;
+}
+
 const OPERATIONS_KEY = 'gom_delivery_operations';
 const SECTORS_KEY = 'gom_delivery_sectors';
 const DELIVERY_POINTS_KEY = 'gom_delivery_points';
@@ -98,6 +109,11 @@ const ORDERS_KEY = 'gom_delivery_operation_orders';
 const REPORT_FONT = 'courier';
 const REPORT_FONT_SIZE = 8;
 const DELIVERY_CATEGORIES: DeliveryCategory[] = ['Hortifrutigranjeiro', 'Estocáveis', 'Dietas e Fórmulas', 'Proteínas', 'Limpeza'];
+const DEFAULT_LOGO_VARIANT: PdfLogoVariant = 'gom';
+const LOGO_OPTIONS: { value: PdfLogoVariant; label: string }[] = [
+  { value: 'gom', label: 'Logo atual' },
+  { value: 'igeve', label: 'IGEVÊ' },
+];
 
 const defaultOperations: OperationContract[] = [
   { id: 'boituva', name: 'Operação Boituva', city: 'Boituva', uf: 'SP', createdAt: '2026-08-05' },
@@ -111,6 +127,14 @@ const defaultSectors: Sector[] = [
 
 const todayIso = () => new Date().toISOString().split('T')[0];
 const makeId = (prefix: string) => `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+const emptyOperationForm = (): OperationForm => ({
+  name: '',
+  city: '',
+  uf: '',
+  bidNumber: '',
+  supplyAuthorization: '',
+  logoVariant: DEFAULT_LOGO_VARIANT,
+});
 
 const readStorage = <T,>(key: string, fallback: T): T => {
   try {
@@ -250,6 +274,7 @@ const addHeader = async (doc: jsPDF, operation: OperationContract, order: Operat
     title: getPdfHeader(operation, order),
     subtitle: details || 'Documentacao de entrega',
     footer: subtitle,
+    logoVariant: operation.logoVariant || DEFAULT_LOGO_VARIANT,
   });
 };
 
@@ -268,9 +293,9 @@ const Operations: React.FC = () => {
   const [orders, setOrders] = useState<OperationOrder[]>(() => readStorage(ORDERS_KEY, []));
   const [products, setProducts] = useState<Product[]>([]);
   const [activeOperationId, setActiveOperationId] = useState(() => operations[0]?.id || 'boituva');
-  const [newOperation, setNewOperation] = useState({ name: '', city: '', uf: '', bidNumber: '', supplyAuthorization: '' });
+  const [newOperation, setNewOperation] = useState<OperationForm>(() => emptyOperationForm());
   const [editingOperationId, setEditingOperationId] = useState<string | null>(null);
-  const [operationEditForm, setOperationEditForm] = useState({ name: '', city: '', uf: '', bidNumber: '', supplyAuthorization: '' });
+  const [operationEditForm, setOperationEditForm] = useState<OperationForm>(() => emptyOperationForm());
   const [newSector, setNewSector] = useState('Setor 01');
   const [editingSectorId, setEditingSectorId] = useState<string | null>(null);
   const [sectorEditName, setSectorEditName] = useState('');
@@ -347,6 +372,7 @@ const Operations: React.FC = () => {
       uf: displayText(newOperation.uf).toUpperCase(),
       bidNumber: displayText(newOperation.bidNumber),
       supplyAuthorization: displayText(newOperation.supplyAuthorization),
+      logoVariant: newOperation.logoVariant,
       createdAt: todayIso(),
     };
     const sector: Sector = { id: makeId('sector'), operationId: operation.id, name: 'Setor 01' };
@@ -354,7 +380,7 @@ const Operations: React.FC = () => {
     persistOperations([...operations, operation]);
     persistSectors([...sectors, sector]);
     setActiveOperationId(operation.id);
-    setNewOperation({ name: '', city: '', uf: '', bidNumber: '', supplyAuthorization: '' });
+    setNewOperation(emptyOperationForm());
   };
 
   const startEditOperation = (operation: OperationContract) => {
@@ -365,6 +391,7 @@ const Operations: React.FC = () => {
       uf: operation.uf,
       bidNumber: operation.bidNumber || '',
       supplyAuthorization: operation.supplyAuthorization || '',
+      logoVariant: operation.logoVariant || DEFAULT_LOGO_VARIANT,
     });
   };
 
@@ -381,6 +408,7 @@ const Operations: React.FC = () => {
       uf: displayText(operationEditForm.uf).toUpperCase(),
       bidNumber: displayText(operationEditForm.bidNumber),
       supplyAuthorization: displayText(operationEditForm.supplyAuthorization),
+      logoVariant: operationEditForm.logoVariant,
     } : operation));
     setEditingOperationId(null);
   };
@@ -953,6 +981,12 @@ const Operations: React.FC = () => {
               </div>
               <input className="input-field" placeholder="Número da ata de licitação" value={operationEditForm.bidNumber} onChange={event => setOperationEditForm({ ...operationEditForm, bidNumber: event.target.value })} />
               <input className="input-field" placeholder="Autorização de fornecimento" value={operationEditForm.supplyAuthorization} onChange={event => setOperationEditForm({ ...operationEditForm, supplyAuthorization: event.target.value })} />
+              <div>
+                <label>Logo dos relatórios</label>
+                <select className="input-field" value={operationEditForm.logoVariant} onChange={event => setOperationEditForm({ ...operationEditForm, logoVariant: event.target.value as PdfLogoVariant })}>
+                  {LOGO_OPTIONS.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
+                </select>
+              </div>
               <div style={{ display: 'flex', gap: '0.5rem' }}>
                 <button className="button" type="submit"><Save size={16} style={{ marginRight: '0.5rem' }} /> Salvar</button>
                 <button className="button button-outline" type="button" onClick={() => setEditingOperationId(null)}><X size={16} style={{ marginRight: '0.5rem' }} /> Cancelar</button>
@@ -969,6 +1003,12 @@ const Operations: React.FC = () => {
             </div>
             <input className="input-field" placeholder="Número da ata de licitação" value={newOperation.bidNumber} onChange={event => setNewOperation({ ...newOperation, bidNumber: event.target.value })} />
             <input className="input-field" placeholder="Autorização de fornecimento" value={newOperation.supplyAuthorization} onChange={event => setNewOperation({ ...newOperation, supplyAuthorization: event.target.value })} />
+            <div>
+              <label>Logo dos relatórios</label>
+              <select className="input-field" value={newOperation.logoVariant} onChange={event => setNewOperation({ ...newOperation, logoVariant: event.target.value as PdfLogoVariant })}>
+                {LOGO_OPTIONS.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
+              </select>
+            </div>
             <button className="button" type="submit"><Plus size={16} style={{ marginRight: '0.5rem' }} /> Criar</button>
           </form>
         </div>
