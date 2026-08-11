@@ -286,6 +286,17 @@ const addReceiptFields = (doc: jsPDF, startY: number) => {
   doc.text('RG: __________________________   Assinatura: ________________________', 14, y + 16);
 };
 
+const sanitizeFileName = (value: string) =>
+  value
+    .replace(/[<>:"/\\|?*]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+const getRomaneioFileName = (operation: OperationContract, order: OperationOrder, suffix?: string) => {
+  const base = `ROMANEIO - ${order.category}_${operation.name} - ${formatDate(order.deliveryDate)}`;
+  return `${sanitizeFileName([base, suffix].filter(Boolean).join(' - '))}.pdf`;
+};
+
 const Operations: React.FC = () => {
   const [operations, setOperations] = useState<OperationContract[]>(() => readStorage(OPERATIONS_KEY, defaultOperations));
   const [sectors, setSectors] = useState<Sector[]>(() => readStorage(SECTORS_KEY, defaultSectors));
@@ -715,6 +726,64 @@ const Operations: React.FC = () => {
   const sectorById = (id?: string) => sectors.find(sector => sector.id === id);
   const operationByOrder = (order: OperationOrder) =>
     operations.find(operation => operation.id === order.operationId) || activeOperation;
+
+  const getSectorSummaryTable = (order: OperationOrder) => {
+    const usedSectorIds = new Set<string>();
+    order.deliveries.forEach(delivery => {
+      const point = pointById(delivery.deliveryPointId);
+      usedSectorIds.add(point?.sectorId || 'sem_setor');
+    });
+
+    const sectorColumns = [
+      ...sectors
+        .filter(sector => sector.operationId === order.operationId && usedSectorIds.has(sector.id))
+        .sort((a, b) => a.name.localeCompare(b.name))
+        .map(sector => ({ id: sector.id, name: sector.name })),
+      ...(usedSectorIds.has('sem_setor') ? [{ id: 'sem_setor', name: 'Sem setor' }] : []),
+    ];
+
+    const totals = new Map<string, { product: string; unit: string; sectors: Record<string, number>; total: number }>();
+    order.deliveries.forEach(delivery => {
+      const point = pointById(delivery.deliveryPointId);
+      const sectorId = point?.sectorId || 'sem_setor';
+      aggregateDeliveryItems(delivery.items).forEach(item => {
+        const key = stockKey(item.product, item.unit);
+        const current = totals.get(key) || { product: item.product, unit: item.unit, sectors: {}, total: 0 };
+        current.sectors[sectorId] = (current.sectors[sectorId] || 0) + item.quantity;
+        current.total += item.quantity;
+        totals.set(key, current);
+      });
+    });
+
+    const rows = Array.from(totals.values()).sort((a, b) => a.product.localeCompare(b.product));
+    const sectorTotals = sectorColumns.reduce<Record<string, number>>((acc, sector) => {
+      acc[sector.id] = rows.reduce((sum, row) => sum + (row.sectors[sector.id] || 0), 0);
+      return acc;
+    }, {});
+
+    const body = rows.map(row => [
+      row.product,
+      row.unit,
+      ...sectorColumns.map(sector => row.sectors[sector.id] ? formatQuantity(row.sectors[sector.id]) : '-'),
+      formatQuantity(row.total),
+    ]);
+
+    if (rows.length > 0) {
+      body.push([
+        'TOTAL GERAL',
+        '',
+        ...sectorColumns.map(sector => formatQuantity(sectorTotals[sector.id] || 0)),
+        formatQuantity(rows.reduce((sum, row) => sum + row.total, 0)),
+      ]);
+    }
+
+    return {
+      head: [['Produto', 'UND', ...sectorColumns.map(sector => sector.name), 'Total']],
+      body,
+      sectorColumns,
+    };
+  };
+
   const findDeliveryPointByLabel = (label: string) => {
     const labelKey = normalizeKey(label);
     const simpleLabel = normalizeDeliveryLabel(label);
@@ -827,7 +896,7 @@ const Operations: React.FC = () => {
       theme: 'grid',
     });
     addReceiptFields(doc, (doc as any).lastAutoTable?.finalY || 60);
-    doc.save(`romaneio_${order.category}_${point?.name || 'entrega'}_${order.deliveryDate}.pdf`.replace(/\s+/g, '_'));
+    doc.save(getRomaneioFileName(reportOperation, order, point?.name || 'entrega'));
   };
 
   const generateAllDeliveriesPdf = async (order: OperationOrder) => {
@@ -862,17 +931,17 @@ const Operations: React.FC = () => {
 
     doc.addPage();
     await addHeader(doc, reportOperation, order, 'TOTAL DA ENTREGA - todos os locais');
-    const summary = buildSummary(order.deliveries);
+    const sectorSummary = getSectorSummaryTable(order);
     autoTable(doc, {
       startY: 39,
-      head: [['Produto', 'UND', 'Total']],
-      body: summary.map(item => [item.product, item.unit, formatQuantity(item.quantity)]),
-      styles: { font: REPORT_FONT, fontSize: REPORT_FONT_SIZE, cellPadding: 1.4 },
+      head: sectorSummary.head,
+      body: sectorSummary.body,
+      styles: { font: REPORT_FONT, fontSize: sectorSummary.sectorColumns.length > 3 ? 7 : REPORT_FONT_SIZE, cellPadding: 1.2 },
       headStyles: { font: REPORT_FONT, fontSize: REPORT_FONT_SIZE, fontStyle: 'bold', fillColor: [79, 70, 229] },
       theme: 'grid',
     });
 
-    doc.save(`romaneios_total_entrega_${order.category}_${order.deliveryDate}.pdf`.replace(/\s+/g, '_'));
+    doc.save(getRomaneioFileName(reportOperation, order));
   };
 
   const generateSummaryPdf = async (order: OperationOrder, sectorId?: string) => {
@@ -887,15 +956,16 @@ const Operations: React.FC = () => {
     doc.setFont(REPORT_FONT, 'normal');
     doc.setFontSize(REPORT_FONT_SIZE);
     await addHeader(doc, reportOperation, order, sector ? `Soma das unidades - ${sector.name}` : 'Soma de todos os setores');
+    const sectorSummary = sector ? null : getSectorSummaryTable(order);
     autoTable(doc, {
       startY: 39,
-      head: [['Produto', 'UND', 'Total']],
-      body: summary.map(item => [item.product, item.unit, formatQuantity(item.quantity)]),
-      styles: { font: REPORT_FONT, fontSize: REPORT_FONT_SIZE, cellPadding: 1.4 },
+      head: sectorSummary?.head || [['Produto', 'UND', 'Total']],
+      body: sectorSummary?.body || summary.map(item => [item.product, item.unit, formatQuantity(item.quantity)]),
+      styles: { font: REPORT_FONT, fontSize: sectorSummary && sectorSummary.sectorColumns.length > 3 ? 7 : REPORT_FONT_SIZE, cellPadding: 1.4 },
       headStyles: { font: REPORT_FONT, fontSize: REPORT_FONT_SIZE, fontStyle: 'bold', fillColor: [79, 70, 229] },
       theme: 'grid',
     });
-    doc.save(`${sector ? 'soma_setor' : 'soma_todos_setores'}_${order.category}_${order.deliveryDate}.pdf`.replace(/\s+/g, '_'));
+    doc.save(getRomaneioFileName(reportOperation, order, sector ? `SOMA ${sector.name}` : 'TOTAL SETORES'));
   };
 
   const generateStockAnalysisPdf = async (order: OperationOrder) => {
@@ -920,7 +990,7 @@ const Operations: React.FC = () => {
       theme: 'grid',
     });
     doc.text(`Itens faltantes: ${needs.length}`, 14, ((doc as any).lastAutoTable?.finalY || 60) + 8);
-    doc.save(`analise_estoque_compra_${order.category}_${order.deliveryDate}.pdf`.replace(/\s+/g, '_'));
+    doc.save(getRomaneioFileName(reportOperation, order, 'ANALISE ESTOQUE COMPRA'));
   };
 
   const totals = useMemo(() => {
