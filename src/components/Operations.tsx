@@ -734,13 +734,15 @@ const Operations: React.FC = () => {
       usedSectorIds.add(point?.sectorId || 'sem_setor');
     });
 
-    const sectorColumns = [
-      ...sectors
-        .filter(sector => sector.operationId === order.operationId && usedSectorIds.has(sector.id))
-        .sort((a, b) => a.name.localeCompare(b.name))
-        .map(sector => ({ id: sector.id, name: sector.name })),
-      ...(usedSectorIds.has('sem_setor') ? [{ id: 'sem_setor', name: 'Sem setor' }] : []),
-    ];
+    const sectorColumns = Array.from(usedSectorIds)
+      .map(sectorId => {
+        const sector = sectorById(sectorId);
+        return {
+          id: sectorId,
+          name: sectorId === 'sem_setor' ? 'Sem setor' : sector?.name || 'Setor sem cadastro',
+        };
+      })
+      .sort((a, b) => a.name.localeCompare(b.name));
 
     const totals = new Map<string, { product: string; unit: string; sectors: Record<string, number>; total: number }>();
     order.deliveries.forEach(delivery => {
@@ -785,14 +787,20 @@ const Operations: React.FC = () => {
   };
 
   const getOrderSectors = (order: OperationOrder) => {
-    const usedSectorIds = new Set(
+    const usedSectorIds = new Set<string>(
       order.deliveries
-        .map(delivery => pointById(delivery.deliveryPointId)?.sectorId)
-        .filter((sectorId): sectorId is string => Boolean(sectorId))
+        .map(delivery => pointById(delivery.deliveryPointId)?.sectorId || 'sem_setor')
     );
 
-    return sectors
-      .filter(sector => sector.operationId === order.operationId && usedSectorIds.has(sector.id))
+    return Array.from(usedSectorIds)
+      .map(sectorId => {
+        const sector = sectorById(sectorId);
+        return {
+          id: sectorId,
+          operationId: order.operationId,
+          name: sectorId === 'sem_setor' ? 'Sem setor' : sector?.name || 'Setor sem cadastro',
+        };
+      })
       .sort((a, b) => a.name.localeCompare(b.name));
   };
 
