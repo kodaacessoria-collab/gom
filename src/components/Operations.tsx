@@ -1364,21 +1364,21 @@ const Operations: React.FC = () => {
             </form>
             <div style={{ overflowX: 'auto', marginTop: '1rem' }}>
               <table className="data-table">
-                <thead><tr><th>Local</th><th>Produto</th><th>UND</th><th>Qtd</th><th>Ações</th></tr></thead>
+                <thead><tr><th>Local</th><th>Produto</th><th>UND</th><th>Qtd</th><th style={{ minWidth: '190px' }}>Ações</th></tr></thead>
                 <tbody>
                   {draftDeliveries.flatMap(delivery => delivery.items.map((item, index) => (
-                    <tr key={`${delivery.deliveryPointId}_${index}`}>
+                    <tr key={`${delivery.deliveryPointId}_${index}`} style={editingDraftItem?.deliveryPointId === delivery.deliveryPointId && editingDraftItem.itemIndex === index ? { outline: '1px solid var(--primary)', outlineOffset: '-1px' } : undefined}>
                       <td>{pointById(delivery.deliveryPointId)?.name}</td>
                       <td style={{ fontWeight: 600 }}>{item.product}</td>
                       <td>{item.unit}</td>
                       <td>{formatQuantity(item.quantity)}</td>
                       <td>
-                        <div style={{ display: 'flex', gap: '0.4rem' }}>
-                          <button className="button button-outline" type="button" title="Editar item" style={{ width: '36px', height: '32px', padding: 0 }} onClick={() => startEditDraftItem(delivery.deliveryPointId, index)}>
-                            <Edit3 size={14} />
+                        <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+                          <button className="button button-outline" type="button" title="Editar item" style={{ width: 'auto', minWidth: '82px', height: '32px', padding: '0 0.75rem' }} onClick={() => startEditDraftItem(delivery.deliveryPointId, index)}>
+                            <Edit3 size={14} style={{ marginRight: '0.35rem' }} /> Editar
                           </button>
-                          <button className="button button-outline" type="button" title="Excluir item" style={{ width: '36px', height: '32px', padding: 0 }} onClick={() => removeDraftItem(delivery.deliveryPointId, index)}>
-                            <Trash2 size={14} />
+                          <button className="button button-outline" type="button" title="Excluir item" style={{ width: 'auto', minWidth: '82px', height: '32px', padding: '0 0.75rem' }} onClick={() => removeDraftItem(delivery.deliveryPointId, index)}>
+                            <Trash2 size={14} style={{ marginRight: '0.35rem' }} /> Excluir
                           </button>
                         </div>
                       </td>
