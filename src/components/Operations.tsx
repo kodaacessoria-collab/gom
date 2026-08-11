@@ -325,6 +325,7 @@ const Operations: React.FC = () => {
     notes: '',
   });
   const [draftDeliveries, setDraftDeliveries] = useState<OrderDelivery[]>([]);
+  const [editingDraftItem, setEditingDraftItem] = useState<{ deliveryPointId: string; itemIndex: number } | null>(null);
   const [importing, setImporting] = useState(false);
   const [creatingPurchase, setCreatingPurchase] = useState(false);
 
@@ -487,6 +488,7 @@ const Operations: React.FC = () => {
 
   const startEditOrder = (order: OperationOrder) => {
     setEditingOrderId(order.id);
+    setEditingDraftItem(null);
     setOrderForm(prev => ({
       ...prev,
       category: order.category,
@@ -519,6 +521,23 @@ const Operations: React.FC = () => {
       quantity: Number(orderForm.quantity),
       notes: displayText(orderForm.notes),
     };
+    if (editingDraftItem) {
+      setDraftDeliveries(prev => {
+        const next = prev
+          .map(delivery => delivery.deliveryPointId === editingDraftItem.deliveryPointId
+            ? { ...delivery, items: delivery.items.filter((_, index) => index !== editingDraftItem.itemIndex) }
+            : delivery)
+          .filter(delivery => delivery.items.length > 0);
+        const current = next.find(delivery => delivery.deliveryPointId === orderForm.deliveryPointId);
+        if (current) {
+          return next.map(delivery => delivery.deliveryPointId === orderForm.deliveryPointId ? { ...delivery, items: [...delivery.items, item] } : delivery);
+        }
+        return [...next, { id: makeId('draft_delivery'), deliveryPointId: orderForm.deliveryPointId, items: [item] }];
+      });
+      setEditingDraftItem(null);
+      setOrderForm(prev => ({ ...prev, product: '', quantity: 0, notes: '' }));
+      return;
+    }
     setDraftDeliveries(prev => {
       const current = prev.find(delivery => delivery.deliveryPointId === orderForm.deliveryPointId);
       if (current) {
@@ -529,10 +548,32 @@ const Operations: React.FC = () => {
     setOrderForm(prev => ({ ...prev, product: '', quantity: 0, notes: '' }));
   };
 
+  const startEditDraftItem = (deliveryPointId: string, itemIndex: number) => {
+    const item = draftDeliveries.find(delivery => delivery.deliveryPointId === deliveryPointId)?.items[itemIndex];
+    if (!item) return;
+    setEditingDraftItem({ deliveryPointId, itemIndex });
+    setOrderForm(prev => ({
+      ...prev,
+      deliveryPointId,
+      product: item.product,
+      unit: item.unit || 'UN',
+      quantity: item.quantity,
+      notes: item.notes || '',
+    }));
+  };
+
+  const cancelDraftItemEdit = () => {
+    setEditingDraftItem(null);
+    setOrderForm(prev => ({ ...prev, product: '', quantity: 0, notes: '' }));
+  };
+
   const removeDraftItem = (deliveryPointId: string, itemIndex: number) => {
     setDraftDeliveries(prev => prev
       .map(delivery => delivery.deliveryPointId === deliveryPointId ? { ...delivery, items: delivery.items.filter((_, index) => index !== itemIndex) } : delivery)
       .filter(delivery => delivery.items.length > 0));
+    if (editingDraftItem?.deliveryPointId === deliveryPointId && editingDraftItem.itemIndex === itemIndex) {
+      cancelDraftItemEdit();
+    }
   };
 
   const saveManualOrder = () => {
@@ -546,6 +587,7 @@ const Operations: React.FC = () => {
         deliveries: normalizeOrderDeliveries(draftDeliveries),
       } : order));
       setEditingOrderId(null);
+      setEditingDraftItem(null);
       setDraftDeliveries([]);
       setOrderForm(prev => ({ ...prev, product: '', quantity: 0, notes: '' }));
       alert('Pedido de entrega atualizado.');
@@ -564,12 +606,14 @@ const Operations: React.FC = () => {
       deliveries: normalizeOrderDeliveries(draftDeliveries),
     };
     persistOrders([order, ...orders]);
+    setEditingDraftItem(null);
     setDraftDeliveries([]);
     alert('Pedido do cliente lançado na operação.');
   };
 
   const cancelOrderEdit = () => {
     setEditingOrderId(null);
+    setEditingDraftItem(null);
     setDraftDeliveries([]);
     setOrderForm(prev => ({
       ...prev,
@@ -1307,11 +1351,20 @@ const Operations: React.FC = () => {
                 <label>Observação</label>
                 <input className="input-field" value={orderForm.notes} onChange={event => setOrderForm({ ...orderForm, notes: event.target.value })} />
               </div>
-              <button className="button" type="submit" style={{ width: '44px', height: '42px', padding: 0 }} title="Adicionar item"><Plus size={18} /></button>
+              <div style={{ display: 'flex', gap: '0.4rem' }}>
+                <button className="button" type="submit" style={{ width: '44px', height: '42px', padding: 0 }} title={editingDraftItem ? 'Salvar item' : 'Adicionar item'}>
+                  {editingDraftItem ? <Save size={18} /> : <Plus size={18} />}
+                </button>
+                {editingDraftItem && (
+                  <button className="button button-outline" type="button" style={{ width: '44px', height: '42px', padding: 0 }} title="Cancelar edição do item" onClick={cancelDraftItemEdit}>
+                    <X size={18} />
+                  </button>
+                )}
+              </div>
             </form>
             <div style={{ overflowX: 'auto', marginTop: '1rem' }}>
               <table className="data-table">
-                <thead><tr><th>Local</th><th>Produto</th><th>UND</th><th>Qtd</th><th></th></tr></thead>
+                <thead><tr><th>Local</th><th>Produto</th><th>UND</th><th>Qtd</th><th>Ações</th></tr></thead>
                 <tbody>
                   {draftDeliveries.flatMap(delivery => delivery.items.map((item, index) => (
                     <tr key={`${delivery.deliveryPointId}_${index}`}>
@@ -1319,7 +1372,16 @@ const Operations: React.FC = () => {
                       <td style={{ fontWeight: 600 }}>{item.product}</td>
                       <td>{item.unit}</td>
                       <td>{formatQuantity(item.quantity)}</td>
-                      <td><button className="button button-outline" style={{ width: '36px', height: '32px', padding: 0 }} onClick={() => removeDraftItem(delivery.deliveryPointId, index)}><Trash2 size={14} /></button></td>
+                      <td>
+                        <div style={{ display: 'flex', gap: '0.4rem' }}>
+                          <button className="button button-outline" type="button" title="Editar item" style={{ width: '36px', height: '32px', padding: 0 }} onClick={() => startEditDraftItem(delivery.deliveryPointId, index)}>
+                            <Edit3 size={14} />
+                          </button>
+                          <button className="button button-outline" type="button" title="Excluir item" style={{ width: '36px', height: '32px', padding: 0 }} onClick={() => removeDraftItem(delivery.deliveryPointId, index)}>
+                            <Trash2 size={14} />
+                          </button>
+                        </div>
+                      </td>
                     </tr>
                   )))}
                   {draftDeliveries.length === 0 && <tr><td colSpan={5} style={{ textAlign: 'center', padding: '1.5rem' }}>Nenhum item lançado.</td></tr>}
