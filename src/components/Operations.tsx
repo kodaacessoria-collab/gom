@@ -784,6 +784,18 @@ const Operations: React.FC = () => {
     };
   };
 
+  const getOrderSectors = (order: OperationOrder) => {
+    const usedSectorIds = new Set(
+      order.deliveries
+        .map(delivery => pointById(delivery.deliveryPointId)?.sectorId)
+        .filter((sectorId): sectorId is string => Boolean(sectorId))
+    );
+
+    return sectors
+      .filter(sector => sector.operationId === order.operationId && usedSectorIds.has(sector.id))
+      .sort((a, b) => a.name.localeCompare(b.name));
+  };
+
   const findDeliveryPointByLabel = (label: string) => {
     const labelKey = normalizeKey(label);
     const simpleLabel = normalizeDeliveryLabel(label);
@@ -929,8 +941,27 @@ const Operations: React.FC = () => {
       addReceiptFields(doc, (doc as any).lastAutoTable?.finalY || 60);
     }
 
+    for (const sector of getOrderSectors(order)) {
+      const scopedDeliveries = order.deliveries.filter(delivery => pointById(delivery.deliveryPointId)?.sectorId === sector.id);
+      const summary = buildSummary(scopedDeliveries);
+
+      doc.addPage();
+      await addHeader(doc, reportOperation, order, `SOMA DO SETOR - ${sector.name}`);
+      autoTable(doc, {
+        startY: 39,
+        head: [['Produto', 'UND', sector.name]],
+        body: [
+          ...summary.map(item => [item.product, item.unit, formatQuantity(item.quantity)]),
+          ['TOTAL GERAL', '', formatQuantity(summary.reduce((sum, item) => sum + item.quantity, 0))],
+        ],
+        styles: { font: REPORT_FONT, fontSize: REPORT_FONT_SIZE, cellPadding: 1.4 },
+        headStyles: { font: REPORT_FONT, fontSize: REPORT_FONT_SIZE, fontStyle: 'bold', fillColor: [79, 70, 229] },
+        theme: 'grid',
+      });
+    }
+
     doc.addPage();
-    await addHeader(doc, reportOperation, order, 'TOTAL DA ENTREGA - todos os locais');
+    await addHeader(doc, reportOperation, order, 'TOTAL GERAL POR SETOR');
     const sectorSummary = getSectorSummaryTable(order);
     autoTable(doc, {
       startY: 39,
