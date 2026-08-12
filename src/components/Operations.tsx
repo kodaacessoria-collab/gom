@@ -848,16 +848,17 @@ const Operations: React.FC = () => {
     };
   };
 
-  const getDeliveryPointSummaryTable = (deliveries: OrderDelivery[]) => {
+  const getDeliveryPointSummaryTable = (deliveries: OrderDelivery[], usePointCodes = false) => {
     const pointColumns = deliveries
       .map(delivery => {
         const point = pointById(delivery.deliveryPointId);
         return {
           id: delivery.deliveryPointId,
           name: point?.name || point?.code || 'Local sem cadastro',
+          code: point?.code || point?.name || 'Local',
         };
       })
-      .sort((a, b) => a.name.localeCompare(b.name));
+      .sort((a, b) => a.code.localeCompare(b.code, undefined, { numeric: true, sensitivity: 'base' }));
 
     const totals = new Map<string, { product: string; unit: string; points: Record<string, number>; total: number }>();
     deliveries.forEach(delivery => {
@@ -893,7 +894,12 @@ const Operations: React.FC = () => {
     }
 
     return {
-      head: [['Produto', 'UND', ...pointColumns.map(point => point.name), 'Total']],
+      head: usePointCodes
+        ? [
+          ['Produto', 'UND', ...pointColumns.map(point => point.name), 'Total'],
+          ['', '', ...pointColumns.map(point => point.code), ''],
+        ]
+        : [['Produto', 'UND', ...pointColumns.map(point => point.name), 'Total']],
       body,
       pointColumns,
     };
@@ -1066,7 +1072,7 @@ const Operations: React.FC = () => {
 
     for (const sector of getOrderSectors(order)) {
       const scopedDeliveries = order.deliveries.filter(delivery => pointById(delivery.deliveryPointId)?.sectorId === sector.id);
-      const summary = getDeliveryPointSummaryTable(scopedDeliveries);
+      const summary = getDeliveryPointSummaryTable(scopedDeliveries, true);
 
       doc.addPage();
       await addHeader(doc, reportOperation, order, `SOMA DO SETOR - ${sector.name}`);
@@ -1104,11 +1110,11 @@ const Operations: React.FC = () => {
       ? order.deliveries.filter(delivery => pointById(delivery.deliveryPointId)?.sectorId === sectorId)
       : order.deliveries;
     const sector = sectorById(sectorId);
-    const doc = new jsPDF();
+    const doc = sector ? new jsPDF({ orientation: 'landscape' }) : new jsPDF();
     doc.setFont(REPORT_FONT, 'normal');
     doc.setFontSize(REPORT_FONT_SIZE);
     await addHeader(doc, reportOperation, order, sector ? `Soma das unidades - ${sector.name}` : 'Soma de todos os setores');
-    const summaryTable = sector ? getDeliveryPointSummaryTable(scopedDeliveries) : getSectorSummaryTable(order);
+    const summaryTable = sector ? getDeliveryPointSummaryTable(scopedDeliveries, true) : getSectorSummaryTable(order);
     const tableStartY = addOrderGeneralNotes(doc, order, 39);
     autoTable(doc, {
       startY: tableStartY,
