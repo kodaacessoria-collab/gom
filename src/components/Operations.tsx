@@ -290,6 +290,17 @@ const addOrderGeneralNotes = (doc: jsPDF, order: OperationOrder, startY = 39) =>
   return startY + (lines.length * 4) + 6;
 };
 
+const toColumnLetters = (index: number) => {
+  let value = index + 1;
+  let letters = '';
+  while (value > 0) {
+    const remainder = (value - 1) % 26;
+    letters = String.fromCharCode(65 + remainder) + letters;
+    value = Math.floor((value - 1) / 26);
+  }
+  return letters;
+};
+
 const addReceiptFields = (doc: jsPDF, startY: number) => {
   const y = Math.min(startY + 12, 260);
   doc.setFont(REPORT_FONT, 'normal');
@@ -852,13 +863,22 @@ const Operations: React.FC = () => {
     const pointColumns = deliveries
       .map(delivery => {
         const point = pointById(delivery.deliveryPointId);
+        const sector = sectorById(point?.sectorId);
         return {
           id: delivery.deliveryPointId,
           name: point?.name || point?.code || 'Local sem cadastro',
-          code: point?.code || point?.name || 'Local',
+          code: point?.code || '',
+          sectorNumber: sector?.name.match(/\d+/)?.[0]?.replace(/^0+/, '') || '',
         };
       })
-      .sort((a, b) => a.code.localeCompare(b.code, undefined, { numeric: true, sensitivity: 'base' }));
+      .sort((a, b) => (a.code || a.name).localeCompare(b.code || b.name, undefined, { numeric: true, sensitivity: 'base' }))
+      .map((point, index) => {
+        const hasShortCode = point.code && normalizeKey(point.code) !== normalizeKey(point.name) && point.code.length <= 12;
+        return {
+          ...point,
+          displayCode: hasShortCode ? point.code : `${point.sectorNumber || ''}${toColumnLetters(index)}`,
+        };
+      });
 
     const totals = new Map<string, { product: string; unit: string; points: Record<string, number>; total: number }>();
     deliveries.forEach(delivery => {
@@ -897,7 +917,7 @@ const Operations: React.FC = () => {
       head: usePointCodes
         ? [
           ['Produto', 'UND', ...pointColumns.map(point => point.name), 'Total'],
-          ['', '', ...pointColumns.map(point => point.code), ''],
+          ['', '', ...pointColumns.map(point => point.displayCode), ''],
         ]
         : [['Produto', 'UND', ...pointColumns.map(point => point.name), 'Total']],
       body,
@@ -921,6 +941,53 @@ const Operations: React.FC = () => {
         };
       })
       .sort((a, b) => a.name.localeCompare(b.name));
+  };
+
+  const getDeliveryPointSummaryPdfOptions = (summary: ReturnType<typeof getDeliveryPointSummaryTable>) => {
+    const totalColumnIndex = summary.head[0].length - 1;
+    const pointColumnIndexes = summary.pointColumns.map((_, index) => index + 2);
+    const columnStyles = pointColumnIndexes.reduce<Record<number, any>>((acc, columnIndex) => {
+      acc[columnIndex] = { cellWidth: 18, halign: 'center' };
+      return acc;
+    }, {
+      0: { cellWidth: 66 },
+      1: { cellWidth: 28 },
+      [totalColumnIndex]: { cellWidth: 20, halign: 'center' },
+    });
+
+    return {
+      columnStyles,
+      styles: { font: REPORT_FONT, fontSize: 7, cellPadding: 1.2, overflow: 'linebreak' },
+      headStyles: { font: REPORT_FONT, fontSize: 7, fontStyle: 'bold', fillColor: [79, 70, 229], valign: 'middle' },
+      bodyStyles: { valign: 'middle' },
+      didParseCell: (data: any) => {
+        const columnIndex = data.column.index;
+        const isPointColumn = columnIndex >= 2 && columnIndex < totalColumnIndex;
+        if (isPointColumn || columnIndex === totalColumnIndex) {
+          data.cell.styles.halign = 'center';
+        }
+        if (data.section === 'head' && data.row.index === 0 && isPointColumn) {
+          data.cell.text = [''];
+          data.cell.styles.minCellHeight = 48;
+        }
+        if (data.section === 'head' && data.row.index === 1) {
+          data.cell.styles.halign = columnIndex >= 2 ? 'center' : 'left';
+        }
+      },
+      didDrawCell: (data: any) => {
+        const columnIndex = data.column.index;
+        const pointIndex = columnIndex - 2;
+        if (data.section !== 'head' || data.row.index !== 0 || pointIndex < 0 || pointIndex >= summary.pointColumns.length) return;
+
+        const label = summary.pointColumns[pointIndex].name;
+        const lines = data.doc.splitTextToSize(label, 42);
+        data.doc.setFont(REPORT_FONT, 'bold');
+        data.doc.setFontSize(6.5);
+        data.doc.setTextColor(255, 255, 255);
+        data.doc.text(lines, data.cell.x + (data.cell.width / 2) + 2.5, data.cell.y + data.cell.height - 3, { angle: 90 });
+        data.doc.setTextColor(0, 0, 0);
+      },
+    } as any;
   };
 
   const findDeliveryPointByLabel = (label: string) => {
@@ -1074,20 +1141,20 @@ const Operations: React.FC = () => {
       const scopedDeliveries = order.deliveries.filter(delivery => pointById(delivery.deliveryPointId)?.sectorId === sector.id);
       const summary = getDeliveryPointSummaryTable(scopedDeliveries, true);
 
-      doc.addPage();
+      doc.addPage('a4', 'landscape');
       await addHeader(doc, reportOperation, order, `SOMA DO SETOR - ${sector.name}`);
       const tableStartY = addOrderGeneralNotes(doc, order, 39);
+      const tableOptions = getDeliveryPointSummaryPdfOptions(summary);
       autoTable(doc, {
         startY: tableStartY,
         head: summary.head,
         body: summary.body,
-        styles: { font: REPORT_FONT, fontSize: summary.pointColumns.length > 3 ? 7 : REPORT_FONT_SIZE, cellPadding: 1.2 },
-        headStyles: { font: REPORT_FONT, fontSize: REPORT_FONT_SIZE, fontStyle: 'bold', fillColor: [79, 70, 229] },
         theme: 'grid',
+        ...tableOptions,
       });
     }
 
-    doc.addPage();
+    doc.addPage('a4', 'portrait');
     await addHeader(doc, reportOperation, order, 'TOTAL GERAL POR SETOR');
     const sectorSummary = getSectorSummaryTable(order);
     const tableStartY = addOrderGeneralNotes(doc, order, 39);
@@ -1120,9 +1187,11 @@ const Operations: React.FC = () => {
       startY: tableStartY,
       head: summaryTable.head,
       body: summaryTable.body,
-      styles: { font: REPORT_FONT, fontSize: summaryTable.head[0].length > 6 ? 7 : REPORT_FONT_SIZE, cellPadding: 1.2 },
-      headStyles: { font: REPORT_FONT, fontSize: REPORT_FONT_SIZE, fontStyle: 'bold', fillColor: [79, 70, 229] },
       theme: 'grid',
+      ...(sector ? getDeliveryPointSummaryPdfOptions(summaryTable as ReturnType<typeof getDeliveryPointSummaryTable>) : {
+        styles: { font: REPORT_FONT, fontSize: summaryTable.head[0].length > 6 ? 7 : REPORT_FONT_SIZE, cellPadding: 1.2 },
+        headStyles: { font: REPORT_FONT, fontSize: REPORT_FONT_SIZE, fontStyle: 'bold', fillColor: [79, 70, 229] },
+      }),
     });
     doc.save(getRomaneioFileName(reportOperation, order, sector ? `SOMA ${sector.name}` : 'TOTAL SETORES'));
   };
