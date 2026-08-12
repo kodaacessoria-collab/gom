@@ -946,19 +946,20 @@ const Operations: React.FC = () => {
   const getDeliveryPointSummaryPdfOptions = (summary: ReturnType<typeof getDeliveryPointSummaryTable>) => {
     const totalColumnIndex = summary.head[0].length - 1;
     const pointColumnIndexes = summary.pointColumns.map((_, index) => index + 2);
+    const pointColumnWidth = Math.max(10, Math.min(16, 84 / Math.max(summary.pointColumns.length, 1)));
     const columnStyles = pointColumnIndexes.reduce<Record<number, any>>((acc, columnIndex) => {
-      acc[columnIndex] = { cellWidth: 18, halign: 'center' };
+      acc[columnIndex] = { cellWidth: pointColumnWidth, halign: 'center', overflow: 'linebreak' };
       return acc;
     }, {
-      0: { cellWidth: 66 },
-      1: { cellWidth: 28 },
-      [totalColumnIndex]: { cellWidth: 20, halign: 'center' },
+      0: { cellWidth: 58, overflow: 'linebreak' },
+      1: { cellWidth: 24, overflow: 'linebreak' },
+      [totalColumnIndex]: { cellWidth: 18, halign: 'center' },
     });
 
     return {
       columnStyles,
-      styles: { font: REPORT_FONT, fontSize: 7, cellPadding: 1.2, overflow: 'linebreak' },
-      headStyles: { font: REPORT_FONT, fontSize: 7, fontStyle: 'bold', fillColor: [79, 70, 229], valign: 'middle' },
+      styles: { font: REPORT_FONT, fontSize: 6.8, cellPadding: 1, overflow: 'linebreak', minCellHeight: 6 },
+      headStyles: { font: REPORT_FONT, fontSize: 6.2, fontStyle: 'bold', fillColor: [79, 70, 229], valign: 'middle', halign: 'center' },
       bodyStyles: { valign: 'middle' },
       didParseCell: (data: any) => {
         const columnIndex = data.column.index;
@@ -967,25 +968,14 @@ const Operations: React.FC = () => {
           data.cell.styles.halign = 'center';
         }
         if (data.section === 'head' && data.row.index === 0 && isPointColumn) {
-          data.cell.text = [''];
-          data.cell.styles.minCellHeight = 48;
+          data.cell.styles.minCellHeight = 28;
+          data.cell.styles.cellPadding = 0.8;
+          data.cell.styles.overflow = 'linebreak';
         }
         if (data.section === 'head' && data.row.index === 1) {
           data.cell.styles.halign = columnIndex >= 2 ? 'center' : 'left';
+          data.cell.styles.fontSize = 7.5;
         }
-      },
-      didDrawCell: (data: any) => {
-        const columnIndex = data.column.index;
-        const pointIndex = columnIndex - 2;
-        if (data.section !== 'head' || data.row.index !== 0 || pointIndex < 0 || pointIndex >= summary.pointColumns.length) return;
-
-        const label = summary.pointColumns[pointIndex].name;
-        const lines = data.doc.splitTextToSize(label, 42);
-        data.doc.setFont(REPORT_FONT, 'bold');
-        data.doc.setFontSize(6.5);
-        data.doc.setTextColor(255, 255, 255);
-        data.doc.text(lines, data.cell.x + (data.cell.width / 2) + 2.5, data.cell.y + data.cell.height - 3, { angle: 90 });
-        data.doc.setTextColor(0, 0, 0);
       },
     } as any;
   };
@@ -1141,7 +1131,7 @@ const Operations: React.FC = () => {
       const scopedDeliveries = order.deliveries.filter(delivery => pointById(delivery.deliveryPointId)?.sectorId === sector.id);
       const summary = getDeliveryPointSummaryTable(scopedDeliveries, true);
 
-      doc.addPage('a4', 'landscape');
+      doc.addPage('a4', 'portrait');
       await addHeader(doc, reportOperation, order, `SOMA DO SETOR - ${sector.name}`);
       const tableStartY = addOrderGeneralNotes(doc, order, 39);
       const tableOptions = getDeliveryPointSummaryPdfOptions(summary);
@@ -1177,7 +1167,7 @@ const Operations: React.FC = () => {
       ? order.deliveries.filter(delivery => pointById(delivery.deliveryPointId)?.sectorId === sectorId)
       : order.deliveries;
     const sector = sectorById(sectorId);
-    const doc = sector ? new jsPDF({ orientation: 'landscape' }) : new jsPDF();
+    const doc = new jsPDF();
     doc.setFont(REPORT_FONT, 'normal');
     doc.setFontSize(REPORT_FONT_SIZE);
     await addHeader(doc, reportOperation, order, sector ? `Soma das unidades - ${sector.name}` : 'Soma de todos os setores');
