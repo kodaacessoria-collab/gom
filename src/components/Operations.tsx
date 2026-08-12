@@ -1301,9 +1301,14 @@ const Operations: React.FC = () => {
                 </p>
               </div>
               {editingOrderId && (
-                <button className="button button-outline" type="button" onClick={cancelOrderEdit} style={{ width: 'auto' }}>
-                  <X size={16} style={{ marginRight: '0.5rem' }} /> Cancelar edição
-                </button>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', minWidth: '220px' }}>
+                  <button className="button button-outline" type="button" onClick={cancelOrderEdit} style={{ width: '100%' }}>
+                    <X size={16} style={{ marginRight: '0.5rem' }} /> Cancelar edição
+                  </button>
+                  <button className="button" type="button" disabled={draftDeliveries.length === 0} onClick={saveManualOrder} style={{ width: '100%', opacity: draftDeliveries.length === 0 ? 0.5 : 1 }}>
+                    <Save size={16} style={{ marginRight: '0.5rem' }} /> Salvar edição
+                  </button>
+                </div>
               )}
             </div>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '0.75rem', marginBottom: '1rem' }}>
