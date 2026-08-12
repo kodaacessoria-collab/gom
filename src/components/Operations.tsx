@@ -80,6 +80,7 @@ interface OperationOrder {
   sourceType: SourceType;
   deliveryDate: string;
   consumptionPeriod: string;
+  generalNotes?: string;
   importedAt: string;
   deliveries: OrderDelivery[];
 }
@@ -278,6 +279,17 @@ const addHeader = async (doc: jsPDF, operation: OperationContract, order: Operat
   });
 };
 
+const addOrderGeneralNotes = (doc: jsPDF, order: OperationOrder, startY = 39) => {
+  const notes = displayText(order.generalNotes);
+  if (!notes) return startY;
+
+  const lines = doc.splitTextToSize(`Observacao geral: ${notes}`, 182);
+  doc.setFont(REPORT_FONT, 'normal');
+  doc.setFontSize(REPORT_FONT_SIZE);
+  doc.text(lines, 14, startY);
+  return startY + (lines.length * 4) + 6;
+};
+
 const addReceiptFields = (doc: jsPDF, startY: number) => {
   const y = Math.min(startY + 12, 260);
   doc.setFont(REPORT_FONT, 'normal');
@@ -318,6 +330,7 @@ const Operations: React.FC = () => {
     category: 'Estocáveis' as DeliveryCategory,
     deliveryDate: todayIso(),
     consumptionPeriod: '',
+    generalNotes: '',
     deliveryPointId: '',
     product: '',
     unit: 'UN',
@@ -494,6 +507,7 @@ const Operations: React.FC = () => {
       category: order.category,
       deliveryDate: order.deliveryDate,
       consumptionPeriod: order.consumptionPeriod || '',
+      generalNotes: order.generalNotes || '',
       deliveryPointId: order.deliveries[0]?.deliveryPointId || operationPoints[0]?.id || '',
       product: '',
       unit: 'UN',
@@ -584,6 +598,7 @@ const Operations: React.FC = () => {
         category: orderForm.category,
         deliveryDate: orderForm.deliveryDate,
         consumptionPeriod: displayText(orderForm.consumptionPeriod),
+        generalNotes: displayText(orderForm.generalNotes),
         deliveries: normalizeOrderDeliveries(draftDeliveries),
       } : order));
       setEditingOrderId(null);
@@ -602,12 +617,14 @@ const Operations: React.FC = () => {
       sourceType: 'Manual',
       deliveryDate: orderForm.deliveryDate,
       consumptionPeriod: displayText(orderForm.consumptionPeriod),
+      generalNotes: displayText(orderForm.generalNotes),
       importedAt: new Date().toISOString(),
       deliveries: normalizeOrderDeliveries(draftDeliveries),
     };
     persistOrders([order, ...orders]);
     setEditingDraftItem(null);
     setDraftDeliveries([]);
+    setOrderForm(prev => ({ ...prev, product: '', quantity: 0, notes: '', generalNotes: '' }));
     alert('Pedido do cliente lançado na operação.');
   };
 
@@ -622,6 +639,7 @@ const Operations: React.FC = () => {
       unit: 'UN',
       quantity: 0,
       notes: '',
+      generalNotes: '',
     }));
   };
 
@@ -830,6 +848,57 @@ const Operations: React.FC = () => {
     };
   };
 
+  const getDeliveryPointSummaryTable = (deliveries: OrderDelivery[]) => {
+    const pointColumns = deliveries
+      .map(delivery => {
+        const point = pointById(delivery.deliveryPointId);
+        return {
+          id: delivery.deliveryPointId,
+          name: point?.name || point?.code || 'Local sem cadastro',
+        };
+      })
+      .sort((a, b) => a.name.localeCompare(b.name));
+
+    const totals = new Map<string, { product: string; unit: string; points: Record<string, number>; total: number }>();
+    deliveries.forEach(delivery => {
+      aggregateDeliveryItems(delivery.items).forEach(item => {
+        const key = stockKey(item.product, item.unit);
+        const current = totals.get(key) || { product: item.product, unit: item.unit, points: {}, total: 0 };
+        current.points[delivery.deliveryPointId] = (current.points[delivery.deliveryPointId] || 0) + item.quantity;
+        current.total += item.quantity;
+        totals.set(key, current);
+      });
+    });
+
+    const rows = Array.from(totals.values()).sort((a, b) => a.product.localeCompare(b.product));
+    const pointTotals = pointColumns.reduce<Record<string, number>>((acc, point) => {
+      acc[point.id] = rows.reduce((sum, row) => sum + (row.points[point.id] || 0), 0);
+      return acc;
+    }, {});
+
+    const body = rows.map(row => [
+      row.product,
+      row.unit,
+      ...pointColumns.map(point => row.points[point.id] ? formatQuantity(row.points[point.id]) : '-'),
+      formatQuantity(row.total),
+    ]);
+
+    if (rows.length > 0) {
+      body.push([
+        'TOTAL GERAL',
+        '',
+        ...pointColumns.map(point => formatQuantity(pointTotals[point.id] || 0)),
+        formatQuantity(rows.reduce((sum, row) => sum + row.total, 0)),
+      ]);
+    }
+
+    return {
+      head: [['Produto', 'UND', ...pointColumns.map(point => point.name), 'Total']],
+      body,
+      pointColumns,
+    };
+  };
+
   const getOrderSectors = (order: OperationOrder) => {
     const usedSectorIds = new Set<string>(
       order.deliveries
@@ -950,9 +1019,10 @@ const Operations: React.FC = () => {
     await addHeader(doc, reportOperation, order, `${sector?.name || 'Sem setor'} | ${point?.name || 'Local de entrega'}`);
     doc.text(`Local: ${point?.name || '-'} | Codigo: ${point?.code || '-'}`, 14, 39);
     doc.text(`Endereco: ${point?.address || '-'} | Bairro: ${point?.neighborhood || '-'}`, 14, 45);
+    const tableStartY = addOrderGeneralNotes(doc, order, 52);
 
     autoTable(doc, {
-      startY: 52,
+      startY: tableStartY,
       head: [['Produto', 'UND', 'QTD', 'OBS.']],
       body: items.map(item => [item.product, item.unit, formatQuantity(item.quantity), item.notes || '']),
       styles: { font: REPORT_FONT, fontSize: REPORT_FONT_SIZE, cellPadding: 1.4 },
@@ -981,9 +1051,10 @@ const Operations: React.FC = () => {
       await addHeader(doc, reportOperation, order, `${sector?.name || 'Sem setor'} | ${point?.name || 'Local de entrega'}`);
       doc.text(`Local: ${point?.name || '-'} | Codigo: ${point?.code || '-'}`, 14, 39);
       doc.text(`Endereco: ${point?.address || '-'} | Bairro: ${point?.neighborhood || '-'}`, 14, 45);
+      const tableStartY = addOrderGeneralNotes(doc, order, 52);
 
       autoTable(doc, {
-        startY: 52,
+        startY: tableStartY,
         head: [['Produto', 'UND', 'QTD', 'OBS.']],
         body: items.map(item => [item.product, item.unit, formatQuantity(item.quantity), item.notes || '']),
         styles: { font: REPORT_FONT, fontSize: REPORT_FONT_SIZE, cellPadding: 1.4 },
@@ -995,18 +1066,16 @@ const Operations: React.FC = () => {
 
     for (const sector of getOrderSectors(order)) {
       const scopedDeliveries = order.deliveries.filter(delivery => pointById(delivery.deliveryPointId)?.sectorId === sector.id);
-      const summary = buildSummary(scopedDeliveries);
+      const summary = getDeliveryPointSummaryTable(scopedDeliveries);
 
       doc.addPage();
       await addHeader(doc, reportOperation, order, `SOMA DO SETOR - ${sector.name}`);
+      const tableStartY = addOrderGeneralNotes(doc, order, 39);
       autoTable(doc, {
-        startY: 39,
-        head: [['Produto', 'UND', sector.name]],
-        body: [
-          ...summary.map(item => [item.product, item.unit, formatQuantity(item.quantity)]),
-          ['TOTAL GERAL', '', formatQuantity(summary.reduce((sum, item) => sum + item.quantity, 0))],
-        ],
-        styles: { font: REPORT_FONT, fontSize: REPORT_FONT_SIZE, cellPadding: 1.4 },
+        startY: tableStartY,
+        head: summary.head,
+        body: summary.body,
+        styles: { font: REPORT_FONT, fontSize: summary.pointColumns.length > 3 ? 7 : REPORT_FONT_SIZE, cellPadding: 1.2 },
         headStyles: { font: REPORT_FONT, fontSize: REPORT_FONT_SIZE, fontStyle: 'bold', fillColor: [79, 70, 229] },
         theme: 'grid',
       });
@@ -1015,8 +1084,9 @@ const Operations: React.FC = () => {
     doc.addPage();
     await addHeader(doc, reportOperation, order, 'TOTAL GERAL POR SETOR');
     const sectorSummary = getSectorSummaryTable(order);
+    const tableStartY = addOrderGeneralNotes(doc, order, 39);
     autoTable(doc, {
-      startY: 39,
+      startY: tableStartY,
       head: sectorSummary.head,
       body: sectorSummary.body,
       styles: { font: REPORT_FONT, fontSize: sectorSummary.sectorColumns.length > 3 ? 7 : REPORT_FONT_SIZE, cellPadding: 1.2 },
@@ -1033,18 +1103,18 @@ const Operations: React.FC = () => {
     const scopedDeliveries = sectorId
       ? order.deliveries.filter(delivery => pointById(delivery.deliveryPointId)?.sectorId === sectorId)
       : order.deliveries;
-    const summary = buildSummary(scopedDeliveries);
     const sector = sectorById(sectorId);
     const doc = new jsPDF();
     doc.setFont(REPORT_FONT, 'normal');
     doc.setFontSize(REPORT_FONT_SIZE);
     await addHeader(doc, reportOperation, order, sector ? `Soma das unidades - ${sector.name}` : 'Soma de todos os setores');
-    const sectorSummary = sector ? null : getSectorSummaryTable(order);
+    const summaryTable = sector ? getDeliveryPointSummaryTable(scopedDeliveries) : getSectorSummaryTable(order);
+    const tableStartY = addOrderGeneralNotes(doc, order, 39);
     autoTable(doc, {
-      startY: 39,
-      head: sectorSummary?.head || [['Produto', 'UND', 'Total']],
-      body: sectorSummary?.body || summary.map(item => [item.product, item.unit, formatQuantity(item.quantity)]),
-      styles: { font: REPORT_FONT, fontSize: sectorSummary && sectorSummary.sectorColumns.length > 3 ? 7 : REPORT_FONT_SIZE, cellPadding: 1.4 },
+      startY: tableStartY,
+      head: summaryTable.head,
+      body: summaryTable.body,
+      styles: { font: REPORT_FONT, fontSize: summaryTable.head[0].length > 6 ? 7 : REPORT_FONT_SIZE, cellPadding: 1.2 },
       headStyles: { font: REPORT_FONT, fontSize: REPORT_FONT_SIZE, fontStyle: 'bold', fillColor: [79, 70, 229] },
       theme: 'grid',
     });
@@ -1060,8 +1130,9 @@ const Operations: React.FC = () => {
     doc.setFont(REPORT_FONT, 'normal');
     doc.setFontSize(REPORT_FONT_SIZE);
     await addHeader(doc, reportOperation, order, 'Analise de estoque para compra');
+    const tableStartY = addOrderGeneralNotes(doc, order, 39);
     autoTable(doc, {
-      startY: 39,
+      startY: tableStartY,
       head: [['Produto', 'UND', 'Demanda', 'Estoque', 'Comprar', 'Status']],
       body: buildSummary(order.deliveries).map(item => {
         const available = stock.get(stockKey(item.product, item.unit)) || 0;
@@ -1325,6 +1396,10 @@ const Operations: React.FC = () => {
               <div style={{ gridColumn: 'span 2' }}>
                 <label>Período de consumo</label>
                 <input className="input-field" placeholder="Ex: 12/08 a 16/08" value={orderForm.consumptionPeriod} onChange={event => setOrderForm({ ...orderForm, consumptionPeriod: event.target.value })} />
+              </div>
+              <div style={{ gridColumn: '1 / -1' }}>
+                <label>Observação geral do pedido</label>
+                <input className="input-field" placeholder="Observação que será exibida em todos os PDFs deste pedido" value={orderForm.generalNotes} onChange={event => setOrderForm({ ...orderForm, generalNotes: event.target.value })} />
               </div>
             </div>
             <form onSubmit={addDraftItem} style={{ display: 'grid', gridTemplateColumns: '1.2fr 1.5fr 0.5fr 0.5fr 1fr auto', gap: '0.75rem', alignItems: 'end' }}>
