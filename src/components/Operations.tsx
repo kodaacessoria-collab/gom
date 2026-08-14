@@ -818,7 +818,7 @@ const Operations: React.FC = () => {
           name: sectorId === 'sem_setor' ? 'Sem setor' : sector?.name || 'Setor sem cadastro',
         };
       })
-      .sort((a, b) => a.name.localeCompare(b.name));
+      .sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' }));
 
     const totals = new Map<string, { product: string; unit: string; sectors: Record<string, number>; total: number }>();
     order.deliveries.forEach(delivery => {
@@ -876,10 +876,9 @@ const Operations: React.FC = () => {
       })
       .sort((a, b) => (a.code || a.name).localeCompare(b.code || b.name, undefined, { numeric: true, sensitivity: 'base' }))
       .map((point, index) => {
-        const hasShortCode = point.code && normalizeKey(point.code) !== normalizeKey(point.name) && point.code.length <= 12;
         return {
           ...point,
-          displayCode: hasShortCode ? point.code : `${point.sectorNumber || ''}${toColumnLetters(index)}`,
+          displayCode: `${point.sectorNumber || ''}${toColumnLetters(index)}`,
         };
       });
 
@@ -1142,18 +1141,63 @@ const Operations: React.FC = () => {
     doc.setFont(REPORT_FONT, 'normal');
     doc.setFontSize(REPORT_FONT_SIZE);
 
-    for (const [index, delivery] of order.deliveries.entries()) {
-      if (index > 0) doc.addPage();
+    const orderedSectors = getOrderSectors(order);
+    const sectorSummary = getSectorSummaryTable(order);
+
+    await addHeader(doc, reportOperation, order, 'TOTAL GERAL');
+    let tableStartY = addOrderGeneralNotes(doc, order, 39);
+    autoTable(doc, {
+      startY: tableStartY,
+      head: sectorSummary.head,
+      body: sectorSummary.body,
+      styles: { font: REPORT_FONT, fontSize: sectorSummary.sectorColumns.length > 3 ? 7 : REPORT_FONT_SIZE, cellPadding: 1.2 },
+      headStyles: { font: REPORT_FONT, fontSize: REPORT_FONT_SIZE, fontStyle: 'bold', fillColor: [79, 70, 229] },
+      theme: 'grid',
+    });
+
+    for (const sector of orderedSectors) {
+      const scopedDeliveries = order.deliveries.filter(delivery => (pointById(delivery.deliveryPointId)?.sectorId || 'sem_setor') === sector.id);
+      const summary = getDeliveryPointSummaryTable(scopedDeliveries, true);
+
+      doc.addPage('a4', 'portrait');
+      await addHeader(doc, reportOperation, order, `TOTAL - ${sector.name}`);
+      tableStartY = addOrderGeneralNotes(doc, order, 39);
+      const tableOptions = getDeliveryPointSummaryPdfOptions(summary);
+      autoTable(doc, {
+        startY: tableStartY,
+        head: summary.head,
+        body: summary.body,
+        theme: 'grid',
+        ...tableOptions,
+      });
+    }
+
+    const orderedDeliveries = orderedSectors.flatMap((sector, sectorIndex) =>
+      order.deliveries
+        .filter(delivery => (pointById(delivery.deliveryPointId)?.sectorId || 'sem_setor') === sector.id)
+        .sort((a, b) => {
+          const pointA = pointById(a.deliveryPointId);
+          const pointB = pointById(b.deliveryPointId);
+          return (pointA?.code || pointA?.name || '').localeCompare(pointB?.code || pointB?.name || '', undefined, { numeric: true, sensitivity: 'base' });
+        })
+        .map((delivery, schoolIndex) => ({
+          delivery,
+          sector,
+          displayCode: `${sector.name.match(/\d+/)?.[0]?.replace(/^0+/, '') || sectorIndex + 1}${toColumnLetters(schoolIndex)}`,
+        }))
+    );
+
+    for (const { delivery, sector, displayCode } of orderedDeliveries) {
+      doc.addPage();
       const point = pointById(delivery.deliveryPointId);
-      const sector = sectorById(point?.sectorId);
       const items = aggregateDeliveryItems(delivery.items);
 
       doc.setFont(REPORT_FONT, 'normal');
       doc.setFontSize(REPORT_FONT_SIZE);
-      await addHeader(doc, reportOperation, order, `${sector?.name || 'Sem setor'} | ${point?.name || 'Local de entrega'}`);
-      doc.text(`Local: ${point?.name || '-'} | Codigo: ${point?.code || '-'}`, 14, 39);
+      await addHeader(doc, reportOperation, order, `${sector.name} | ${displayCode} - ${point?.name || 'Local de entrega'}`);
+      doc.text(`Local: ${point?.name || '-'} | Codigo: ${displayCode}`, 14, 39);
       doc.text(`Endereco: ${point?.address || '-'} | Bairro: ${point?.neighborhood || '-'}`, 14, 45);
-      const tableStartY = addOrderGeneralNotes(doc, order, 52);
+      tableStartY = addOrderGeneralNotes(doc, order, 52);
 
       autoTable(doc, {
         startY: tableStartY,
@@ -1165,36 +1209,6 @@ const Operations: React.FC = () => {
       } as any);
       addReceiptFields(doc, (doc as any).lastAutoTable?.finalY || 60);
     }
-
-    for (const sector of getOrderSectors(order)) {
-      const scopedDeliveries = order.deliveries.filter(delivery => pointById(delivery.deliveryPointId)?.sectorId === sector.id);
-      const summary = getDeliveryPointSummaryTable(scopedDeliveries, true);
-
-      doc.addPage('a4', 'portrait');
-      await addHeader(doc, reportOperation, order, `SOMA DO SETOR - ${sector.name}`);
-      const tableStartY = addOrderGeneralNotes(doc, order, 39);
-      const tableOptions = getDeliveryPointSummaryPdfOptions(summary);
-      autoTable(doc, {
-        startY: tableStartY,
-        head: summary.head,
-        body: summary.body,
-        theme: 'grid',
-        ...tableOptions,
-      });
-    }
-
-    doc.addPage('a4', 'portrait');
-    await addHeader(doc, reportOperation, order, 'TOTAL GERAL POR SETOR');
-    const sectorSummary = getSectorSummaryTable(order);
-    const tableStartY = addOrderGeneralNotes(doc, order, 39);
-    autoTable(doc, {
-      startY: tableStartY,
-      head: sectorSummary.head,
-      body: sectorSummary.body,
-      styles: { font: REPORT_FONT, fontSize: sectorSummary.sectorColumns.length > 3 ? 7 : REPORT_FONT_SIZE, cellPadding: 1.2 },
-      headStyles: { font: REPORT_FONT, fontSize: REPORT_FONT_SIZE, fontStyle: 'bold', fillColor: [79, 70, 229] },
-      theme: 'grid',
-    });
 
     doc.save(getRomaneioFileName(reportOperation, order));
   };
@@ -1332,24 +1346,32 @@ const Operations: React.FC = () => {
     const reportOperation = operationByOrder(order);
     if (!reportOperation) return;
     const workbook = XLSX.utils.book_new();
-    order.deliveries.forEach((delivery, index) => {
-      const point = pointById(delivery.deliveryPointId);
-      const items = aggregateDeliveryItems(delivery.items);
-      addExcelSheet(
-        workbook,
-        `${index + 1} ${point?.code || point?.name || 'Entrega'}`,
-        reportOperation,
-        order,
-        point?.name || 'Local de entrega',
-        [['Produto', 'UND', 'QTD', 'OBS.'], ...items.map(item => [item.product, item.unit, item.quantity, item.notes || ''])],
-        [42, 12, 12, 36],
-      );
+    addDeliverySummaryExcelSheet(workbook, order, reportOperation, 'Total geral', 'Total geral', getSectorSummaryTable(order));
+    const orderedSectors = getOrderSectors(order);
+    orderedSectors.forEach((sector, sectorIndex) => {
+      const scoped = order.deliveries
+        .filter(delivery => (pointById(delivery.deliveryPointId)?.sectorId || 'sem_setor') === sector.id)
+        .sort((a, b) => {
+          const pointA = pointById(a.deliveryPointId);
+          const pointB = pointById(b.deliveryPointId);
+          return (pointA?.code || pointA?.name || '').localeCompare(pointB?.code || pointB?.name || '', undefined, { numeric: true, sensitivity: 'base' });
+        });
+      addDeliverySummaryExcelSheet(workbook, order, reportOperation, `Total ${sector.name}`, `Total - ${sector.name}`, getDeliveryPointSummaryTable(scoped, true));
+      scoped.forEach((delivery, schoolIndex) => {
+        const point = pointById(delivery.deliveryPointId);
+        const displayCode = `${sector.name.match(/\d+/)?.[0]?.replace(/^0+/, '') || sectorIndex + 1}${toColumnLetters(schoolIndex)}`;
+        const items = aggregateDeliveryItems(delivery.items);
+        addExcelSheet(
+          workbook,
+          `${displayCode} ${point?.name || 'Entrega'}`,
+          reportOperation,
+          order,
+          `${sector.name} | ${displayCode} - ${point?.name || 'Local de entrega'}`,
+          [['Produto', 'UND', 'QTD', 'OBS.'], ...items.map(item => [item.product, item.unit, item.quantity, item.notes || ''])],
+          [42, 12, 12, 36],
+        );
+      });
     });
-    getOrderSectors(order).forEach((sector, index) => {
-      const scoped = order.deliveries.filter(delivery => pointById(delivery.deliveryPointId)?.sectorId === sector.id);
-      addDeliverySummaryExcelSheet(workbook, order, reportOperation, `S${index + 1} ${sector.name}`, `Soma do setor - ${sector.name}`, getDeliveryPointSummaryTable(scoped, true));
-    });
-    addDeliverySummaryExcelSheet(workbook, order, reportOperation, 'Total por setor', 'Total geral por setor', getSectorSummaryTable(order));
     XLSX.writeFile(workbook, getExcelFileName(reportOperation, order));
   };
 
