@@ -32,7 +32,7 @@ GlobalWorkerOptions.workerSrc = new URL('pdfjs-dist/build/pdf.worker.mjs', impor
 
 type SourceType = 'Manual' | 'Excel' | 'PDF';
 type DeliveryCategory = 'Hortifrutigranjeiro' | 'Estocáveis' | 'Dietas e Fórmulas' | 'Proteínas' | 'Limpeza';
-type OperationsModule = 'operations' | 'locations' | 'order-entry' | 'orders' | 'history';
+type OperationsModule = 'operations' | 'locations' | 'order-entry' | 'orders' | 'history' | 'period-report';
 
 interface OperationContract {
   id: string;
@@ -355,6 +355,9 @@ const Operations: React.FC = () => {
   const [importing, setImporting] = useState(false);
   const [creatingPurchase, setCreatingPurchase] = useState(false);
   const [activeModule, setActiveModule] = useState<OperationsModule | null>(null);
+  const [reportCategory, setReportCategory] = useState<'Todas' | DeliveryCategory>('Todas');
+  const [reportStartDate, setReportStartDate] = useState(() => `${todayIso().slice(0, 8)}01`);
+  const [reportEndDate, setReportEndDate] = useState(todayIso);
 
   const activeOperation = operations.find(operation => operation.id === activeOperationId) || operations[0];
   const operationSectors = sectors.filter(sector => sector.operationId === activeOperation?.id);
@@ -1416,6 +1419,133 @@ const Operations: React.FC = () => {
     XLSX.writeFile(workbook, getExcelFileName(reportOperation, order, 'ANALISE ESTOQUE COMPRA'));
   };
 
+  const periodReport = useMemo(() => {
+    const filteredOrders = operationOrders.filter(order =>
+      (reportCategory === 'Todas' || order.category === reportCategory) &&
+      (!reportStartDate || order.deliveryDate >= reportStartDate) &&
+      (!reportEndDate || order.deliveryDate <= reportEndDate)
+    );
+    const dates = Array.from(new Set(filteredOrders.map(order => order.deliveryDate))).sort();
+    const productMap = new Map<string, { product: string; unit: string; quantities: Record<string, number>; total: number }>();
+
+    filteredOrders.forEach(order => {
+      buildSummary(order.deliveries).forEach(item => {
+        const key = stockKey(item.product, item.unit);
+        const current = productMap.get(key) || { product: item.product, unit: item.unit, quantities: {}, total: 0 };
+        current.quantities[order.deliveryDate] = (current.quantities[order.deliveryDate] || 0) + item.quantity;
+        current.total += item.quantity;
+        productMap.set(key, current);
+      });
+    });
+
+    const rows = Array.from(productMap.values()).sort((a, b) => a.product.localeCompare(b.product));
+    const dateTotals = dates.reduce<Record<string, number>>((acc, date) => {
+      acc[date] = rows.reduce((sum, row) => sum + (row.quantities[date] || 0), 0);
+      return acc;
+    }, {});
+    return {
+      dates,
+      rows,
+      orderCount: filteredOrders.length,
+      dateTotals,
+      grandTotal: rows.reduce((sum, row) => sum + row.total, 0),
+    };
+  }, [operationOrders, reportCategory, reportStartDate, reportEndDate]);
+
+  const getPeriodReportFileName = (extension: 'pdf' | 'xlsx') => {
+    const operationName = activeOperation?.name || 'Operacao';
+    const categoryName = reportCategory === 'Todas' ? 'Todas categorias' : reportCategory;
+    return `${sanitizeFileName(`RELATORIO ENTREGAS - ${operationName} - ${categoryName} - ${formatDate(reportStartDate)} a ${formatDate(reportEndDate)}`)}.${extension}`;
+  };
+
+  const generatePeriodReportPdf = async () => {
+    if (!activeOperation || periodReport.rows.length === 0) {
+      alert('Nenhum produto entregue foi encontrado para os filtros selecionados.');
+      return;
+    }
+    const doc = new jsPDF({ orientation: 'landscape' });
+    const categoryLabel = reportCategory === 'Todas' ? 'Todas as categorias' : reportCategory;
+    await addPdfHeader(doc, {
+      title: `RELATORIO DE PRODUTOS ENTREGUES - ${getOperationTitle(activeOperation).toUpperCase()}`,
+      subtitle: `Categoria: ${categoryLabel} | Periodo: ${formatDate(reportStartDate)} a ${formatDate(reportEndDate)}`,
+      footer: `${periodReport.orderCount} pedido(s) | ${periodReport.dates.length} data(s) de entrega`,
+      logoVariant: activeOperation.logoVariant || DEFAULT_LOGO_VARIANT,
+    });
+    const dateColumnWidth = Math.min(18, 180 / Math.min(Math.max(periodReport.dates.length, 1), 12));
+    const totalColumnIndex = periodReport.dates.length + 2;
+    const columnStyles = periodReport.dates.reduce<Record<number, any>>((acc, _, index) => {
+      acc[index + 2] = { cellWidth: dateColumnWidth, halign: 'center' };
+      return acc;
+    }, {
+      0: { cellWidth: 55 },
+      1: { cellWidth: 16, halign: 'center' },
+      [totalColumnIndex]: { cellWidth: 18, halign: 'center' },
+    });
+    const body: (string | number)[][] = periodReport.rows.map(row => [
+      row.product,
+      row.unit,
+      ...periodReport.dates.map(date => row.quantities[date] ? formatQuantity(row.quantities[date]) : '-'),
+      formatQuantity(row.total),
+    ]);
+    body.push([
+      'TOTAL GERAL',
+      '',
+      ...periodReport.dates.map(date => formatQuantity(periodReport.dateTotals[date] || 0)),
+      formatQuantity(periodReport.grandTotal),
+    ]);
+    autoTable(doc, {
+      startY: 36,
+      head: [['Produto', 'UND', ...periodReport.dates.map(formatDate), 'Total']],
+      body,
+      theme: 'grid',
+      styles: { font: REPORT_FONT, fontSize: periodReport.dates.length > 12 ? 5 : 7, cellPadding: 1, overflow: 'linebreak', valign: 'middle' },
+      headStyles: { font: REPORT_FONT, fontStyle: 'bold', fillColor: [219, 234, 254], textColor: [0, 0, 0], halign: 'center' },
+      columnStyles,
+      horizontalPageBreak: periodReport.dates.length > 12,
+      horizontalPageBreakRepeat: [0, 1],
+      didParseCell: (data: any) => {
+        if (data.section === 'body' && data.row.index === body.length - 1) {
+          data.cell.styles.fontStyle = 'bold';
+          data.cell.styles.fillColor = [226, 232, 240];
+        }
+      },
+    });
+    doc.save(getPeriodReportFileName('pdf'));
+  };
+
+  const generatePeriodReportExcel = () => {
+    if (!activeOperation || periodReport.rows.length === 0) {
+      alert('Nenhum produto entregue foi encontrado para os filtros selecionados.');
+      return;
+    }
+    const categoryLabel = reportCategory === 'Todas' ? 'Todas as categorias' : reportCategory;
+    const data: (string | number)[][] = [
+      [`Relatório de produtos entregues - ${activeOperation.name}`],
+      ['Categoria', categoryLabel, 'Período', `${formatDate(reportStartDate)} a ${formatDate(reportEndDate)}`],
+      ['Pedidos considerados', periodReport.orderCount, 'Datas de entrega', periodReport.dates.length],
+      [],
+      ['Produto', 'UND', ...periodReport.dates.map(formatDate), 'Total'],
+      ...periodReport.rows.map(row => [
+        row.product,
+        row.unit,
+        ...periodReport.dates.map(date => row.quantities[date] || 0),
+        row.total,
+      ]),
+      ['TOTAL GERAL', '', ...periodReport.dates.map(date => periodReport.dateTotals[date] || 0), periodReport.grandTotal],
+    ];
+    const workbook = XLSX.utils.book_new();
+    const sheet = XLSX.utils.aoa_to_sheet(data);
+    sheet['!cols'] = [
+      { wch: 42 },
+      { wch: 12 },
+      ...periodReport.dates.map(() => ({ wch: 14 })),
+      { wch: 16 },
+    ];
+    sheet['!autofilter'] = { ref: XLSX.utils.encode_range({ s: { r: 4, c: 0 }, e: { r: data.length - 2, c: data[4].length - 1 } }) };
+    XLSX.utils.book_append_sheet(workbook, sheet, 'Produtos por data');
+    XLSX.writeFile(workbook, getPeriodReportFileName('xlsx'));
+  };
+
   const totals = useMemo(() => {
     const deliveries = operationOrders.reduce((sum, order) => sum + order.deliveries.length, 0);
     const items = operationOrders.reduce((sum, order) => sum + buildSummary(order.deliveries).length, 0);
@@ -1464,6 +1594,7 @@ const Operations: React.FC = () => {
           <button type="button" className="operations-module-button" onClick={() => setActiveModule('order-entry')}><PackagePlus size={22} /><span><strong>Entrada de pedidos</strong><small>Lançar itens por local</small></span></button>
           <button type="button" className="operations-module-button" onClick={() => setActiveModule('orders')}><FileText size={22} /><span><strong>Pedidos e arquivos</strong><small>Gerar PDF ou Excel</small></span></button>
           <button type="button" className="operations-module-button" onClick={() => setActiveModule('history')}><History size={22} /><span><strong>Histórico</strong><small>Consultar entregas anteriores</small></span></button>
+          <button type="button" className="operations-module-button" onClick={() => setActiveModule('period-report')}><Search size={22} /><span><strong>Relatório por período</strong><small>Filtrar produtos e datas</small></span></button>
         </div>
       </div>
 
@@ -1902,6 +2033,63 @@ const Operations: React.FC = () => {
                   {deliveryHistory.length === 0 && <tr><td colSpan={8} style={{ textAlign: 'center', padding: '2rem' }}>Nenhuma entrega no histórico.</td></tr>}
                 </tbody>
               </table>
+            </div>
+          </div>
+
+          <div className="card operations-module-window module-period-report" style={{ maxWidth: 'none', padding: '1.5rem' }}>
+            <div className="view-header" style={{ marginBottom: '1rem', gap: '1rem' }}>
+              <div>
+                <h2 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}><Search size={20} /> Relatório de produtos entregues</h2>
+                <p style={{ textAlign: 'left', marginBottom: 0 }}>Consolide os produtos da operação por categoria e período, com uma coluna para cada data de entrega.</p>
+              </div>
+            </div>
+            <div className="period-report-filters">
+              <div>
+                <label>Categoria</label>
+                <select className="input-field" value={reportCategory} onChange={event => setReportCategory(event.target.value as 'Todas' | DeliveryCategory)}>
+                  <option value="Todas">Todas as categorias</option>
+                  {DELIVERY_CATEGORIES.map(category => <option key={category} value={category}>{category}</option>)}
+                </select>
+              </div>
+              <div>
+                <label>Data inicial</label>
+                <input type="date" className="input-field" max={reportEndDate || undefined} value={reportStartDate} onChange={event => setReportStartDate(event.target.value)} />
+              </div>
+              <div>
+                <label>Data final</label>
+                <input type="date" className="input-field" min={reportStartDate || undefined} value={reportEndDate} onChange={event => setReportEndDate(event.target.value)} />
+              </div>
+              <div className="period-report-actions">
+                <button type="button" className="button button-outline" disabled={periodReport.rows.length === 0} onClick={generatePeriodReportPdf}>
+                  <FileText size={17} style={{ marginRight: '0.45rem' }} /> Gerar PDF
+                </button>
+                <button type="button" className="button button-outline excel-action" disabled={periodReport.rows.length === 0} onClick={generatePeriodReportExcel}>
+                  <FileSpreadsheet size={17} style={{ marginRight: '0.45rem' }} /> Gerar Excel
+                </button>
+              </div>
+            </div>
+            <div className="period-report-summary">
+              <span className="badge badge-blue">{periodReport.orderCount} pedido(s)</span>
+              <span className="badge badge-green">{periodReport.rows.length} produto(s)</span>
+              <span className="badge">{periodReport.dates.length} data(s)</span>
+            </div>
+            <div style={{ overflowX: 'auto', marginTop: '1rem' }}>
+              <table className="data-table">
+                <thead>
+                  <tr><th>Produto</th><th>UND</th>{periodReport.dates.map(date => <th key={date}>{formatDate(date)}</th>)}<th>Total</th></tr>
+                </thead>
+                <tbody>
+                  {periodReport.rows.slice(0, 20).map(row => (
+                    <tr key={stockKey(row.product, row.unit)}>
+                      <td style={{ fontWeight: 600 }}>{row.product}</td><td>{row.unit}</td>
+                      {periodReport.dates.map(date => <td key={date}>{row.quantities[date] ? formatQuantity(row.quantities[date]) : '-'}</td>)}
+                      <td style={{ fontWeight: 700 }}>{formatQuantity(row.total)}</td>
+                    </tr>
+                  ))}
+                  {periodReport.rows.length === 0 && <tr><td colSpan={periodReport.dates.length + 3} style={{ textAlign: 'center', padding: '2rem' }}>Nenhuma entrega encontrada para os filtros selecionados.</td></tr>}
+                </tbody>
+              </table>
+              {periodReport.rows.length > 20 && <p style={{ textAlign: 'left', marginTop: '0.75rem' }}>Prévia dos primeiros 20 produtos. O PDF e o Excel incluirão todos os registros.</p>}
             </div>
           </div>
         </div>
