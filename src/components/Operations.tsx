@@ -948,8 +948,8 @@ const Operations: React.FC = () => {
     const pointColumnIndexes = summary.pointColumns.map((_, index) => index + 2);
     const pointColumnWidth = 81.5 / Math.max(summary.pointColumns.length, 1);
     const schoolHeaderFillColor: [number, number, number] = [219, 234, 254];
-    const schoolHeaderFontSize = 10;
-    const schoolHeaderHeight = 38;
+    const schoolHeaderFontSize = 9;
+    const schoolHeaderHeight = 36;
     const schoolHeaderTextHeight = schoolHeaderHeight - 4;
     const columnStyles = pointColumnIndexes.reduce<Record<number, any>>((acc, columnIndex) => {
       acc[columnIndex] = { cellWidth: pointColumnWidth, halign: 'center', overflow: 'linebreak' };
@@ -1001,7 +1001,7 @@ const Operations: React.FC = () => {
         data.doc.setFontSize(schoolHeaderFontSize);
         data.doc.setTextColor(0, 0, 0);
         const schoolNameLines = data.doc.splitTextToSize(schoolName, schoolHeaderTextHeight) as string[];
-        const lineSpacing = 3;
+        const lineSpacing = 2.8;
         schoolNameLines.forEach((line, lineIndex) => {
           const lineWidth = data.doc.getTextWidth(line);
           const centeredLineOffset = (lineIndex - ((schoolNameLines.length - 1) / 2)) * lineSpacing;
