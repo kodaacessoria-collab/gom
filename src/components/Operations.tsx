@@ -947,6 +947,10 @@ const Operations: React.FC = () => {
     const totalColumnIndex = summary.head[0].length - 1;
     const pointColumnIndexes = summary.pointColumns.map((_, index) => index + 2);
     const pointColumnWidth = Math.max(10, Math.min(16, 84 / Math.max(summary.pointColumns.length, 1)));
+    const schoolHeaderFillColor: [number, number, number] = [219, 234, 254];
+    const schoolHeaderFontSize = 4.8;
+    const longestSchoolName = Math.max(0, ...summary.pointColumns.map(point => point.name.length));
+    const schoolHeaderHeight = Math.max(42, Math.min(86, (longestSchoolName * 1.03) + 3));
     const columnStyles = pointColumnIndexes.reduce<Record<number, any>>((acc, columnIndex) => {
       acc[columnIndex] = { cellWidth: pointColumnWidth, halign: 'center', overflow: 'linebreak' };
       return acc;
@@ -959,7 +963,15 @@ const Operations: React.FC = () => {
     return {
       columnStyles,
       styles: { font: REPORT_FONT, fontSize: 6.8, cellPadding: 1, overflow: 'linebreak', minCellHeight: 6 },
-      headStyles: { font: REPORT_FONT, fontSize: 6.2, fontStyle: 'bold', fillColor: [79, 70, 229], valign: 'middle', halign: 'center' },
+      headStyles: {
+        font: REPORT_FONT,
+        fontSize: 6.2,
+        fontStyle: 'bold',
+        fillColor: schoolHeaderFillColor,
+        textColor: [0, 0, 0],
+        valign: 'middle',
+        halign: 'center',
+      },
       bodyStyles: { valign: 'middle' },
       didParseCell: (data: any) => {
         const columnIndex = data.column.index;
@@ -968,14 +980,33 @@ const Operations: React.FC = () => {
           data.cell.styles.halign = 'center';
         }
         if (data.section === 'head' && data.row.index === 0 && isPointColumn) {
-          data.cell.styles.minCellHeight = 28;
+          data.cell.styles.minCellHeight = schoolHeaderHeight;
           data.cell.styles.cellPadding = 0.8;
-          data.cell.styles.overflow = 'linebreak';
+          data.cell.styles.overflow = 'hidden';
+          data.cell.text = [];
         }
         if (data.section === 'head' && data.row.index === 1) {
           data.cell.styles.halign = columnIndex >= 2 ? 'center' : 'left';
           data.cell.styles.fontSize = 7.5;
         }
+      },
+      didDrawCell: (data: any) => {
+        const columnIndex = data.column.index;
+        const isSchoolNameCell = data.section === 'head' && data.row.index === 0 &&
+          columnIndex >= 2 && columnIndex < totalColumnIndex;
+        if (!isSchoolNameCell) return;
+
+        const schoolName = String(summary.head[0][columnIndex] || '');
+        data.doc.setFont(REPORT_FONT, 'bold');
+        data.doc.setFontSize(schoolHeaderFontSize);
+        data.doc.setTextColor(0, 0, 0);
+        const schoolNameWidth = data.doc.getTextWidth(schoolName);
+        data.doc.text(
+          schoolName,
+          data.cell.x + (data.cell.width / 2),
+          data.cell.y + (data.cell.height / 2) + (schoolNameWidth / 2),
+          { baseline: 'middle', angle: 90 },
+        );
       },
     } as any;
   };
