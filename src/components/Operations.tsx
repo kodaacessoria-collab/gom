@@ -4,6 +4,7 @@ import {
   Calendar,
   Download,
   Edit3,
+  FileSpreadsheet,
   FileText,
   FolderPlus,
   History,
@@ -31,6 +32,7 @@ GlobalWorkerOptions.workerSrc = new URL('pdfjs-dist/build/pdf.worker.mjs', impor
 
 type SourceType = 'Manual' | 'Excel' | 'PDF';
 type DeliveryCategory = 'Hortifrutigranjeiro' | 'Estocáveis' | 'Dietas e Fórmulas' | 'Proteínas' | 'Limpeza';
+type OperationsModule = 'operations' | 'locations' | 'order-entry' | 'orders' | 'history';
 
 interface OperationContract {
   id: string;
@@ -352,6 +354,7 @@ const Operations: React.FC = () => {
   const [editingDraftItem, setEditingDraftItem] = useState<{ deliveryPointId: string; itemIndex: number } | null>(null);
   const [importing, setImporting] = useState(false);
   const [creatingPurchase, setCreatingPurchase] = useState(false);
+  const [activeModule, setActiveModule] = useState<OperationsModule | null>(null);
 
   const activeOperation = operations.find(operation => operation.id === activeOperationId) || operations[0];
   const operationSectors = sectors.filter(sector => sector.operationId === activeOperation?.id);
@@ -511,6 +514,7 @@ const Operations: React.FC = () => {
   };
 
   const startEditOrder = (order: OperationOrder) => {
+    setActiveModule('order-entry');
     setEditingOrderId(order.id);
     setEditingDraftItem(null);
     setOrderForm(prev => ({
@@ -529,7 +533,6 @@ const Operations: React.FC = () => {
       ...delivery,
       items: delivery.items.map(item => ({ ...item })),
     })));
-    requestAnimationFrame(() => document.getElementById('operation-order-form')?.scrollIntoView({ behavior: 'smooth', block: 'start' }));
   };
 
   const deleteOrder = (orderId: string) => {
@@ -1248,6 +1251,149 @@ const Operations: React.FC = () => {
     doc.save(getRomaneioFileName(reportOperation, order, 'ANALISE ESTOQUE COMPRA'));
   };
 
+  const getExcelFileName = (operation: OperationContract, order: OperationOrder, suffix?: string) =>
+    getRomaneioFileName(operation, order, suffix).replace(/\.pdf$/i, '.xlsx');
+
+  const addExcelSheet = (
+    workbook: XLSX.WorkBook,
+    sheetName: string,
+    operation: OperationContract,
+    order: OperationOrder,
+    title: string,
+    rows: (string | number)[][],
+    columnWidths: number[],
+  ) => {
+    const data: (string | number)[][] = [
+      [operation.name, `${operation.city}/${operation.uf || '--'}`],
+      [title],
+      ['Entrega', formatDate(order.deliveryDate), 'Categoria', order.category],
+      ['Período', order.consumptionPeriod || '-', 'Origem', order.sourceType],
+      ...(order.generalNotes ? [['Observação', order.generalNotes]] : []),
+      [],
+      ...rows,
+    ];
+    const sheet = XLSX.utils.aoa_to_sheet(data);
+    sheet['!cols'] = columnWidths.map(width => ({ wch: width }));
+    sheet['!autofilter'] = rows.length > 1 ? { ref: XLSX.utils.encode_range({ s: { r: data.length - rows.length, c: 0 }, e: { r: data.length - 1, c: Math.max(0, rows[0].length - 1) } }) } : undefined;
+    const baseSheetName = sanitizeFileName(sheetName).slice(0, 31) || 'Relatorio';
+    let uniqueSheetName = baseSheetName;
+    let copyNumber = 2;
+    while (workbook.SheetNames.includes(uniqueSheetName)) {
+      const suffix = ` ${copyNumber}`;
+      uniqueSheetName = `${baseSheetName.slice(0, 31 - suffix.length)}${suffix}`;
+      copyNumber += 1;
+    }
+    XLSX.utils.book_append_sheet(workbook, sheet, uniqueSheetName);
+  };
+
+  const generateDeliveryExcel = (order: OperationOrder, delivery: OrderDelivery) => {
+    const reportOperation = operationByOrder(order);
+    if (!reportOperation) return;
+    const point = pointById(delivery.deliveryPointId);
+    const sector = sectorById(point?.sectorId);
+    const workbook = XLSX.utils.book_new();
+    const items = aggregateDeliveryItems(delivery.items);
+    addExcelSheet(
+      workbook,
+      'Entrega',
+      reportOperation,
+      order,
+      `${sector?.name || 'Sem setor'} | ${point?.name || 'Local de entrega'}`,
+      [
+        ['Produto', 'UND', 'QTD', 'OBS.'],
+        ...items.map(item => [item.product, item.unit, item.quantity, item.notes || '']),
+      ],
+      [42, 12, 12, 36],
+    );
+    XLSX.writeFile(workbook, getExcelFileName(reportOperation, order, point?.name || 'entrega'));
+  };
+
+  const addDeliverySummaryExcelSheet = (
+    workbook: XLSX.WorkBook,
+    order: OperationOrder,
+    reportOperation: OperationContract,
+    sheetName: string,
+    title: string,
+    summary: ReturnType<typeof getDeliveryPointSummaryTable> | ReturnType<typeof getSectorSummaryTable>,
+  ) => {
+    const widthCount = summary.head[0].length;
+    addExcelSheet(
+      workbook,
+      sheetName,
+      reportOperation,
+      order,
+      title,
+      [...summary.head, ...summary.body] as (string | number)[][],
+      Array.from({ length: widthCount }, (_, index) => index === 0 ? 38 : index === 1 ? 12 : 16),
+    );
+  };
+
+  const generateAllDeliveriesExcel = (order: OperationOrder) => {
+    const reportOperation = operationByOrder(order);
+    if (!reportOperation) return;
+    const workbook = XLSX.utils.book_new();
+    order.deliveries.forEach((delivery, index) => {
+      const point = pointById(delivery.deliveryPointId);
+      const items = aggregateDeliveryItems(delivery.items);
+      addExcelSheet(
+        workbook,
+        `${index + 1} ${point?.code || point?.name || 'Entrega'}`,
+        reportOperation,
+        order,
+        point?.name || 'Local de entrega',
+        [['Produto', 'UND', 'QTD', 'OBS.'], ...items.map(item => [item.product, item.unit, item.quantity, item.notes || ''])],
+        [42, 12, 12, 36],
+      );
+    });
+    getOrderSectors(order).forEach((sector, index) => {
+      const scoped = order.deliveries.filter(delivery => pointById(delivery.deliveryPointId)?.sectorId === sector.id);
+      addDeliverySummaryExcelSheet(workbook, order, reportOperation, `S${index + 1} ${sector.name}`, `Soma do setor - ${sector.name}`, getDeliveryPointSummaryTable(scoped, true));
+    });
+    addDeliverySummaryExcelSheet(workbook, order, reportOperation, 'Total por setor', 'Total geral por setor', getSectorSummaryTable(order));
+    XLSX.writeFile(workbook, getExcelFileName(reportOperation, order));
+  };
+
+  const generateSummaryExcel = (order: OperationOrder, sectorId?: string) => {
+    const reportOperation = operationByOrder(order);
+    if (!reportOperation) return;
+    const sector = sectorById(sectorId);
+    const scopedDeliveries = sectorId
+      ? order.deliveries.filter(delivery => pointById(delivery.deliveryPointId)?.sectorId === sectorId)
+      : order.deliveries;
+    const summary = sector ? getDeliveryPointSummaryTable(scopedDeliveries, true) : getSectorSummaryTable(order);
+    const workbook = XLSX.utils.book_new();
+    addDeliverySummaryExcelSheet(workbook, order, reportOperation, 'Resumo', sector ? `Soma das unidades - ${sector.name}` : 'Soma de todos os setores', summary);
+    XLSX.writeFile(workbook, getExcelFileName(reportOperation, order, sector ? `SOMA ${sector.name}` : 'TOTAL SETORES'));
+  };
+
+  const generateStockAnalysisExcel = (order: OperationOrder) => {
+    const reportOperation = operationByOrder(order);
+    if (!reportOperation) return;
+    const workbook = XLSX.utils.book_new();
+    const needs = getPurchaseNeeds(order);
+    const stock = getStockMap();
+    const summary = buildSummary(order.deliveries);
+    addExcelSheet(
+      workbook,
+      'Análise de estoque',
+      reportOperation,
+      order,
+      'Análise de estoque para compra',
+      [
+        ['Produto', 'UND', 'Necessário', 'Estoque', 'Comprar', 'Status'],
+        ...summary.map(item => {
+          const available = stock.get(stockKey(item.product, item.unit)) || 0;
+          const missing = Math.max(0, item.quantity - available);
+          return [item.product, item.unit, item.quantity, available, missing, missing > 0 ? 'COMPRAR' : 'OK'];
+        }),
+        [],
+        ['Itens faltantes', needs.length],
+      ],
+      [42, 12, 14, 14, 14, 24],
+    );
+    XLSX.writeFile(workbook, getExcelFileName(reportOperation, order, 'ANALISE ESTOQUE COMPRA'));
+  };
+
   const totals = useMemo(() => {
     const deliveries = operationOrders.reduce((sum, order) => sum + order.deliveries.length, 0);
     const items = operationOrders.reduce((sum, order) => sum + buildSummary(order.deliveries).length, 0);
@@ -1283,8 +1429,31 @@ const Operations: React.FC = () => {
         </label>
       </div>
 
-      <div className="operations-layout">
-        <div className="card" style={{ maxWidth: 'none', padding: '1.25rem' }}>
+      <div className="operations-module-toolbar">
+        <div className="operations-active-selector">
+          <label htmlFor="active-operation">Operação selecionada</label>
+          <select id="active-operation" className="input-field" value={activeOperationId} onChange={event => setActiveOperationId(event.target.value)}>
+            {operations.map(operation => <option key={operation.id} value={operation.id}>{operation.name}</option>)}
+          </select>
+        </div>
+        <div className="operations-module-grid">
+          <button type="button" className="operations-module-button" onClick={() => setActiveModule('operations')}><Building2 size={22} /><span><strong>Operações</strong><small>Cadastrar e editar operações</small></span></button>
+          <button type="button" className="operations-module-button" onClick={() => setActiveModule('locations')}><Layers size={22} /><span><strong>Setores e locais</strong><small>Organizar escolas e entregas</small></span></button>
+          <button type="button" className="operations-module-button" onClick={() => setActiveModule('order-entry')}><PackagePlus size={22} /><span><strong>Entrada de pedidos</strong><small>Lançar itens por local</small></span></button>
+          <button type="button" className="operations-module-button" onClick={() => setActiveModule('orders')}><FileText size={22} /><span><strong>Pedidos e arquivos</strong><small>Gerar PDF ou Excel</small></span></button>
+          <button type="button" className="operations-module-button" onClick={() => setActiveModule('history')}><History size={22} /><span><strong>Histórico</strong><small>Consultar entregas anteriores</small></span></button>
+        </div>
+      </div>
+
+      {activeModule && (
+        <>
+          <button type="button" className="operations-modal-backdrop" aria-label="Fechar janela" onClick={() => setActiveModule(null)} />
+          <button type="button" className="operations-modal-close" title="Fechar janela" onClick={() => setActiveModule(null)}><X size={20} /> Fechar</button>
+        </>
+      )}
+
+      <div className="operations-layout operations-menu-layout" data-active-module={activeModule || undefined}>
+        <div className="card operations-module-window module-operations" style={{ maxWidth: 'none', padding: '1.25rem' }}>
           <h3 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '1rem' }}>
             <Building2 size={20} /> Operações
           </h3>
@@ -1366,7 +1535,7 @@ const Operations: React.FC = () => {
             </div>
           )}
 
-          <div className="card" style={{ maxWidth: 'none', padding: '1.5rem' }}>
+          <div className="card operations-module-window module-locations" style={{ maxWidth: 'none', padding: '1.5rem' }}>
             <h2 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '1rem' }}><Layers size={20} /> Setores e locais de entrega</h2>
             <div style={{ display: 'grid', gridTemplateColumns: 'minmax(220px, 0.7fr) 1fr', gap: '1rem' }}>
               <form onSubmit={addSector} style={{ display: 'grid', gap: '0.75rem', alignSelf: 'start' }}>
@@ -1461,7 +1630,7 @@ const Operations: React.FC = () => {
             </div>
           </div>
 
-          <div id="operation-order-form" className="card" style={{ maxWidth: 'none', padding: '1.5rem' }}>
+          <div id="operation-order-form" className="card operations-module-window module-order-entry" style={{ maxWidth: 'none', padding: '1.5rem' }}>
             <div className="view-header" style={{ marginBottom: '1rem', gap: '1rem' }}>
               <div>
                 <h2 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
@@ -1574,7 +1743,7 @@ const Operations: React.FC = () => {
             </button>
           </div>
 
-          <div className="card" style={{ maxWidth: 'none', padding: '1.5rem' }}>
+          <div className="card operations-module-window module-orders" style={{ maxWidth: 'none', padding: '1.5rem' }}>
             <div className="view-header" style={{ marginBottom: '1rem', gap: '1rem' }}>
               <div>
                 <h2>Pedidos da operação</h2>
@@ -1613,21 +1782,40 @@ const Operations: React.FC = () => {
                             <button className="button button-outline" style={{ width: '42px', height: '36px', padding: 0 }} title="PDF único: romaneios + total da entrega" onClick={() => generateAllDeliveriesPdf(order)}>
                               <FileText size={16} />
                             </button>
+                            <button className="button button-outline excel-action" style={{ width: '42px', height: '36px', padding: 0 }} title="Excel único: romaneios + totais" onClick={() => generateAllDeliveriesExcel(order)}>
+                              <FileSpreadsheet size={16} />
+                            </button>
                             {order.deliveries.map(delivery => (
-                              <button key={delivery.id} className="button button-outline" style={{ width: '42px', height: '36px', padding: 0 }} title={`PDF ${pointById(delivery.deliveryPointId)?.name || 'Entrega'}`} onClick={() => generateDeliveryPdf(order, delivery)}>
-                                <FileText size={16} />
-                              </button>
+                              <React.Fragment key={delivery.id}>
+                                <button className="button button-outline" style={{ width: '42px', height: '36px', padding: 0 }} title={`PDF ${pointById(delivery.deliveryPointId)?.name || 'Entrega'}`} onClick={() => generateDeliveryPdf(order, delivery)}>
+                                  <FileText size={16} />
+                                </button>
+                                <button className="button button-outline excel-action" style={{ width: '42px', height: '36px', padding: 0 }} title={`Excel ${pointById(delivery.deliveryPointId)?.name || 'Entrega'}`} onClick={() => generateDeliveryExcel(order, delivery)}>
+                                  <FileSpreadsheet size={16} />
+                                </button>
+                              </React.Fragment>
                             ))}
                             {operationSectors.map(sector => (
-                              <button key={sector.id} className="button button-outline" style={{ width: '42px', height: '36px', padding: 0 }} title={`Soma ${sector.name}`} onClick={() => generateSummaryPdf(order, sector.id)}>
-                                <Layers size={16} />
-                              </button>
+                              <React.Fragment key={sector.id}>
+                                <button className="button button-outline" style={{ width: '42px', height: '36px', padding: 0 }} title={`PDF soma ${sector.name}`} onClick={() => generateSummaryPdf(order, sector.id)}>
+                                  <Layers size={16} />
+                                </button>
+                                <button className="button button-outline excel-action" style={{ width: '42px', height: '36px', padding: 0 }} title={`Excel soma ${sector.name}`} onClick={() => generateSummaryExcel(order, sector.id)}>
+                                  <FileSpreadsheet size={16} />
+                                </button>
+                              </React.Fragment>
                             ))}
                             <button className="button button-outline" style={{ width: '42px', height: '36px', padding: 0 }} title="Soma de todos os setores" onClick={() => generateSummaryPdf(order)}>
                               <Download size={16} />
                             </button>
+                            <button className="button button-outline excel-action" style={{ width: '42px', height: '36px', padding: 0 }} title="Excel soma de todos os setores" onClick={() => generateSummaryExcel(order)}>
+                              <FileSpreadsheet size={16} />
+                            </button>
                             <button className="button button-outline" style={{ width: '42px', height: '36px', padding: 0 }} title="Análise de estoque para compra" onClick={() => generateStockAnalysisPdf(order)}>
                               <Search size={16} />
+                            </button>
+                            <button className="button button-outline excel-action" style={{ width: '42px', height: '36px', padding: 0 }} title="Excel da análise de estoque para compra" onClick={() => generateStockAnalysisExcel(order)}>
+                              <FileSpreadsheet size={16} />
                             </button>
                             <button className="button button-outline" disabled={creatingPurchase} style={{ width: '42px', height: '36px', padding: 0 }} title="Gerar pedido de compra" onClick={() => createPurchaseOrderFromOperation(order)}>
                               <ShoppingCart size={16} />
@@ -1646,7 +1834,7 @@ const Operations: React.FC = () => {
             </div>
           </div>
 
-          <div className="card" style={{ maxWidth: 'none', padding: '1.5rem' }}>
+          <div className="card operations-module-window module-history" style={{ maxWidth: 'none', padding: '1.5rem' }}>
             <div className="view-header" style={{ marginBottom: '1rem', gap: '1rem' }}>
               <div>
                 <h2 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}><History size={20} /> Histórico das entregas</h2>
@@ -1678,9 +1866,14 @@ const Operations: React.FC = () => {
                       <td>{formatQuantity(entry.totalQuantity)}</td>
                       <td>{entry.order.sourceType}</td>
                       <td>
-                        <button className="button button-outline" style={{ width: '42px', height: '36px', padding: 0 }} title="Gerar romaneio desta entrega" onClick={() => generateDeliveryPdf(entry.order, entry.delivery)}>
-                          <FileText size={16} />
-                        </button>
+                        <div style={{ display: 'flex', gap: '0.4rem' }}>
+                          <button className="button button-outline" style={{ width: '42px', height: '36px', padding: 0 }} title="Gerar PDF desta entrega" onClick={() => generateDeliveryPdf(entry.order, entry.delivery)}>
+                            <FileText size={16} />
+                          </button>
+                          <button className="button button-outline excel-action" style={{ width: '42px', height: '36px', padding: 0 }} title="Gerar Excel desta entrega" onClick={() => generateDeliveryExcel(entry.order, entry.delivery)}>
+                            <FileSpreadsheet size={16} />
+                          </button>
+                        </div>
                       </td>
                     </tr>
                   ))}
