@@ -1,5 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import {
+  ArrowDown,
+  ArrowUp,
   Building2,
   Calendar,
   Download,
@@ -355,6 +357,7 @@ const Operations: React.FC = () => {
   const [importing, setImporting] = useState(false);
   const [creatingPurchase, setCreatingPurchase] = useState(false);
   const [activeModule, setActiveModule] = useState<OperationsModule | null>(null);
+  const [deliverySortDirection, setDeliverySortDirection] = useState<'asc' | 'desc'>('desc');
   const [reportCategory, setReportCategory] = useState<'Todas' | DeliveryCategory>('Todas');
   const [reportStartDate, setReportStartDate] = useState(() => `${todayIso().slice(0, 8)}01`);
   const [reportEndDate, setReportEndDate] = useState(todayIso);
@@ -365,6 +368,14 @@ const Operations: React.FC = () => {
   const operationOrders = useMemo(
     () => orders.filter(order => order.operationId === activeOperation?.id).sort((a, b) => b.importedAt.localeCompare(a.importedAt)),
     [orders, activeOperation?.id]
+  );
+  const sortedOperationOrders = useMemo(
+    () => [...operationOrders].sort((a, b) => {
+      const dateComparison = a.deliveryDate.localeCompare(b.deliveryDate);
+      if (dateComparison !== 0) return deliverySortDirection === 'asc' ? dateComparison : -dateComparison;
+      return b.importedAt.localeCompare(a.importedAt);
+    }),
+    [operationOrders, deliverySortDirection]
   );
 
   useEffect(() => {
@@ -1907,7 +1918,28 @@ const Operations: React.FC = () => {
               <table className="data-table">
                 <thead>
                   <tr>
-                    <th>Entrega</th>
+                    <th aria-sort={deliverySortDirection === 'asc' ? 'ascending' : 'descending'}>
+                      <button
+                        type="button"
+                        onClick={() => setDeliverySortDirection(current => current === 'asc' ? 'desc' : 'asc')}
+                        title={`Ordenar entrega em ordem ${deliverySortDirection === 'asc' ? 'decrescente' : 'crescente'}`}
+                        style={{
+                          alignItems: 'center',
+                          background: 'none',
+                          border: 0,
+                          color: 'inherit',
+                          cursor: 'pointer',
+                          display: 'inline-flex',
+                          font: 'inherit',
+                          fontWeight: 'inherit',
+                          gap: '0.35rem',
+                          padding: 0,
+                        }}
+                      >
+                        Entrega
+                        {deliverySortDirection === 'asc' ? <ArrowUp size={15} /> : <ArrowDown size={15} />}
+                      </button>
+                    </th>
                     <th>Categoria</th>
                     <th>Origem</th>
                     <th>Locais</th>
@@ -1917,7 +1949,7 @@ const Operations: React.FC = () => {
                   </tr>
                 </thead>
                 <tbody>
-                  {operationOrders.map(order => {
+                  {sortedOperationOrders.map(order => {
                     const needs = getPurchaseNeeds(order);
                     return (
                       <tr key={order.id}>
