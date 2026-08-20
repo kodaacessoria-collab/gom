@@ -176,6 +176,12 @@ const toNumber = (value: unknown) => {
 };
 
 const formatDate = (value: string) => value ? value.split('-').reverse().join('/') : '-';
+const formatDateTime = (value: string) => {
+  if (!value) return '-';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '-';
+  return `${date.toLocaleDateString('pt-BR')} às ${date.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}`;
+};
 const formatQuantity = (value: number) => Number.isInteger(value) ? String(value) : value.toLocaleString('pt-BR', { maximumFractionDigits: 3 });
 
 const stockKey = (product: string, unit: string) => `${normalizeKey(product)}|${normalizeKey(unit || 'UN')}`;
@@ -2004,6 +2010,7 @@ const Operations: React.FC = () => {
                         {deliverySortDirection === 'asc' ? <ArrowUp size={15} /> : <ArrowDown size={15} />}
                       </button>
                     </th>
+                    <th>Inserido em</th>
                     <th>Categoria</th>
                     <th>Origem</th>
                     <th>Locais</th>
@@ -2018,6 +2025,7 @@ const Operations: React.FC = () => {
                     return (
                       <tr key={order.id}>
                         <td>{formatDate(order.deliveryDate)}</td>
+                        <td style={{ whiteSpace: 'nowrap' }}>{formatDateTime(order.importedAt)}</td>
                         <td><span className="badge badge-blue">{order.category}</span></td>
                         <td>{order.sourceType}</td>
                         <td>{order.deliveries.length}</td>
@@ -2077,7 +2085,7 @@ const Operations: React.FC = () => {
                       </tr>
                     );
                   })}
-                  {operationOrders.length === 0 && <tr><td colSpan={7} style={{ textAlign: 'center', padding: '2rem' }}>Nenhum pedido lançado nesta operação.</td></tr>}
+                  {operationOrders.length === 0 && <tr><td colSpan={8} style={{ textAlign: 'center', padding: '2rem' }}>Nenhum pedido lançado nesta operação.</td></tr>}
                 </tbody>
               </table>
             </div>
