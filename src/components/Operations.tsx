@@ -466,6 +466,36 @@ const Operations: React.FC = () => {
     setEditingOperationId(null);
   };
 
+  const deleteOperation = (operation: OperationContract) => {
+    const relatedSectors = sectors.filter(sector => sector.operationId === operation.id);
+    const relatedPoints = deliveryPoints.filter(point => point.operationId === operation.id);
+    const relatedOrders = orders.filter(order => order.operationId === operation.id);
+    const confirmed = window.confirm(
+      `Excluir a operação "${operation.name}"?\n\n` +
+      `Também serão excluídos ${relatedSectors.length} setor(es), ${relatedPoints.length} local(is) de entrega e ${relatedOrders.length} pedido(s).\n\n` +
+      'Esta ação não pode ser desfeita.'
+    );
+    if (!confirmed) return;
+
+    const remainingOperations = operations.filter(item => item.id !== operation.id);
+    persistOperations(remainingOperations);
+    persistSectors(sectors.filter(sector => sector.operationId !== operation.id));
+    persistDeliveryPoints(deliveryPoints.filter(point => point.operationId !== operation.id));
+    persistOrders(orders.filter(order => order.operationId !== operation.id));
+
+    if (activeOperationId === operation.id) {
+      setActiveOperationId(remainingOperations[0]?.id || '');
+    }
+    if (editingOperationId === operation.id) {
+      setEditingOperationId(null);
+      setOperationEditForm(emptyOperationForm());
+    }
+    setEditingSectorId(null);
+    setEditingPointId(null);
+    setEditingOrderId(null);
+    setDraftDeliveries([]);
+  };
+
   const addSector = (event: React.FormEvent) => {
     event.preventDefault();
     if (!activeOperation || !displayText(newSector)) return;
@@ -1661,6 +1691,9 @@ const Operations: React.FC = () => {
                 </button>
                 <button className="button button-outline" type="button" title="Editar operação" onClick={() => startEditOperation(operation)} style={{ width: '40px', height: '42px', padding: 0 }}>
                   <Edit3 size={15} />
+                </button>
+                <button className="button button-outline" type="button" title="Excluir operação" aria-label={`Excluir ${operation.name}`} onClick={() => deleteOperation(operation)} style={{ width: '40px', height: '42px', padding: 0, color: '#ef4444' }}>
+                  <Trash2 size={15} />
                 </button>
               </div>
             ))}
