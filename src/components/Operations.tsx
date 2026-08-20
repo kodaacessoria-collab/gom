@@ -1437,19 +1437,32 @@ const Operations: React.FC = () => {
       (!reportEndDate || order.deliveryDate <= reportEndDate)
     );
     const dates = Array.from(new Set(filteredOrders.map(order => order.deliveryDate))).sort();
-    const productMap = new Map<string, { product: string; unit: string; quantities: Record<string, number>; total: number }>();
+    const productMap = new Map<string, { category: DeliveryCategory; product: string; unit: string; quantities: Record<string, number>; total: number }>();
 
     filteredOrders.forEach(order => {
       buildSummary(order.deliveries).forEach(item => {
-        const key = stockKey(item.product, item.unit);
-        const current = productMap.get(key) || { product: item.product, unit: item.unit, quantities: {}, total: 0 };
+        const key = `${normalizeKey(order.category)}|${stockKey(item.product, item.unit)}`;
+        const current = productMap.get(key) || { category: order.category, product: item.product, unit: item.unit, quantities: {}, total: 0 };
         current.quantities[order.deliveryDate] = (current.quantities[order.deliveryDate] || 0) + item.quantity;
         current.total += item.quantity;
         productMap.set(key, current);
       });
     });
 
-    const rows = Array.from(productMap.values()).sort((a, b) => a.product.localeCompare(b.product));
+    const rows = Array.from(productMap.values()).sort((a, b) =>
+      DELIVERY_CATEGORIES.indexOf(a.category) - DELIVERY_CATEGORIES.indexOf(b.category) ||
+      a.product.localeCompare(b.product)
+    );
+    const categoryGroups = DELIVERY_CATEGORIES
+      .map(category => {
+        const categoryRows = rows.filter(row => row.category === category);
+        const dateTotals = dates.reduce<Record<string, number>>((acc, date) => {
+          acc[date] = categoryRows.reduce((sum, row) => sum + (row.quantities[date] || 0), 0);
+          return acc;
+        }, {});
+        return { category, rows: categoryRows, dateTotals, total: categoryRows.reduce((sum, row) => sum + row.total, 0) };
+      })
+      .filter(group => group.rows.length > 0);
     const dateTotals = dates.reduce<Record<string, number>>((acc, date) => {
       acc[date] = rows.reduce((sum, row) => sum + (row.quantities[date] || 0), 0);
       return acc;
@@ -1457,6 +1470,7 @@ const Operations: React.FC = () => {
     return {
       dates,
       rows,
+      categoryGroups,
       orderCount: filteredOrders.length,
       dateTotals,
       grandTotal: rows.reduce((sum, row) => sum + row.total, 0),
@@ -1492,12 +1506,22 @@ const Operations: React.FC = () => {
       1: { cellWidth: 16, halign: 'center' },
       [totalColumnIndex]: { cellWidth: 18, halign: 'center' },
     });
-    const body: (string | number)[][] = periodReport.rows.map(row => [
-      row.product,
-      row.unit,
-      ...periodReport.dates.map(date => row.quantities[date] ? formatQuantity(row.quantities[date]) : '-'),
-      formatQuantity(row.total),
-    ]);
+    const body: (string | number)[][] = [];
+    const categoryHeaderRows = new Set<number>();
+    const categorySubtotalRows = new Set<number>();
+    periodReport.categoryGroups.forEach(group => {
+      categoryHeaderRows.add(body.length);
+      body.push([group.category, '', ...periodReport.dates.map(() => ''), '']);
+      group.rows.forEach(row => body.push([
+        row.product,
+        row.unit,
+        ...periodReport.dates.map(date => row.quantities[date] ? formatQuantity(row.quantities[date]) : '-'),
+        formatQuantity(row.total),
+      ]));
+      categorySubtotalRows.add(body.length);
+      body.push([`SUBTOTAL - ${group.category}`, '', ...periodReport.dates.map(date => formatQuantity(group.dateTotals[date] || 0)), formatQuantity(group.total)]);
+    });
+    const grandTotalRow = body.length;
     body.push([
       'TOTAL GERAL',
       '',
@@ -1515,7 +1539,15 @@ const Operations: React.FC = () => {
       horizontalPageBreak: periodReport.dates.length > 12,
       horizontalPageBreakRepeat: [0, 1],
       didParseCell: (data: any) => {
-        if (data.section === 'body' && data.row.index === body.length - 1) {
+        if (data.section === 'body' && categoryHeaderRows.has(data.row.index)) {
+          data.cell.styles.fontStyle = 'bold';
+          data.cell.styles.fillColor = [191, 219, 254];
+        }
+        if (data.section === 'body' && categorySubtotalRows.has(data.row.index)) {
+          data.cell.styles.fontStyle = 'bold';
+          data.cell.styles.fillColor = [239, 246, 255];
+        }
+        if (data.section === 'body' && data.row.index === grandTotalRow) {
           data.cell.styles.fontStyle = 'bold';
           data.cell.styles.fillColor = [226, 232, 240];
         }
@@ -1536,11 +1568,10 @@ const Operations: React.FC = () => {
       ['Pedidos considerados', periodReport.orderCount, 'Datas de entrega', periodReport.dates.length],
       [],
       ['Produto', 'UND', ...periodReport.dates.map(formatDate), 'Total'],
-      ...periodReport.rows.map(row => [
-        row.product,
-        row.unit,
-        ...periodReport.dates.map(date => row.quantities[date] || 0),
-        row.total,
+      ...periodReport.categoryGroups.flatMap(group => [
+        [group.category, '', ...periodReport.dates.map(() => ''), ''],
+        ...group.rows.map(row => [row.product, row.unit, ...periodReport.dates.map(date => row.quantities[date] || 0), row.total]),
+        [`SUBTOTAL - ${group.category}`, '', ...periodReport.dates.map(date => group.dateTotals[date] || 0), group.total],
       ]),
       ['TOTAL GERAL', '', ...periodReport.dates.map(date => periodReport.dateTotals[date] || 0), periodReport.grandTotal],
     ];
@@ -2111,17 +2142,26 @@ const Operations: React.FC = () => {
                   <tr><th>Produto</th><th>UND</th>{periodReport.dates.map(date => <th key={date}>{formatDate(date)}</th>)}<th>Total</th></tr>
                 </thead>
                 <tbody>
-                  {periodReport.rows.slice(0, 20).map(row => (
-                    <tr key={stockKey(row.product, row.unit)}>
-                      <td style={{ fontWeight: 600 }}>{row.product}</td><td>{row.unit}</td>
-                      {periodReport.dates.map(date => <td key={date}>{row.quantities[date] ? formatQuantity(row.quantities[date]) : '-'}</td>)}
-                      <td style={{ fontWeight: 700 }}>{formatQuantity(row.total)}</td>
-                    </tr>
+                  {periodReport.categoryGroups.map(group => (
+                    <React.Fragment key={group.category}>
+                      <tr><td colSpan={periodReport.dates.length + 3} style={{ fontWeight: 800, background: '#dbeafe' }}>{group.category}</td></tr>
+                      {group.rows.map(row => (
+                        <tr key={`${group.category}|${stockKey(row.product, row.unit)}`}>
+                          <td style={{ fontWeight: 600 }}>{row.product}</td><td>{row.unit}</td>
+                          {periodReport.dates.map(date => <td key={date}>{row.quantities[date] ? formatQuantity(row.quantities[date]) : '-'}</td>)}
+                          <td style={{ fontWeight: 700 }}>{formatQuantity(row.total)}</td>
+                        </tr>
+                      ))}
+                      <tr style={{ background: '#eff6ff', fontWeight: 700 }}>
+                        <td>Subtotal - {group.category}</td><td></td>
+                        {periodReport.dates.map(date => <td key={date}>{formatQuantity(group.dateTotals[date] || 0)}</td>)}
+                        <td>{formatQuantity(group.total)}</td>
+                      </tr>
+                    </React.Fragment>
                   ))}
                   {periodReport.rows.length === 0 && <tr><td colSpan={periodReport.dates.length + 3} style={{ textAlign: 'center', padding: '2rem' }}>Nenhuma entrega encontrada para os filtros selecionados.</td></tr>}
                 </tbody>
               </table>
-              {periodReport.rows.length > 20 && <p style={{ textAlign: 'left', marginTop: '0.75rem' }}>Prévia dos primeiros 20 produtos. O PDF e o Excel incluirão todos os registros.</p>}
             </div>
           </div>
         </div>
