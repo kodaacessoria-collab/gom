@@ -34,7 +34,7 @@ GlobalWorkerOptions.workerSrc = new URL('pdfjs-dist/build/pdf.worker.mjs', impor
 
 type SourceType = 'Manual' | 'Excel' | 'PDF';
 type DeliveryCategory = 'Hortifrutigranjeiro' | 'Estocáveis' | 'Dietas e Fórmulas' | 'Proteínas' | 'Limpeza';
-type OperationsModule = 'operations' | 'locations' | 'order-entry' | 'orders' | 'history' | 'period-report';
+type OperationsModule = 'operations' | 'locations' | 'order-entry' | 'orders' | 'history' | 'orders-summary-report' | 'period-report';
 
 interface OperationContract {
   id: string;
@@ -1624,6 +1624,96 @@ const Operations: React.FC = () => {
     XLSX.writeFile(workbook, getPeriodReportFileName('xlsx'));
   };
 
+  const ordersSummaryReport = useMemo(() => {
+    const rows = operationOrders
+      .filter(order =>
+        (reportCategory === 'Todas' || order.category === reportCategory) &&
+        (!reportStartDate || order.deliveryDate >= reportStartDate) &&
+        (!reportEndDate || order.deliveryDate <= reportEndDate)
+      )
+      .map(order => {
+        const summary = buildSummary(order.deliveries);
+        return {
+          order,
+          locationCount: order.deliveries.length,
+          itemCount: summary.length,
+          totalQuantity: summary.reduce((sum, item) => sum + Number(item.quantity || 0), 0),
+        };
+      })
+      .sort((a, b) => b.order.deliveryDate.localeCompare(a.order.deliveryDate) || b.order.importedAt.localeCompare(a.order.importedAt));
+
+    return {
+      rows,
+      locationCount: rows.reduce((sum, row) => sum + row.locationCount, 0),
+      itemCount: rows.reduce((sum, row) => sum + row.itemCount, 0),
+      totalQuantity: rows.reduce((sum, row) => sum + row.totalQuantity, 0),
+    };
+  }, [operationOrders, reportCategory, reportStartDate, reportEndDate]);
+
+  const getOrdersSummaryFileName = (extension: 'pdf' | 'xlsx') => {
+    const operationName = activeOperation?.name || 'Operacao';
+    const categoryName = reportCategory === 'Todas' ? 'Todas categorias' : reportCategory;
+    return `${sanitizeFileName(`RELATORIO SINTETICO PEDIDOS - ${operationName} - ${categoryName} - ${formatDate(reportStartDate)} a ${formatDate(reportEndDate)}`)}.${extension}`;
+  };
+
+  const generateOrdersSummaryPdf = async () => {
+    if (!activeOperation || ordersSummaryReport.rows.length === 0) {
+      alert('Nenhum pedido foi encontrado para os filtros selecionados.');
+      return;
+    }
+    const categoryLabel = reportCategory === 'Todas' ? 'Todas as categorias' : reportCategory;
+    const doc = new jsPDF({ orientation: 'landscape' });
+    await addPdfHeader(doc, {
+      title: `RELATORIO SINTETICO DE PEDIDOS - ${getOperationTitle(activeOperation).toUpperCase()}`,
+      subtitle: `Categoria: ${categoryLabel} | Periodo de entrega: ${formatDate(reportStartDate)} a ${formatDate(reportEndDate)}`,
+      footer: `${ordersSummaryReport.rows.length} pedido(s) | ${ordersSummaryReport.locationCount} local(is)`,
+      logoVariant: activeOperation.logoVariant || DEFAULT_LOGO_VARIANT,
+    });
+    autoTable(doc, {
+      startY: 36,
+      head: [['Entrega', 'Inserido em', 'Categoria', 'Origem', 'Locais', 'Itens', 'Qtd. total']],
+      body: ordersSummaryReport.rows.map(({ order, locationCount, itemCount, totalQuantity }) => [
+        formatDate(order.deliveryDate),
+        formatDateTime(order.importedAt),
+        order.category,
+        order.sourceType,
+        locationCount,
+        itemCount,
+        formatQuantity(totalQuantity),
+      ]),
+      foot: [['TOTAL', '', '', '', ordersSummaryReport.locationCount, ordersSummaryReport.itemCount, formatQuantity(ordersSummaryReport.totalQuantity)]],
+      theme: 'grid',
+      styles: { font: REPORT_FONT, fontSize: 8, cellPadding: 1.7, valign: 'middle' },
+      headStyles: { font: REPORT_FONT, fontStyle: 'bold', fillColor: [79, 70, 229] },
+      footStyles: { font: REPORT_FONT, fontStyle: 'bold', fillColor: [226, 232, 240], textColor: [0, 0, 0] },
+    });
+    doc.save(getOrdersSummaryFileName('pdf'));
+  };
+
+  const generateOrdersSummaryExcel = () => {
+    if (!activeOperation || ordersSummaryReport.rows.length === 0) {
+      alert('Nenhum pedido foi encontrado para os filtros selecionados.');
+      return;
+    }
+    const categoryLabel = reportCategory === 'Todas' ? 'Todas as categorias' : reportCategory;
+    const data: (string | number)[][] = [
+      [`Relatório sintético de pedidos - ${activeOperation.name}`],
+      ['Categoria', categoryLabel, 'Período de entrega', `${formatDate(reportStartDate)} a ${formatDate(reportEndDate)}`],
+      [],
+      ['Entrega', 'Inserido em', 'Categoria', 'Origem', 'Locais', 'Itens', 'Quantidade total'],
+      ...ordersSummaryReport.rows.map(({ order, locationCount, itemCount, totalQuantity }) => [
+        formatDate(order.deliveryDate), formatDateTime(order.importedAt), order.category, order.sourceType, locationCount, itemCount, totalQuantity,
+      ]),
+      ['TOTAL', '', '', '', ordersSummaryReport.locationCount, ordersSummaryReport.itemCount, ordersSummaryReport.totalQuantity],
+    ];
+    const workbook = XLSX.utils.book_new();
+    const sheet = XLSX.utils.aoa_to_sheet(data);
+    sheet['!cols'] = [{ wch: 14 }, { wch: 22 }, { wch: 26 }, { wch: 14 }, { wch: 12 }, { wch: 12 }, { wch: 18 }];
+    sheet['!autofilter'] = { ref: XLSX.utils.encode_range({ s: { r: 3, c: 0 }, e: { r: data.length - 2, c: 6 } }) };
+    XLSX.utils.book_append_sheet(workbook, sheet, 'Pedidos');
+    XLSX.writeFile(workbook, getOrdersSummaryFileName('xlsx'));
+  };
+
   const totals = useMemo(() => {
     const deliveries = operationOrders.reduce((sum, order) => sum + order.deliveries.length, 0);
     const items = operationOrders.reduce((sum, order) => sum + buildSummary(order.deliveries).length, 0);
@@ -1672,6 +1762,7 @@ const Operations: React.FC = () => {
           <button type="button" className="operations-module-button" onClick={() => setActiveModule('order-entry')}><PackagePlus size={22} /><span><strong>Entrada de pedidos</strong><small>Lançar itens por local</small></span></button>
           <button type="button" className="operations-module-button" onClick={() => setActiveModule('orders')}><FileText size={22} /><span><strong>Pedidos e arquivos</strong><small>Gerar PDF ou Excel</small></span></button>
           <button type="button" className="operations-module-button" onClick={() => setActiveModule('history')}><History size={22} /><span><strong>Histórico</strong><small>Consultar entregas anteriores</small></span></button>
+          <button type="button" className="operations-module-button" onClick={() => setActiveModule('orders-summary-report')}><FileSpreadsheet size={22} /><span><strong>Relatório de pedidos</strong><small>Resumo sintético dos pedidos</small></span></button>
           <button type="button" className="operations-module-button" onClick={() => setActiveModule('period-report')}><Search size={22} /><span><strong>Relatório por período</strong><small>Filtrar produtos e datas</small></span></button>
         </div>
       </div>
@@ -2135,6 +2226,68 @@ const Operations: React.FC = () => {
                     </tr>
                   ))}
                   {deliveryHistory.length === 0 && <tr><td colSpan={8} style={{ textAlign: 'center', padding: '2rem' }}>Nenhuma entrega no histórico.</td></tr>}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <div className="card operations-module-window module-orders-summary-report" style={{ maxWidth: 'none', padding: '1.5rem' }}>
+            <div className="view-header" style={{ marginBottom: '1rem', gap: '1rem' }}>
+              <div>
+                <h2 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}><FileSpreadsheet size={20} /> Relatório sintético de pedidos</h2>
+                <p style={{ textAlign: 'left', marginBottom: 0 }}>Uma linha por pedido, com datas, origem, locais, itens e quantidade total.</p>
+              </div>
+            </div>
+            <div className="period-report-filters">
+              <div>
+                <label>Categoria</label>
+                <select className="input-field" value={reportCategory} onChange={event => setReportCategory(event.target.value as 'Todas' | DeliveryCategory)}>
+                  <option value="Todas">Todas as categorias</option>
+                  {DELIVERY_CATEGORIES.map(category => <option key={category} value={category}>{category}</option>)}
+                </select>
+              </div>
+              <div>
+                <label>Data inicial da entrega</label>
+                <input type="date" className="input-field" max={reportEndDate || undefined} value={reportStartDate} onChange={event => setReportStartDate(event.target.value)} />
+              </div>
+              <div>
+                <label>Data final da entrega</label>
+                <input type="date" className="input-field" min={reportStartDate || undefined} value={reportEndDate} onChange={event => setReportEndDate(event.target.value)} />
+              </div>
+              <div className="period-report-actions">
+                <button type="button" className="button button-outline" disabled={ordersSummaryReport.rows.length === 0} onClick={generateOrdersSummaryPdf}>
+                  <FileText size={17} style={{ marginRight: '0.45rem' }} /> Gerar PDF
+                </button>
+                <button type="button" className="button button-outline excel-action" disabled={ordersSummaryReport.rows.length === 0} onClick={generateOrdersSummaryExcel}>
+                  <FileSpreadsheet size={17} style={{ marginRight: '0.45rem' }} /> Gerar Excel
+                </button>
+              </div>
+            </div>
+            <div className="period-report-summary">
+              <span className="badge badge-blue">{ordersSummaryReport.rows.length} pedido(s)</span>
+              <span className="badge badge-green">{ordersSummaryReport.locationCount} local(is)</span>
+              <span className="badge">{ordersSummaryReport.itemCount} item(ns)</span>
+              <span className="badge">{formatQuantity(ordersSummaryReport.totalQuantity)} unidade(s)</span>
+            </div>
+            <div style={{ overflowX: 'auto', marginTop: '1rem' }}>
+              <table className="data-table">
+                <thead><tr><th>Entrega</th><th>Inserido em</th><th>Categoria</th><th>Origem</th><th>Locais</th><th>Itens</th><th>Qtd. total</th></tr></thead>
+                <tbody>
+                  {ordersSummaryReport.rows.map(({ order, locationCount, itemCount, totalQuantity }) => (
+                    <tr key={order.id}>
+                      <td>{formatDate(order.deliveryDate)}</td>
+                      <td style={{ whiteSpace: 'nowrap' }}>{formatDateTime(order.importedAt)}</td>
+                      <td><span className="badge badge-blue">{order.category}</span></td>
+                      <td>{order.sourceType}</td>
+                      <td>{locationCount}</td>
+                      <td>{itemCount}</td>
+                      <td>{formatQuantity(totalQuantity)}</td>
+                    </tr>
+                  ))}
+                  {ordersSummaryReport.rows.length > 0 && (
+                    <tr style={{ fontWeight: 800, background: '#eff6ff' }}><td>Total</td><td></td><td></td><td></td><td>{ordersSummaryReport.locationCount}</td><td>{ordersSummaryReport.itemCount}</td><td>{formatQuantity(ordersSummaryReport.totalQuantity)}</td></tr>
+                  )}
+                  {ordersSummaryReport.rows.length === 0 && <tr><td colSpan={7} style={{ textAlign: 'center', padding: '2rem' }}>Nenhum pedido encontrado para os filtros selecionados.</td></tr>}
                 </tbody>
               </table>
             </div>
