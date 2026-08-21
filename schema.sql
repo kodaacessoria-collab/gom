@@ -49,6 +49,13 @@ CREATE TABLE IF NOT EXISTS product_compatibilities (
   UNIQUE (source_product_id, compatible_product_id)
 );
 
+-- Shared operations data (synchronized between browsers and operating systems)
+CREATE TABLE IF NOT EXISTS app_shared_state (
+  key TEXT PRIMARY KEY,
+  value JSONB NOT NULL,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
 -- Trigger to update product quantity on slip insertion, update and deletion
 CREATE OR REPLACE FUNCTION update_stock_level()
 RETURNS TRIGGER AS $$
@@ -97,6 +104,7 @@ ALTER TABLE products ENABLE ROW LEVEL SECURITY;
 ALTER TABLE slips ENABLE ROW LEVEL SECURITY;
 ALTER TABLE purchase_orders ENABLE ROW LEVEL SECURITY;
 ALTER TABLE product_compatibilities ENABLE ROW LEVEL SECURITY;
+ALTER TABLE app_shared_state ENABLE ROW LEVEL SECURITY;
 
 DO $$
 BEGIN
@@ -111,6 +119,9 @@ BEGIN
     END IF;
     IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'Allow all access to product_compatibilities') THEN
         CREATE POLICY "Allow all access to product_compatibilities" ON product_compatibilities FOR ALL USING (true) WITH CHECK (true);
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'Allow application access to shared state') THEN
+        CREATE POLICY "Allow application access to shared state" ON app_shared_state FOR ALL USING (true) WITH CHECK (true);
     END IF;
 END
 $$;

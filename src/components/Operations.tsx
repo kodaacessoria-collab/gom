@@ -111,6 +111,23 @@ const OPERATIONS_KEY = 'gom_delivery_operations';
 const SECTORS_KEY = 'gom_delivery_sectors';
 const DELIVERY_POINTS_KEY = 'gom_delivery_points';
 const ORDERS_KEY = 'gom_delivery_operation_orders';
+type SharedStateKey = typeof OPERATIONS_KEY | typeof SECTORS_KEY | typeof DELIVERY_POINTS_KEY | typeof ORDERS_KEY;
+let sharedStateWriteQueue: Promise<void> = Promise.resolve();
+
+const saveSharedState = (key: SharedStateKey, value: unknown) => {
+  const write = sharedStateWriteQueue
+    .catch(() => undefined)
+    .then(async () => {
+      const { error } = await supabase.from('app_shared_state').upsert({
+        key,
+        value,
+        updated_at: new Date().toISOString(),
+      }, { onConflict: 'key' });
+      if (error) throw error;
+    });
+  sharedStateWriteQueue = write;
+  return write;
+};
 const REPORT_FONT = 'courier';
 const REPORT_FONT_SIZE = 8;
 const DELIVERY_CATEGORIES: DeliveryCategory[] = ['Hortifrutigranjeiro', 'Estocáveis', 'Dietas e Fórmulas', 'Proteínas', 'Limpeza'];
@@ -361,6 +378,8 @@ const Operations: React.FC = () => {
   const [reportCategory, setReportCategory] = useState<'Todas' | DeliveryCategory>('Todas');
   const [reportStartDate, setReportStartDate] = useState(() => `${todayIso().slice(0, 8)}01`);
   const [reportEndDate, setReportEndDate] = useState(todayIso);
+  const [sharedStateReady, setSharedStateReady] = useState(false);
+  const [sharedStateError, setSharedStateError] = useState('');
 
   const activeOperation = operations.find(operation => operation.id === activeOperationId) || operations[0];
   const operationSectors = sectors.filter(sector => sector.operationId === activeOperation?.id);
@@ -380,6 +399,23 @@ const Operations: React.FC = () => {
 
   useEffect(() => {
     fetchProducts();
+    void loadSharedState();
+  }, []);
+
+  useEffect(() => {
+    const channel = supabase
+      .channel('app-shared-state')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'app_shared_state' }, payload => {
+        const row = payload.new as { key?: SharedStateKey; value?: unknown };
+        if (!row?.key || row.value === undefined) return;
+        saveStorage(row.key, row.value);
+        if (row.key === OPERATIONS_KEY) setOperations(row.value as OperationContract[]);
+        if (row.key === SECTORS_KEY) setSectors(row.value as Sector[]);
+        if (row.key === DELIVERY_POINTS_KEY) setDeliveryPoints(row.value as DeliveryPoint[]);
+        if (row.key === ORDERS_KEY) setOrders(row.value as OperationOrder[]);
+      })
+      .subscribe();
+    return () => { void supabase.removeChannel(channel); };
   }, []);
 
   useEffect(() => {
@@ -387,29 +423,66 @@ const Operations: React.FC = () => {
     if (!orderForm.deliveryPointId && operationPoints[0]) setOrderForm(prev => ({ ...prev, deliveryPointId: operationPoints[0].id }));
   }, [activeOperationId, operationSectors, operationPoints, newPoint.sectorId, orderForm.deliveryPointId]);
 
-  const fetchProducts = async () => {
+  async function fetchProducts() {
     const { data } = await supabase.from('products').select('*').order('name');
     if (data) setProducts(data);
+  }
+
+  async function loadSharedState() {
+    const keys: SharedStateKey[] = [OPERATIONS_KEY, SECTORS_KEY, DELIVERY_POINTS_KEY, ORDERS_KEY];
+    const { data, error } = await supabase.from('app_shared_state').select('key,value').in('key', keys);
+    if (error) {
+      console.error('Falha ao carregar dados compartilhados:', error);
+      setSharedStateError('Sem conexão com os dados compartilhados. Exibindo o cache deste navegador.');
+      setSharedStateReady(true);
+      return;
+    }
+
+    const rows = new Map((data || []).map(row => [row.key as SharedStateKey, row.value]));
+    const nextOperations = (rows.get(OPERATIONS_KEY) as OperationContract[] | undefined) || operations;
+    const nextSectors = (rows.get(SECTORS_KEY) as Sector[] | undefined) || sectors;
+    const nextPoints = (rows.get(DELIVERY_POINTS_KEY) as DeliveryPoint[] | undefined) || deliveryPoints;
+    const nextOrders = (rows.get(ORDERS_KEY) as OperationOrder[] | undefined) || orders;
+
+    setOperations(nextOperations);
+    setSectors(nextSectors);
+    setDeliveryPoints(nextPoints);
+    setOrders(nextOrders);
+    saveStorage(OPERATIONS_KEY, nextOperations);
+    saveStorage(SECTORS_KEY, nextSectors);
+    saveStorage(DELIVERY_POINTS_KEY, nextPoints);
+    saveStorage(ORDERS_KEY, nextOrders);
+    setActiveOperationId(current => nextOperations.some(operation => operation.id === current) ? current : (nextOperations[0]?.id || ''));
+    setSharedStateReady(true);
+  }
+
+  const reportSharedStateError = (error: unknown) => {
+    console.error('Falha ao salvar dados compartilhados:', error);
+    setSharedStateError('Não foi possível sincronizar a última alteração. Verifique a conexão antes de continuar.');
   };
 
   const persistOperations = (next: OperationContract[]) => {
     setOperations(next);
     saveStorage(OPERATIONS_KEY, next);
+    void saveSharedState(OPERATIONS_KEY, next).catch(reportSharedStateError);
   };
 
   const persistSectors = (next: Sector[]) => {
     setSectors(next);
     saveStorage(SECTORS_KEY, next);
+    void saveSharedState(SECTORS_KEY, next).catch(reportSharedStateError);
   };
 
   const persistDeliveryPoints = (next: DeliveryPoint[]) => {
     setDeliveryPoints(next);
     saveStorage(DELIVERY_POINTS_KEY, next);
+    void saveSharedState(DELIVERY_POINTS_KEY, next).catch(reportSharedStateError);
   };
 
   const persistOrders = (next: OperationOrder[]) => {
     setOrders(next);
     saveStorage(ORDERS_KEY, next);
+    void saveSharedState(ORDERS_KEY, next).catch(reportSharedStateError);
   };
 
   const addOperation = (event: React.FormEvent) => {
@@ -1609,8 +1682,17 @@ const Operations: React.FC = () => {
     })
   ), [operationOrders, deliveryPoints, sectors]);
 
+  if (!sharedStateReady) {
+    return <div className="card" style={{ padding: '1.5rem' }}>Carregando operações compartilhadas...</div>;
+  }
+
   return (
     <div>
+      {sharedStateError && (
+        <div className="card" role="alert" style={{ marginBottom: '1rem', padding: '1rem', borderColor: '#f59e0b' }}>
+          {sharedStateError}
+        </div>
+      )}
       <div className="view-header" style={{ flexWrap: 'wrap', gap: '1rem' }}>
         <div className="view-title">
           <h1>Operações e Entregas</h1>
