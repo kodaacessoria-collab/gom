@@ -550,8 +550,7 @@ label {
 .operations-menu-layout[data-active-module="locations"] .module-locations,
 .operations-menu-layout[data-active-module="order-entry"] .module-order-entry,
 .operations-menu-layout[data-active-module="orders"] .module-orders,
-.operations-menu-layout[data-active-module="history"] .module-history,
-.operations-menu-layout[data-active-module="orders-summary-report"] .module-orders-summary-report {
+.operations-menu-layout[data-active-module="history"] .module-history {
   display: block !important;
   position: fixed;
   z-index: 10001;
