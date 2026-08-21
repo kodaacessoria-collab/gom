@@ -627,6 +627,30 @@ const Operations: React.FC = () => {
     persistOrders(orders.filter(order => order.id !== orderId));
   };
 
+  const deleteDelivery = (orderId: string, deliveryId: string) => {
+    const order = orders.find(item => item.id === orderId);
+    const delivery = order?.deliveries.find(item => item.id === deliveryId);
+    if (!order || !delivery) return;
+
+    const deliveryName = pointById(delivery.deliveryPointId)?.name || 'Local não cadastrado';
+    const isLastDelivery = order.deliveries.length === 1;
+    const confirmed = window.confirm(
+      isLastDelivery
+        ? `Excluir o romaneio de "${deliveryName}"?\n\nEste é o último romaneio do pedido; o pedido também será excluído.`
+        : `Excluir somente o romaneio de "${deliveryName}"?\n\nOs demais romaneios deste pedido serão preservados.`
+    );
+    if (!confirmed) return;
+
+    if (isLastDelivery) {
+      persistOrders(orders.filter(item => item.id !== orderId));
+      return;
+    }
+
+    persistOrders(orders.map(item => item.id === orderId
+      ? { ...item, deliveries: item.deliveries.filter(candidate => candidate.id !== deliveryId) }
+      : item));
+  };
+
   const addDraftItem = (event: React.FormEvent) => {
     event.preventDefault();
     if (!orderForm.deliveryPointId || !displayText(orderForm.product) || orderForm.quantity <= 0) return;
@@ -2090,6 +2114,9 @@ const Operations: React.FC = () => {
                                 </button>
                                 <button className="button button-outline excel-action" style={{ width: '42px', height: '36px', padding: 0 }} title={`Excel ${pointById(delivery.deliveryPointId)?.name || 'Entrega'}`} onClick={() => generateDeliveryExcel(order, delivery)}>
                                   <FileSpreadsheet size={16} />
+                                </button>
+                                <button className="button button-outline" style={{ width: '42px', height: '36px', padding: 0, color: '#ef4444' }} title={`Excluir romaneio ${pointById(delivery.deliveryPointId)?.name || 'Entrega'}`} onClick={() => deleteDelivery(order.id, delivery.id)}>
+                                  <Trash2 size={16} />
                                 </button>
                               </React.Fragment>
                             ))}
