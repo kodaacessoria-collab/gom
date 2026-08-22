@@ -7,7 +7,7 @@ interface WritableDirectoryHandle extends FileSystemDirectoryHandle {
 }
 
 interface DirectoryPickerWindow extends Window {
-  showDirectoryPicker(options: { id: string; mode: 'readwrite' }): Promise<WritableDirectoryHandle>;
+  showDirectoryPicker(options: { mode: 'readwrite' }): Promise<WritableDirectoryHandle>;
 }
 
 export interface OperationPdfFolder {
@@ -41,7 +41,9 @@ export const saveOperationPdfFolder = (folder: OperationPdfFolder) => runRequest
 
 export const pickOperationPdfFolder = async (operationId: string) => {
   if (!supportsOperationPdfFolders()) throw new Error('UNSUPPORTED');
-  const handle = await (window as unknown as DirectoryPickerWindow).showDirectoryPicker({ id: `gom-pdfs-${operationId}`, mode: 'readwrite' });
+  // The picker `id` has a strict 32-character limit in Chromium. Operation IDs
+  // can be longer, so folder ownership is kept only in IndexedDB below.
+  const handle = await (window as unknown as DirectoryPickerWindow).showDirectoryPicker({ mode: 'readwrite' });
   const folder = { operationId, name: handle.name, handle };
   await saveOperationPdfFolder(folder);
   return folder;
