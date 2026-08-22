@@ -30,7 +30,7 @@ import { supabase } from '../lib/supabase';
 import type { Deposit, Product } from '../types';
 import { addPdfHeader } from '../lib/pdfBranding';
 import type { PdfLogoVariant } from '../lib/pdfBranding';
-import { getAllOperationPdfFolders, pickOperationPdfFolder, supportsOperationPdfFolders, writePdfToOperationFolder } from '../lib/operationPdfFolders';
+import { getAllOperationPdfFolders, pickOperationPdfFolder, requestOperationPdfFolderPermission, supportsOperationPdfFolders, writePdfToOperationFolder } from '../lib/operationPdfFolders';
 import type { OperationPdfFolder } from '../lib/operationPdfFolders';
 
 GlobalWorkerOptions.workerSrc = new URL('pdfjs-dist/build/pdf.worker.mjs', import.meta.url).toString();
@@ -496,8 +496,18 @@ const Operations: React.FC = () => {
       await writePdfToOperationFolder(folder, fileName, doc.output('blob'));
     } catch (error) {
       console.warn('Não foi possível gravar o PDF na pasta padrão:', error);
-      alert(`A pasta “${folder.name}” não está disponível. O PDF será baixado normalmente.`);
+      alert(`A pasta “${folder.name}” não está disponível. O PDF será baixado normalmente. Para reautorizar, clique novamente no botão de pasta da operação.`);
       doc.save(fileName);
+    }
+  };
+
+  const requestPdfFolderPermission = async (operation: OperationContract) => {
+    const folder = pdfFolders[operation.id];
+    if (!folder) return;
+    try {
+      await requestOperationPdfFolderPermission(folder);
+    } catch (error) {
+      console.warn('Não foi possível renovar a permissão da pasta de PDFs:', error);
     }
   };
 
@@ -1292,6 +1302,7 @@ const Operations: React.FC = () => {
   const generateDeliveryPdf = async (order: OperationOrder, delivery: OrderDelivery) => {
     const reportOperation = operationByOrder(order);
     if (!reportOperation) return;
+    await requestPdfFolderPermission(reportOperation);
     const point = pointById(delivery.deliveryPointId);
     const sector = sectorById(point?.sectorId);
     const items = aggregateDeliveryItems(delivery.items);
@@ -1318,6 +1329,7 @@ const Operations: React.FC = () => {
   const generateAllDeliveriesPdf = async (order: OperationOrder) => {
     const reportOperation = operationByOrder(order);
     if (!reportOperation || order.deliveries.length === 0) return;
+    await requestPdfFolderPermission(reportOperation);
     const doc = new jsPDF();
     doc.setFont(REPORT_FONT, 'normal');
     doc.setFontSize(REPORT_FONT_SIZE);
@@ -1397,6 +1409,7 @@ const Operations: React.FC = () => {
   const generateSummaryPdf = async (order: OperationOrder, sectorId?: string) => {
     const reportOperation = operationByOrder(order);
     if (!reportOperation) return;
+    await requestPdfFolderPermission(reportOperation);
     const scopedDeliveries = sectorId
       ? order.deliveries.filter(delivery => pointById(delivery.deliveryPointId)?.sectorId === sectorId)
       : order.deliveries;
@@ -1423,6 +1436,7 @@ const Operations: React.FC = () => {
   const generateStockAnalysisPdf = async (order: OperationOrder) => {
     const reportOperation = operationByOrder(order);
     if (!reportOperation) return;
+    await requestPdfFolderPermission(reportOperation);
     const needs = getPurchaseNeeds(order);
     const stock = getStockMap();
     const doc = new jsPDF();
@@ -1655,6 +1669,7 @@ const Operations: React.FC = () => {
       alert('Nenhum produto entregue foi encontrado para os filtros selecionados.');
       return;
     }
+    await requestPdfFolderPermission(activeOperation);
     const doc = new jsPDF({ orientation: 'landscape' });
     const categoryLabel = reportCategory === 'Todas' ? 'Todas as categorias' : reportCategory;
     await addPdfHeader(doc, {
@@ -1792,6 +1807,7 @@ const Operations: React.FC = () => {
       alert('Nenhum pedido foi encontrado para os filtros selecionados.');
       return;
     }
+    await requestPdfFolderPermission(activeOperation);
     const categoryLabel = reportCategory === 'Todas' ? 'Todas as categorias' : reportCategory;
     const doc = new jsPDF({ orientation: 'landscape' });
     await addPdfHeader(doc, {
