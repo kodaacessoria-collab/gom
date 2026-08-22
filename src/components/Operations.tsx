@@ -8,6 +8,7 @@ import {
   Edit3,
   FileSpreadsheet,
   FileText,
+  FolderCheck,
   FolderPlus,
   History,
   Layers,
@@ -29,6 +30,8 @@ import { supabase } from '../lib/supabase';
 import type { Deposit, Product } from '../types';
 import { addPdfHeader } from '../lib/pdfBranding';
 import type { PdfLogoVariant } from '../lib/pdfBranding';
+import { getAllOperationPdfFolders, pickOperationPdfFolder, supportsOperationPdfFolders, writePdfToOperationFolder } from '../lib/operationPdfFolders';
+import type { OperationPdfFolder } from '../lib/operationPdfFolders';
 
 GlobalWorkerOptions.workerSrc = new URL('pdfjs-dist/build/pdf.worker.mjs', import.meta.url).toString();
 
@@ -386,6 +389,7 @@ const Operations: React.FC = () => {
   const [reportEndDate, setReportEndDate] = useState(todayIso);
   const [sharedStateReady, setSharedStateReady] = useState(false);
   const [sharedStateError, setSharedStateError] = useState('');
+  const [pdfFolders, setPdfFolders] = useState<Record<string, OperationPdfFolder>>({});
 
   const activeOperation = operations.find(operation => operation.id === activeOperationId) || operations[0];
   const operationSectors = sectors.filter(sector => sector.operationId === activeOperation?.id);
@@ -406,6 +410,9 @@ const Operations: React.FC = () => {
   useEffect(() => {
     fetchProducts();
     void loadSharedState();
+    void getAllOperationPdfFolders()
+      .then(folders => setPdfFolders(Object.fromEntries(folders.map(folder => [folder.operationId, folder]))))
+      .catch(error => console.warn('Não foi possível carregar as pastas de PDF:', error));
   }, []);
 
   useEffect(() => {
@@ -465,6 +472,33 @@ const Operations: React.FC = () => {
   const reportSharedStateError = (error: unknown) => {
     console.error('Falha ao salvar dados compartilhados:', error);
     setSharedStateError('Não foi possível sincronizar a última alteração. Verifique a conexão antes de continuar.');
+  };
+
+  const configurePdfFolder = async (operation: OperationContract) => {
+    try {
+      const folder = await pickOperationPdfFolder(operation.id);
+      setPdfFolders(current => ({ ...current, [operation.id]: folder }));
+    } catch (error) {
+      if ((error as DOMException)?.name === 'AbortError') return;
+      if ((error as Error)?.message === 'UNSUPPORTED') {
+        alert('Este navegador não permite escolher uma pasta padrão. Os PDFs continuarão sendo baixados normalmente. Use Chrome ou Edge atualizado para ativar a função.');
+        return;
+      }
+      console.error('Falha ao configurar pasta de PDFs:', error);
+      alert('Não foi possível configurar a pasta de PDFs desta operação.');
+    }
+  };
+
+  const savePdf = async (doc: jsPDF, fileName: string, operation: OperationContract) => {
+    const folder = pdfFolders[operation.id];
+    if (!folder) return doc.save(fileName);
+    try {
+      await writePdfToOperationFolder(folder, fileName, doc.output('blob'));
+    } catch (error) {
+      console.warn('Não foi possível gravar o PDF na pasta padrão:', error);
+      alert(`A pasta “${folder.name}” não está disponível. O PDF será baixado normalmente.`);
+      doc.save(fileName);
+    }
   };
 
   const persistOperations = (next: OperationContract[]) => {
@@ -1278,7 +1312,7 @@ const Operations: React.FC = () => {
       theme: 'grid',
     });
     addReceiptFields(doc, (doc as any).lastAutoTable?.finalY || 60);
-    doc.save(getRomaneioFileName(reportOperation, order, point?.name || 'entrega'));
+    await savePdf(doc, getRomaneioFileName(reportOperation, order, point?.name || 'entrega'), reportOperation);
   };
 
   const generateAllDeliveriesPdf = async (order: OperationOrder) => {
@@ -1357,7 +1391,7 @@ const Operations: React.FC = () => {
       addReceiptFields(doc, (doc as any).lastAutoTable?.finalY || 60);
     }
 
-    doc.save(getRomaneioFileName(reportOperation, order));
+    await savePdf(doc, getRomaneioFileName(reportOperation, order), reportOperation);
   };
 
   const generateSummaryPdf = async (order: OperationOrder, sectorId?: string) => {
@@ -1383,7 +1417,7 @@ const Operations: React.FC = () => {
         headStyles: { font: REPORT_FONT, fontSize: REPORT_FONT_SIZE, fontStyle: 'bold', fillColor: [79, 70, 229] },
       }),
     });
-    doc.save(getRomaneioFileName(reportOperation, order, sector ? `SOMA ${sector.name}` : 'TOTAL SETORES'));
+    await savePdf(doc, getRomaneioFileName(reportOperation, order, sector ? `SOMA ${sector.name}` : 'TOTAL SETORES'), reportOperation);
   };
 
   const generateStockAnalysisPdf = async (order: OperationOrder) => {
@@ -1409,7 +1443,7 @@ const Operations: React.FC = () => {
       theme: 'grid',
     });
     doc.text(`Itens faltantes: ${needs.length}`, 14, ((doc as any).lastAutoTable?.finalY || 60) + 8);
-    doc.save(getRomaneioFileName(reportOperation, order, 'ANALISE ESTOQUE COMPRA'));
+    await savePdf(doc, getRomaneioFileName(reportOperation, order, 'ANALISE ESTOQUE COMPRA'), reportOperation);
   };
 
   const getExcelFileName = (operation: OperationContract, order: OperationOrder, suffix?: string) =>
@@ -1686,7 +1720,7 @@ const Operations: React.FC = () => {
         }
       },
     });
-    doc.save(getPeriodReportFileName('pdf'));
+    await savePdf(doc, getPeriodReportFileName('pdf'), activeOperation);
   };
 
   const generatePeriodReportExcel = () => {
@@ -1784,7 +1818,7 @@ const Operations: React.FC = () => {
       headStyles: { font: REPORT_FONT, fontStyle: 'bold', fillColor: [79, 70, 229] },
       footStyles: { font: REPORT_FONT, fontStyle: 'bold', fillColor: [226, 232, 240], textColor: [0, 0, 0] },
     });
-    doc.save(getOrdersSummaryFileName('pdf'));
+    await savePdf(doc, getOrdersSummaryFileName('pdf'), activeOperation);
   };
 
   const generateOrdersSummaryExcel = () => {
@@ -1895,12 +1929,27 @@ const Operations: React.FC = () => {
                 <button className="button button-outline" type="button" title="Editar operação" onClick={() => startEditOperation(operation)} style={{ width: '40px', height: '42px', padding: 0 }}>
                   <Edit3 size={15} />
                 </button>
+                <button
+                  className="button button-outline"
+                  type="button"
+                  title={pdfFolders[operation.id] ? `Pasta de PDFs: ${pdfFolders[operation.id].name}` : 'Definir pasta padrão para os PDFs'}
+                  aria-label={pdfFolders[operation.id] ? `Alterar pasta de PDFs de ${operation.name}` : `Definir pasta de PDFs de ${operation.name}`}
+                  onClick={() => void configurePdfFolder(operation)}
+                  style={{ width: '40px', height: '42px', padding: 0, color: pdfFolders[operation.id] ? '#22c55e' : undefined }}
+                >
+                  {pdfFolders[operation.id] ? <FolderCheck size={16} /> : <FolderPlus size={16} />}
+                </button>
                 <button className="button button-outline" type="button" title="Excluir operação" aria-label={`Excluir ${operation.name}`} onClick={() => deleteOperation(operation)} style={{ width: '40px', height: '42px', padding: 0, color: '#ef4444' }}>
                   <Trash2 size={15} />
                 </button>
               </div>
             ))}
           </div>
+          <p style={{ margin: '-0.65rem 0 1.25rem', fontSize: '0.78rem', color: 'var(--text-muted)' }}>
+            {supportsOperationPdfFolders()
+              ? 'Use o botão de pasta em cada operação para escolher onde os PDFs serão salvos neste dispositivo.'
+              : 'A escolha de pasta requer Chrome ou Edge atualizado; neste navegador os PDFs usam o download padrão.'}
+          </p>
 
           {editingOperationId && (
             <form onSubmit={saveOperationEdit} style={{ borderTop: '1px solid var(--border)', paddingTop: '1rem', display: 'grid', gap: '0.75rem', marginBottom: '1rem' }}>
