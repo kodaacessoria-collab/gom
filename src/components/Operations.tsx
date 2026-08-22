@@ -30,7 +30,7 @@ import { supabase } from '../lib/supabase';
 import type { Deposit, Product } from '../types';
 import { addPdfHeader } from '../lib/pdfBranding';
 import type { PdfLogoVariant } from '../lib/pdfBranding';
-import { getAllOperationPdfFolders, pickOperationPdfFolder, requestOperationPdfFolderPermission, supportsOperationPdfFolders, writePdfToOperationFolder } from '../lib/operationPdfFolders';
+import { createOperationPdfWriter, getAllOperationPdfFolders, pickOperationPdfFolder, supportsOperationPdfFolders } from '../lib/operationPdfFolders';
 import type { OperationPdfFolder } from '../lib/operationPdfFolders';
 
 GlobalWorkerOptions.workerSrc = new URL('pdfjs-dist/build/pdf.worker.mjs', import.meta.url).toString();
@@ -489,25 +489,27 @@ const Operations: React.FC = () => {
     }
   };
 
-  const savePdf = async (doc: jsPDF, fileName: string, operation: OperationContract) => {
+  const preparePdfWriter = async (operation: OperationContract, fileName: string) => {
     const folder = pdfFolders[operation.id];
-    if (!folder) return doc.save(fileName);
+    if (!folder) return null;
     try {
-      await writePdfToOperationFolder(folder, fileName, doc.output('blob'));
+      return await createOperationPdfWriter(folder, fileName);
     } catch (error) {
-      console.warn('Não foi possível gravar o PDF na pasta padrão:', error);
-      alert(`A pasta “${folder.name}” não está disponível. O PDF será baixado normalmente. Para reautorizar, clique novamente no botão de pasta da operação.`);
-      doc.save(fileName);
+      console.warn('Não foi possível abrir o PDF na pasta padrão:', error);
+      alert(`A pasta “${folder.name}” não está disponível. O PDF será baixado normalmente. Clique novamente no botão de pasta da operação para selecioná-la.`);
+      return null;
     }
   };
 
-  const requestPdfFolderPermission = async (operation: OperationContract) => {
-    const folder = pdfFolders[operation.id];
-    if (!folder) return;
+  const savePdf = async (doc: jsPDF, fileName: string, writer: FileSystemWritableFileStream | null) => {
+    if (!writer) return doc.save(fileName);
     try {
-      await requestOperationPdfFolderPermission(folder);
+      await writer.write(doc.output('blob'));
+      await writer.close();
     } catch (error) {
-      console.warn('Não foi possível renovar a permissão da pasta de PDFs:', error);
+      console.warn('Não foi possível gravar o PDF na pasta padrão:', error);
+      alert('Não foi possível concluir a gravação na pasta escolhida. O PDF será baixado normalmente.');
+      doc.save(fileName);
     }
   };
 
@@ -1302,8 +1304,9 @@ const Operations: React.FC = () => {
   const generateDeliveryPdf = async (order: OperationOrder, delivery: OrderDelivery) => {
     const reportOperation = operationByOrder(order);
     if (!reportOperation) return;
-    await requestPdfFolderPermission(reportOperation);
     const point = pointById(delivery.deliveryPointId);
+    const fileName = getRomaneioFileName(reportOperation, order, point?.name || 'entrega');
+    const writer = await preparePdfWriter(reportOperation, fileName);
     const sector = sectorById(point?.sectorId);
     const items = aggregateDeliveryItems(delivery.items);
     const doc = new jsPDF();
@@ -1323,13 +1326,14 @@ const Operations: React.FC = () => {
       theme: 'grid',
     });
     addReceiptFields(doc, (doc as any).lastAutoTable?.finalY || 60);
-    await savePdf(doc, getRomaneioFileName(reportOperation, order, point?.name || 'entrega'), reportOperation);
+    await savePdf(doc, fileName, writer);
   };
 
   const generateAllDeliveriesPdf = async (order: OperationOrder) => {
     const reportOperation = operationByOrder(order);
     if (!reportOperation || order.deliveries.length === 0) return;
-    await requestPdfFolderPermission(reportOperation);
+    const fileName = getRomaneioFileName(reportOperation, order);
+    const writer = await preparePdfWriter(reportOperation, fileName);
     const doc = new jsPDF();
     doc.setFont(REPORT_FONT, 'normal');
     doc.setFontSize(REPORT_FONT_SIZE);
@@ -1403,17 +1407,18 @@ const Operations: React.FC = () => {
       addReceiptFields(doc, (doc as any).lastAutoTable?.finalY || 60);
     }
 
-    await savePdf(doc, getRomaneioFileName(reportOperation, order), reportOperation);
+    await savePdf(doc, fileName, writer);
   };
 
   const generateSummaryPdf = async (order: OperationOrder, sectorId?: string) => {
     const reportOperation = operationByOrder(order);
     if (!reportOperation) return;
-    await requestPdfFolderPermission(reportOperation);
     const scopedDeliveries = sectorId
       ? order.deliveries.filter(delivery => pointById(delivery.deliveryPointId)?.sectorId === sectorId)
       : order.deliveries;
     const sector = sectorById(sectorId);
+    const fileName = getRomaneioFileName(reportOperation, order, sector ? `SOMA ${sector.name}` : 'TOTAL SETORES');
+    const writer = await preparePdfWriter(reportOperation, fileName);
     const doc = new jsPDF();
     doc.setFont(REPORT_FONT, 'normal');
     doc.setFontSize(REPORT_FONT_SIZE);
@@ -1430,13 +1435,14 @@ const Operations: React.FC = () => {
         headStyles: { font: REPORT_FONT, fontSize: REPORT_FONT_SIZE, fontStyle: 'bold', fillColor: [79, 70, 229] },
       }),
     });
-    await savePdf(doc, getRomaneioFileName(reportOperation, order, sector ? `SOMA ${sector.name}` : 'TOTAL SETORES'), reportOperation);
+    await savePdf(doc, fileName, writer);
   };
 
   const generateStockAnalysisPdf = async (order: OperationOrder) => {
     const reportOperation = operationByOrder(order);
     if (!reportOperation) return;
-    await requestPdfFolderPermission(reportOperation);
+    const fileName = getRomaneioFileName(reportOperation, order, 'ANALISE ESTOQUE COMPRA');
+    const writer = await preparePdfWriter(reportOperation, fileName);
     const needs = getPurchaseNeeds(order);
     const stock = getStockMap();
     const doc = new jsPDF();
@@ -1457,7 +1463,7 @@ const Operations: React.FC = () => {
       theme: 'grid',
     });
     doc.text(`Itens faltantes: ${needs.length}`, 14, ((doc as any).lastAutoTable?.finalY || 60) + 8);
-    await savePdf(doc, getRomaneioFileName(reportOperation, order, 'ANALISE ESTOQUE COMPRA'), reportOperation);
+    await savePdf(doc, fileName, writer);
   };
 
   const getExcelFileName = (operation: OperationContract, order: OperationOrder, suffix?: string) =>
@@ -1669,7 +1675,8 @@ const Operations: React.FC = () => {
       alert('Nenhum produto entregue foi encontrado para os filtros selecionados.');
       return;
     }
-    await requestPdfFolderPermission(activeOperation);
+    const fileName = getPeriodReportFileName('pdf');
+    const writer = await preparePdfWriter(activeOperation, fileName);
     const doc = new jsPDF({ orientation: 'landscape' });
     const categoryLabel = reportCategory === 'Todas' ? 'Todas as categorias' : reportCategory;
     await addPdfHeader(doc, {
@@ -1735,7 +1742,7 @@ const Operations: React.FC = () => {
         }
       },
     });
-    await savePdf(doc, getPeriodReportFileName('pdf'), activeOperation);
+    await savePdf(doc, fileName, writer);
   };
 
   const generatePeriodReportExcel = () => {
@@ -1807,7 +1814,8 @@ const Operations: React.FC = () => {
       alert('Nenhum pedido foi encontrado para os filtros selecionados.');
       return;
     }
-    await requestPdfFolderPermission(activeOperation);
+    const fileName = getOrdersSummaryFileName('pdf');
+    const writer = await preparePdfWriter(activeOperation, fileName);
     const categoryLabel = reportCategory === 'Todas' ? 'Todas as categorias' : reportCategory;
     const doc = new jsPDF({ orientation: 'landscape' });
     await addPdfHeader(doc, {
@@ -1834,7 +1842,7 @@ const Operations: React.FC = () => {
       headStyles: { font: REPORT_FONT, fontStyle: 'bold', fillColor: [79, 70, 229] },
       footStyles: { font: REPORT_FONT, fontStyle: 'bold', fillColor: [226, 232, 240], textColor: [0, 0, 0] },
     });
-    await savePdf(doc, getOrdersSummaryFileName('pdf'), activeOperation);
+    await savePdf(doc, fileName, writer);
   };
 
   const generateOrdersSummaryExcel = () => {

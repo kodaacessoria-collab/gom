@@ -49,14 +49,9 @@ export const pickOperationPdfFolder = async (operationId: string) => {
   return folder;
 };
 
-export const requestOperationPdfFolderPermission = (folder: OperationPdfFolder) =>
-  folder.handle.requestPermission({ mode: 'readwrite' });
-
-export const writePdfToOperationFolder = async (folder: OperationPdfFolder, fileName: string, blob: Blob) => {
-  const permission = await folder.handle.queryPermission({ mode: 'readwrite' });
+export const createOperationPdfWriter = async (folder: OperationPdfFolder, fileName: string) => {
+  const permission = await folder.handle.requestPermission({ mode: 'readwrite' });
   if (permission !== 'granted') throw new Error('PERMISSION_DENIED');
   const fileHandle = await folder.handle.getFileHandle(fileName, { create: true });
-  const writable = await fileHandle.createWritable();
-  await writable.write(blob);
-  await writable.close();
+  return fileHandle.createWritable();
 };
