@@ -385,7 +385,6 @@ const Operations: React.FC = () => {
   const [activeModule, setActiveModule] = useState<OperationsModule | null>(null);
   const [deliverySortDirection, setDeliverySortDirection] = useState<'asc' | 'desc'>('desc');
   const [reportCategory, setReportCategory] = useState<'Todas' | DeliveryCategory>('Todas');
-  const [reportSectorId, setReportSectorId] = useState('Todos');
   const [reportStartDate, setReportStartDate] = useState(() => `${todayIso().slice(0, 8)}01`);
   const [reportEndDate, setReportEndDate] = useState(todayIso);
   const [sharedStateReady, setSharedStateReady] = useState(false);
@@ -1631,7 +1630,6 @@ const Operations: React.FC = () => {
       order.deliveries.forEach(delivery => {
         const point = pointById(delivery.deliveryPointId);
         const sectorId = point?.sectorId || 'sem_setor';
-        if (reportSectorId !== 'Todos' && sectorId !== reportSectorId) return;
         if (delivery.items.length > 0) matchedOrderIds.add(order.id);
         const sectorName = sectorById(sectorId)?.name || 'Sem setor';
         aggregateDeliveryItems(delivery.items).forEach(item => {
@@ -1670,13 +1668,12 @@ const Operations: React.FC = () => {
       dateTotals,
       grandTotal: rows.reduce((sum, row) => sum + row.total, 0),
     };
-  }, [operationOrders, reportCategory, reportSectorId, reportStartDate, reportEndDate, deliveryPoints, sectors]);
+  }, [operationOrders, reportCategory, reportStartDate, reportEndDate, deliveryPoints, sectors]);
 
   const getPeriodReportFileName = (extension: 'pdf' | 'xlsx') => {
     const operationName = activeOperation?.name || 'Operacao';
     const categoryName = reportCategory === 'Todas' ? 'Todas categorias' : reportCategory;
-    const sectorName = reportSectorId === 'Todos' ? 'Todos setores' : sectorById(reportSectorId)?.name || 'Sem setor';
-    return `${sanitizeFileName(`RELATORIO PRODUTOS - ${operationName} - ${sectorName} - ${categoryName} - ${formatDate(reportStartDate)} a ${formatDate(reportEndDate)}`)}.${extension}`;
+    return `${sanitizeFileName(`RELATORIO PRODUTOS - ${operationName} - ${categoryName} - ${formatDate(reportStartDate)} a ${formatDate(reportEndDate)}`)}.${extension}`;
   };
 
   const generatePeriodReportPdf = async () => {
@@ -1688,10 +1685,9 @@ const Operations: React.FC = () => {
     const writer = await preparePdfWriter(activeOperation, fileName);
     const doc = new jsPDF({ orientation: 'landscape' });
     const categoryLabel = reportCategory === 'Todas' ? 'Todas as categorias' : reportCategory;
-    const sectorLabel = reportSectorId === 'Todos' ? 'Todos os setores' : sectorById(reportSectorId)?.name || 'Sem setor';
     await addPdfHeader(doc, {
       title: `RELATORIO DE PRODUTOS ENTREGUES - ${getOperationTitle(activeOperation).toUpperCase()}`,
-      subtitle: `Setor: ${sectorLabel} | Categoria: ${categoryLabel} | Periodo: ${formatDate(reportStartDate)} a ${formatDate(reportEndDate)}`,
+      subtitle: `Categoria: ${categoryLabel} | Periodo: ${formatDate(reportStartDate)} a ${formatDate(reportEndDate)}`,
       footer: `${periodReport.orderCount} pedido(s) | ${periodReport.dates.length} data(s) de entrega`,
       logoVariant: activeOperation.logoVariant || DEFAULT_LOGO_VARIANT,
     });
@@ -1761,10 +1757,9 @@ const Operations: React.FC = () => {
       return;
     }
     const categoryLabel = reportCategory === 'Todas' ? 'Todas as categorias' : reportCategory;
-    const sectorLabel = reportSectorId === 'Todos' ? 'Todos os setores' : sectorById(reportSectorId)?.name || 'Sem setor';
     const data: (string | number)[][] = [
       [`Relatório de produtos entregues - ${activeOperation.name}`],
-      ['Setor', sectorLabel, 'Categoria', categoryLabel, 'Período', `${formatDate(reportStartDate)} a ${formatDate(reportEndDate)}`],
+      ['Categoria', categoryLabel, 'Período', `${formatDate(reportStartDate)} a ${formatDate(reportEndDate)}`],
       ['Pedidos considerados', periodReport.orderCount, 'Datas de entrega', periodReport.dates.length],
       [],
       ['Produto', 'UND', ...periodReport.dates.map(formatDate), 'Total'],
@@ -1938,7 +1933,7 @@ const Operations: React.FC = () => {
           <button type="button" className="operations-module-button" onClick={() => setActiveModule('orders')}><FileText size={22} /><span><strong>Pedidos e arquivos</strong><small>Gerar PDF ou Excel</small></span></button>
           <button type="button" className="operations-module-button" onClick={() => setActiveModule('history')}><History size={22} /><span><strong>Histórico</strong><small>Consultar entregas anteriores</small></span></button>
           <button type="button" className="operations-module-button" onClick={() => setActiveModule('orders-summary-report')}><FileSpreadsheet size={22} /><span><strong>Relatório de pedidos</strong><small>Resumo sintético dos pedidos</small></span></button>
-          <button type="button" className="operations-module-button" onClick={() => setActiveModule('period-report')}><Search size={22} /><span><strong>Produtos por data e setor</strong><small>Filtrar setor, categoria e período</small></span></button>
+          <button type="button" className="operations-module-button" onClick={() => setActiveModule('period-report')}><Search size={22} /><span><strong>Produtos por categoria e período</strong><small>Filtrar categoria e datas</small></span></button>
         </div>
       </div>
 
@@ -2494,13 +2489,6 @@ const Operations: React.FC = () => {
               </div>
             </div>
             <div className="period-report-filters">
-              <div>
-                <label>Setor</label>
-                <select className="input-field" value={reportSectorId} onChange={event => setReportSectorId(event.target.value)}>
-                  <option value="Todos">Todos os setores</option>
-                  {operationSectors.map(sector => <option key={sector.id} value={sector.id}>{sector.name}</option>)}
-                </select>
-              </div>
               <div>
                 <label>Categoria</label>
                 <select className="input-field" value={reportCategory} onChange={event => setReportCategory(event.target.value as 'Todas' | DeliveryCategory)}>
