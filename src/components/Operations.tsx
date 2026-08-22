@@ -1623,18 +1623,15 @@ const Operations: React.FC = () => {
       (!reportStartDate || order.deliveryDate >= reportStartDate) &&
       (!reportEndDate || order.deliveryDate <= reportEndDate)
     );
-    const productMap = new Map<string, { sectorId: string; sectorName: string; product: string; unit: string; quantities: Record<string, number>; total: number }>();
+    const productMap = new Map<string, { product: string; unit: string; quantities: Record<string, number>; total: number }>();
     const matchedOrderIds = new Set<string>();
 
     filteredOrders.forEach(order => {
       order.deliveries.forEach(delivery => {
-        const point = pointById(delivery.deliveryPointId);
-        const sectorId = point?.sectorId || 'sem_setor';
         if (delivery.items.length > 0) matchedOrderIds.add(order.id);
-        const sectorName = sectorById(sectorId)?.name || 'Sem setor';
         aggregateDeliveryItems(delivery.items).forEach(item => {
-          const key = `${sectorId}|${stockKey(item.product, item.unit)}`;
-          const current = productMap.get(key) || { sectorId, sectorName, product: item.product, unit: item.unit, quantities: {}, total: 0 };
+          const key = stockKey(item.product, item.unit);
+          const current = productMap.get(key) || { product: item.product, unit: item.unit, quantities: {}, total: 0 };
           current.quantities[order.deliveryDate] = (current.quantities[order.deliveryDate] || 0) + item.quantity;
           current.total += item.quantity;
           productMap.set(key, current);
@@ -1643,19 +1640,7 @@ const Operations: React.FC = () => {
     });
 
     const dates = Array.from(new Set(Array.from(productMap.values()).flatMap(row => Object.keys(row.quantities)))).sort();
-    const rows = Array.from(productMap.values()).sort((a, b) =>
-      a.sectorName.localeCompare(b.sectorName) ||
-      a.product.localeCompare(b.product)
-    );
-    const sectorGroups = Array.from(new Map(rows.map(row => [row.sectorId, row.sectorName])).entries())
-      .map(([sectorId, sectorName]) => {
-        const sectorRows = rows.filter(row => row.sectorId === sectorId);
-        const dateTotals = dates.reduce<Record<string, number>>((acc, date) => {
-          acc[date] = sectorRows.reduce((sum, row) => sum + (row.quantities[date] || 0), 0);
-          return acc;
-        }, {});
-        return { sectorId, sectorName, rows: sectorRows, dateTotals, total: sectorRows.reduce((sum, row) => sum + row.total, 0) };
-      });
+    const rows = Array.from(productMap.values()).sort((a, b) => a.product.localeCompare(b.product));
     const dateTotals = dates.reduce<Record<string, number>>((acc, date) => {
       acc[date] = rows.reduce((sum, row) => sum + (row.quantities[date] || 0), 0);
       return acc;
@@ -1663,12 +1648,11 @@ const Operations: React.FC = () => {
     return {
       dates,
       rows,
-      sectorGroups,
       orderCount: matchedOrderIds.size,
       dateTotals,
       grandTotal: rows.reduce((sum, row) => sum + row.total, 0),
     };
-  }, [operationOrders, reportCategory, reportStartDate, reportEndDate, deliveryPoints, sectors]);
+  }, [operationOrders, reportCategory, reportStartDate, reportEndDate]);
 
   const getPeriodReportFileName = (extension: 'pdf' | 'xlsx') => {
     const operationName = activeOperation?.name || 'Operacao';
@@ -1701,21 +1685,12 @@ const Operations: React.FC = () => {
       1: { cellWidth: 16, halign: 'center' },
       [totalColumnIndex]: { cellWidth: 18, halign: 'center' },
     });
-    const body: (string | number)[][] = [];
-    const sectorHeaderRows = new Set<number>();
-    const sectorSubtotalRows = new Set<number>();
-    periodReport.sectorGroups.forEach(group => {
-      sectorHeaderRows.add(body.length);
-      body.push([group.sectorName, '', ...periodReport.dates.map(() => ''), '']);
-      group.rows.forEach(row => body.push([
+    const body: (string | number)[][] = periodReport.rows.map(row => [
         row.product,
         row.unit,
         ...periodReport.dates.map(date => row.quantities[date] ? formatQuantity(row.quantities[date]) : '-'),
         formatQuantity(row.total),
-      ]));
-      sectorSubtotalRows.add(body.length);
-      body.push([`SUBTOTAL - ${group.sectorName}`, '', ...periodReport.dates.map(date => formatQuantity(group.dateTotals[date] || 0)), formatQuantity(group.total)]);
-    });
+      ]);
     const grandTotalRow = body.length;
     body.push([
       'TOTAL GERAL',
@@ -1734,14 +1709,6 @@ const Operations: React.FC = () => {
       horizontalPageBreak: periodReport.dates.length > 12,
       horizontalPageBreakRepeat: [0, 1],
       didParseCell: (data: any) => {
-        if (data.section === 'body' && sectorHeaderRows.has(data.row.index)) {
-          data.cell.styles.fontStyle = 'bold';
-          data.cell.styles.fillColor = [191, 219, 254];
-        }
-        if (data.section === 'body' && sectorSubtotalRows.has(data.row.index)) {
-          data.cell.styles.fontStyle = 'bold';
-          data.cell.styles.fillColor = [239, 246, 255];
-        }
         if (data.section === 'body' && data.row.index === grandTotalRow) {
           data.cell.styles.fontStyle = 'bold';
           data.cell.styles.fillColor = [226, 232, 240];
@@ -1763,11 +1730,7 @@ const Operations: React.FC = () => {
       ['Pedidos considerados', periodReport.orderCount, 'Datas de entrega', periodReport.dates.length],
       [],
       ['Produto', 'UND', ...periodReport.dates.map(formatDate), 'Total'],
-      ...periodReport.sectorGroups.flatMap(group => [
-        [group.sectorName, '', ...periodReport.dates.map(() => ''), ''],
-        ...group.rows.map(row => [row.product, row.unit, ...periodReport.dates.map(date => row.quantities[date] || 0), row.total]),
-        [`SUBTOTAL - ${group.sectorName}`, '', ...periodReport.dates.map(date => group.dateTotals[date] || 0), group.total],
-      ]),
+      ...periodReport.rows.map(row => [row.product, row.unit, ...periodReport.dates.map(date => row.quantities[date] || 0), row.total]),
       ['TOTAL GERAL', '', ...periodReport.dates.map(date => periodReport.dateTotals[date] || 0), periodReport.grandTotal],
     ];
     const workbook = XLSX.utils.book_new();
@@ -2485,7 +2448,7 @@ const Operations: React.FC = () => {
             <div className="view-header" style={{ marginBottom: '1rem', gap: '1rem' }}>
               <div>
                 <h2 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}><Search size={20} /> Relatório de produtos entregues</h2>
-                <p style={{ textAlign: 'left', marginBottom: 0 }}>Consolide os produtos da operação por setor e período, com uma coluna para cada data de entrega.</p>
+                <p style={{ textAlign: 'left', marginBottom: 0 }}>Some os produtos de todos os setores por categoria e período, com uma coluna para cada data de entrega.</p>
               </div>
             </div>
             <div className="period-report-filters">
@@ -2524,23 +2487,20 @@ const Operations: React.FC = () => {
                   <tr><th>Produto</th><th>UND</th>{periodReport.dates.map(date => <th key={date}>{formatDate(date)}</th>)}<th>Total</th></tr>
                 </thead>
                 <tbody>
-                  {periodReport.sectorGroups.map(group => (
-                    <React.Fragment key={group.sectorId}>
-                      <tr><td colSpan={periodReport.dates.length + 3} style={{ fontWeight: 800, background: '#dbeafe' }}>{group.sectorName}</td></tr>
-                      {group.rows.map(row => (
-                        <tr key={`${group.sectorId}|${stockKey(row.product, row.unit)}`}>
-                          <td style={{ fontWeight: 600 }}>{row.product}</td><td>{row.unit}</td>
-                          {periodReport.dates.map(date => <td key={date}>{row.quantities[date] ? formatQuantity(row.quantities[date]) : '-'}</td>)}
-                          <td style={{ fontWeight: 700 }}>{formatQuantity(row.total)}</td>
-                        </tr>
-                      ))}
-                      <tr style={{ background: '#eff6ff', fontWeight: 700 }}>
-                        <td>Subtotal - {group.sectorName}</td><td></td>
-                        {periodReport.dates.map(date => <td key={date}>{formatQuantity(group.dateTotals[date] || 0)}</td>)}
-                        <td>{formatQuantity(group.total)}</td>
-                      </tr>
-                    </React.Fragment>
+                  {periodReport.rows.map(row => (
+                    <tr key={stockKey(row.product, row.unit)}>
+                      <td style={{ fontWeight: 600 }}>{row.product}</td><td>{row.unit}</td>
+                      {periodReport.dates.map(date => <td key={date}>{row.quantities[date] ? formatQuantity(row.quantities[date]) : '-'}</td>)}
+                      <td style={{ fontWeight: 700 }}>{formatQuantity(row.total)}</td>
+                    </tr>
                   ))}
+                  {periodReport.rows.length > 0 && (
+                    <tr style={{ background: '#eff6ff', fontWeight: 800 }}>
+                      <td>Total geral</td><td></td>
+                      {periodReport.dates.map(date => <td key={date}>{formatQuantity(periodReport.dateTotals[date] || 0)}</td>)}
+                      <td>{formatQuantity(periodReport.grandTotal)}</td>
+                    </tr>
+                  )}
                   {periodReport.rows.length === 0 && <tr><td colSpan={periodReport.dates.length + 3} style={{ textAlign: 'center', padding: '2rem' }}>Nenhuma entrega encontrada para os filtros selecionados.</td></tr>}
                 </tbody>
               </table>
