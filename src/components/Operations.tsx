@@ -387,6 +387,8 @@ const Operations: React.FC = () => {
   const [reportCategory, setReportCategory] = useState<'Todas' | DeliveryCategory>('Todas');
   const [reportStartDate, setReportStartDate] = useState(() => `${todayIso().slice(0, 8)}01`);
   const [reportEndDate, setReportEndDate] = useState(todayIso);
+  const [reportProduct, setReportProduct] = useState('Todos');
+  const [reportDeliveryPointId, setReportDeliveryPointId] = useState('Todos');
   const [sharedStateReady, setSharedStateReady] = useState(false);
   const [sharedStateError, setSharedStateError] = useState('');
   const [pdfFolders, setPdfFolders] = useState<Record<string, OperationPdfFolder>>({});
@@ -1617,6 +1619,26 @@ const Operations: React.FC = () => {
     XLSX.writeFile(workbook, getExcelFileName(reportOperation, order, 'ANALISE ESTOQUE COMPRA'));
   };
 
+  const reportProductOptions = useMemo(() => {
+    const options = new Map<string, { key: string; product: string; unit: string }>();
+    operationOrders.forEach(order => {
+      order.deliveries.forEach(delivery => {
+        delivery.items.forEach(item => {
+          const key = stockKey(item.product, item.unit);
+          if (!options.has(key)) options.set(key, { key, product: item.product, unit: item.unit });
+        });
+      });
+    });
+    return Array.from(options.values()).sort((a, b) =>
+      a.product.localeCompare(b.product) || a.unit.localeCompare(b.unit)
+    );
+  }, [operationOrders]);
+
+  const selectedReportPoint = reportDeliveryPointId === 'Todos' ? undefined : pointById(reportDeliveryPointId);
+  const selectedReportProduct = reportProduct === 'Todos'
+    ? undefined
+    : reportProductOptions.find(option => option.key === reportProduct);
+
   const periodReport = useMemo(() => {
     const filteredOrders = operationOrders.filter(order =>
       (reportCategory === 'Todas' || order.category === reportCategory) &&
@@ -1627,9 +1649,13 @@ const Operations: React.FC = () => {
     const matchedOrderIds = new Set<string>();
 
     filteredOrders.forEach(order => {
-      order.deliveries.forEach(delivery => {
-        if (delivery.items.length > 0) matchedOrderIds.add(order.id);
-        aggregateDeliveryItems(delivery.items).forEach(item => {
+      order.deliveries
+        .filter(delivery => reportDeliveryPointId === 'Todos' || delivery.deliveryPointId === reportDeliveryPointId)
+        .forEach(delivery => {
+        const matchingItems = aggregateDeliveryItems(delivery.items)
+          .filter(item => reportProduct === 'Todos' || stockKey(item.product, item.unit) === reportProduct);
+        if (matchingItems.length > 0) matchedOrderIds.add(order.id);
+        matchingItems.forEach(item => {
           const key = stockKey(item.product, item.unit);
           const current = productMap.get(key) || { product: item.product, unit: item.unit, quantities: {}, total: 0 };
           current.quantities[order.deliveryDate] = (current.quantities[order.deliveryDate] || 0) + item.quantity;
@@ -1652,12 +1678,14 @@ const Operations: React.FC = () => {
       dateTotals,
       grandTotal: rows.reduce((sum, row) => sum + row.total, 0),
     };
-  }, [operationOrders, reportCategory, reportStartDate, reportEndDate]);
+  }, [operationOrders, reportCategory, reportStartDate, reportEndDate, reportProduct, reportDeliveryPointId]);
 
   const getPeriodReportFileName = (extension: 'pdf' | 'xlsx') => {
     const operationName = activeOperation?.name || 'Operacao';
     const categoryName = reportCategory === 'Todas' ? 'Todas categorias' : reportCategory;
-    return `${sanitizeFileName(`RELATORIO PRODUTOS - ${operationName} - ${categoryName} - ${formatDate(reportStartDate)} a ${formatDate(reportEndDate)}`)}.${extension}`;
+    const productName = selectedReportProduct ? `${selectedReportProduct.product} ${selectedReportProduct.unit}` : 'Todos produtos';
+    const pointName = selectedReportPoint?.name || 'Todos locais';
+    return `${sanitizeFileName(`RELATORIO PRODUTOS - ${operationName} - ${categoryName} - ${productName} - ${pointName} - ${formatDate(reportStartDate)} a ${formatDate(reportEndDate)}`)}.${extension}`;
   };
 
   const generatePeriodReportPdf = async () => {
@@ -1669,10 +1697,12 @@ const Operations: React.FC = () => {
     const writer = await preparePdfWriter(activeOperation, fileName);
     const doc = new jsPDF({ orientation: 'landscape' });
     const categoryLabel = reportCategory === 'Todas' ? 'Todas as categorias' : reportCategory;
+    const productLabel = selectedReportProduct ? `${selectedReportProduct.product} (${selectedReportProduct.unit})` : 'Todos os produtos';
+    const pointLabel = selectedReportPoint?.name || 'Todos os locais';
     await addPdfHeader(doc, {
       title: `RELATORIO DE PRODUTOS ENTREGUES - ${getOperationTitle(activeOperation).toUpperCase()}`,
-      subtitle: `Categoria: ${categoryLabel} | Periodo: ${formatDate(reportStartDate)} a ${formatDate(reportEndDate)}`,
-      footer: `${periodReport.orderCount} pedido(s) | ${periodReport.dates.length} data(s) de entrega`,
+      subtitle: `Categoria: ${categoryLabel} | Produto: ${productLabel} | Local: ${pointLabel} | Periodo: ${formatDate(reportStartDate)} a ${formatDate(reportEndDate)}`,
+      footer: `${periodReport.orderCount} pedido(s) | ${periodReport.dates.length} data(s) de entrega | ${pointLabel}`,
       logoVariant: activeOperation.logoVariant || DEFAULT_LOGO_VARIANT,
     });
     const dateColumnWidth = Math.min(18, 180 / Math.min(Math.max(periodReport.dates.length, 1), 12));
@@ -1724,9 +1754,12 @@ const Operations: React.FC = () => {
       return;
     }
     const categoryLabel = reportCategory === 'Todas' ? 'Todas as categorias' : reportCategory;
+    const productLabel = selectedReportProduct ? `${selectedReportProduct.product} (${selectedReportProduct.unit})` : 'Todos os produtos';
+    const pointLabel = selectedReportPoint?.name || 'Todos os locais';
     const data: (string | number)[][] = [
       [`Relatório de produtos entregues - ${activeOperation.name}`],
-      ['Categoria', categoryLabel, 'Período', `${formatDate(reportStartDate)} a ${formatDate(reportEndDate)}`],
+      ['Categoria', categoryLabel, 'Produto', productLabel],
+      ['Local de entrega', pointLabel, 'Período', `${formatDate(reportStartDate)} a ${formatDate(reportEndDate)}`],
       ['Pedidos considerados', periodReport.orderCount, 'Datas de entrega', periodReport.dates.length],
       [],
       ['Produto', 'UND', ...periodReport.dates.map(formatDate), 'Total'],
@@ -1741,7 +1774,7 @@ const Operations: React.FC = () => {
       ...periodReport.dates.map(() => ({ wch: 14 })),
       { wch: 16 },
     ];
-    sheet['!autofilter'] = { ref: XLSX.utils.encode_range({ s: { r: 4, c: 0 }, e: { r: data.length - 2, c: data[4].length - 1 } }) };
+    sheet['!autofilter'] = { ref: XLSX.utils.encode_range({ s: { r: 5, c: 0 }, e: { r: data.length - 2, c: data[5].length - 1 } }) };
     XLSX.utils.book_append_sheet(workbook, sheet, 'Produtos por data');
     XLSX.writeFile(workbook, getPeriodReportFileName('xlsx'));
   };
@@ -2448,7 +2481,7 @@ const Operations: React.FC = () => {
             <div className="view-header" style={{ marginBottom: '1rem', gap: '1rem' }}>
               <div>
                 <h2 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}><Search size={20} /> Relatório de produtos entregues</h2>
-                <p style={{ textAlign: 'left', marginBottom: 0 }}>Some os produtos de todos os setores por categoria e período, com uma coluna para cada data de entrega.</p>
+                <p style={{ textAlign: 'left', marginBottom: 0 }}>Filtre por categoria, produto, período e local de entrega, com uma coluna para cada data.</p>
               </div>
             </div>
             <div className="period-report-filters">
@@ -2457,6 +2490,20 @@ const Operations: React.FC = () => {
                 <select className="input-field" value={reportCategory} onChange={event => setReportCategory(event.target.value as 'Todas' | DeliveryCategory)}>
                   <option value="Todas">Todas as categorias</option>
                   {DELIVERY_CATEGORIES.map(category => <option key={category} value={category}>{category}</option>)}
+                </select>
+              </div>
+              <div>
+                <label>Produto</label>
+                <select className="input-field" value={reportProduct} onChange={event => setReportProduct(event.target.value)}>
+                  <option value="Todos">Todos os produtos</option>
+                  {reportProductOptions.map(option => <option key={option.key} value={option.key}>{option.product} — {option.unit}</option>)}
+                </select>
+              </div>
+              <div>
+                <label>Local de entrega</label>
+                <select className="input-field" value={reportDeliveryPointId} onChange={event => setReportDeliveryPointId(event.target.value)}>
+                  <option value="Todos">Todos os locais</option>
+                  {operationPoints.map(point => <option key={point.id} value={point.id}>{point.code ? `${point.code} - ` : ''}{point.name}</option>)}
                 </select>
               </div>
               <div>

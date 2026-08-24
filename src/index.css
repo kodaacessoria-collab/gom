@@ -579,7 +579,7 @@ label {
 
 .period-report-filters {
   display: grid;
-  grid-template-columns: minmax(220px, 1.4fr) minmax(160px, 1fr) minmax(160px, 1fr) minmax(230px, auto);
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
   gap: 0.75rem;
   align-items: end;
 }
@@ -674,4 +674,3 @@ label {
   overflow-y: auto;
   animation: fadeIn 0.2s ease-out;
 }
-
