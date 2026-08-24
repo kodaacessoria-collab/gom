@@ -1647,6 +1647,7 @@ const Operations: React.FC = () => {
     );
     const productMap = new Map<string, { product: string; unit: string; quantities: Record<string, number>; total: number }>();
     const matchedOrderIds = new Set<string>();
+    const reportColumns = new Map<string, { key: string; date: string; pointId: string; pointLabel: string }>();
 
     filteredOrders.forEach(order => {
       order.deliveries
@@ -1655,30 +1656,46 @@ const Operations: React.FC = () => {
         const matchingItems = aggregateDeliveryItems(delivery.items)
           .filter(item => reportProduct === 'Todos' || stockKey(item.product, item.unit) === reportProduct);
         if (matchingItems.length > 0) matchedOrderIds.add(order.id);
+        const point = operationPoints.find(candidate => candidate.id === delivery.deliveryPointId);
+        const columnKey = `${order.deliveryDate}::${delivery.deliveryPointId}`;
+        if (matchingItems.length > 0 && !reportColumns.has(columnKey)) {
+          reportColumns.set(columnKey, {
+            key: columnKey,
+            date: order.deliveryDate,
+            pointId: delivery.deliveryPointId,
+            pointLabel: point ? `${point.code ? `${point.code} - ` : ''}${point.name}` : 'Local não identificado',
+          });
+        }
         matchingItems.forEach(item => {
           const key = stockKey(item.product, item.unit);
           const current = productMap.get(key) || { product: item.product, unit: item.unit, quantities: {}, total: 0 };
-          current.quantities[order.deliveryDate] = (current.quantities[order.deliveryDate] || 0) + item.quantity;
+          current.quantities[columnKey] = (current.quantities[columnKey] || 0) + item.quantity;
           current.total += item.quantity;
           productMap.set(key, current);
         });
       });
     });
 
-    const dates = Array.from(new Set(Array.from(productMap.values()).flatMap(row => Object.keys(row.quantities)))).sort();
+    const columns = Array.from(reportColumns.values()).sort((a, b) =>
+      a.date.localeCompare(b.date) || a.pointLabel.localeCompare(b.pointLabel, undefined, { numeric: true, sensitivity: 'base' })
+    );
+    const dates = Array.from(new Set(columns.map(column => column.date)));
+    const locations = Array.from(new Set(columns.map(column => column.pointId)));
     const rows = Array.from(productMap.values()).sort((a, b) => a.product.localeCompare(b.product));
-    const dateTotals = dates.reduce<Record<string, number>>((acc, date) => {
-      acc[date] = rows.reduce((sum, row) => sum + (row.quantities[date] || 0), 0);
+    const columnTotals = columns.reduce<Record<string, number>>((acc, column) => {
+      acc[column.key] = rows.reduce((sum, row) => sum + (row.quantities[column.key] || 0), 0);
       return acc;
     }, {});
     return {
+      columns,
       dates,
+      locations,
       rows,
       orderCount: matchedOrderIds.size,
-      dateTotals,
+      columnTotals,
       grandTotal: rows.reduce((sum, row) => sum + row.total, 0),
     };
-  }, [operationOrders, reportCategory, reportStartDate, reportEndDate, reportProduct, reportDeliveryPointId]);
+  }, [operationOrders, operationPoints, reportCategory, reportStartDate, reportEndDate, reportProduct, reportDeliveryPointId]);
 
   const getPeriodReportFileName = (extension: 'pdf' | 'xlsx') => {
     const operationName = activeOperation?.name || 'Operacao';
@@ -1702,13 +1719,13 @@ const Operations: React.FC = () => {
     await addPdfHeader(doc, {
       title: `RELATORIO DE PRODUTOS ENTREGUES - ${getOperationTitle(activeOperation).toUpperCase()}`,
       subtitle: `Categoria: ${categoryLabel} | Produto: ${productLabel} | Local: ${pointLabel} | Periodo: ${formatDate(reportStartDate)} a ${formatDate(reportEndDate)}`,
-      footer: `${periodReport.orderCount} pedido(s) | ${periodReport.dates.length} data(s) de entrega | ${pointLabel}`,
+      footer: `${periodReport.orderCount} pedido(s) | ${periodReport.dates.length} data(s) | ${periodReport.locations.length} local(is)`,
       logoVariant: activeOperation.logoVariant || DEFAULT_LOGO_VARIANT,
     });
-    const dateColumnWidth = Math.min(18, 180 / Math.min(Math.max(periodReport.dates.length, 1), 12));
-    const totalColumnIndex = periodReport.dates.length + 2;
-    const columnStyles = periodReport.dates.reduce<Record<number, any>>((acc, _, index) => {
-      acc[index + 2] = { cellWidth: dateColumnWidth, halign: 'center' };
+    const deliveryColumnWidth = Math.min(28, 190 / Math.min(Math.max(periodReport.columns.length, 1), 10));
+    const totalColumnIndex = periodReport.columns.length + 2;
+    const columnStyles = periodReport.columns.reduce<Record<number, any>>((acc, _, index) => {
+      acc[index + 2] = { cellWidth: deliveryColumnWidth, halign: 'center' };
       return acc;
     }, {
       0: { cellWidth: 55 },
@@ -1718,25 +1735,25 @@ const Operations: React.FC = () => {
     const body: (string | number)[][] = periodReport.rows.map(row => [
         row.product,
         row.unit,
-        ...periodReport.dates.map(date => row.quantities[date] ? formatQuantity(row.quantities[date]) : '-'),
+        ...periodReport.columns.map(column => row.quantities[column.key] ? formatQuantity(row.quantities[column.key]) : '-'),
         formatQuantity(row.total),
       ]);
     const grandTotalRow = body.length;
     body.push([
       'TOTAL GERAL',
       '',
-      ...periodReport.dates.map(date => formatQuantity(periodReport.dateTotals[date] || 0)),
+      ...periodReport.columns.map(column => formatQuantity(periodReport.columnTotals[column.key] || 0)),
       formatQuantity(periodReport.grandTotal),
     ]);
     autoTable(doc, {
       startY: 36,
-      head: [['Produto', 'UND', ...periodReport.dates.map(formatDate), 'Total']],
+      head: [['Produto', 'UND', ...periodReport.columns.map(column => `${formatDate(column.date)}\n${column.pointLabel}`), 'Total']],
       body,
       theme: 'grid',
-      styles: { font: REPORT_FONT, fontSize: periodReport.dates.length > 12 ? 5 : 7, cellPadding: 1, overflow: 'linebreak', valign: 'middle' },
+      styles: { font: REPORT_FONT, fontSize: periodReport.columns.length > 10 ? 5 : 7, cellPadding: 1, overflow: 'linebreak', valign: 'middle' },
       headStyles: { font: REPORT_FONT, fontStyle: 'bold', fillColor: [219, 234, 254], textColor: [0, 0, 0], halign: 'center' },
       columnStyles,
-      horizontalPageBreak: periodReport.dates.length > 12,
+      horizontalPageBreak: periodReport.columns.length > 10,
       horizontalPageBreakRepeat: [0, 1],
       didParseCell: (data: any) => {
         if (data.section === 'body' && data.row.index === grandTotalRow) {
@@ -1760,18 +1777,18 @@ const Operations: React.FC = () => {
       [`Relatório de produtos entregues - ${activeOperation.name}`],
       ['Categoria', categoryLabel, 'Produto', productLabel],
       ['Local de entrega', pointLabel, 'Período', `${formatDate(reportStartDate)} a ${formatDate(reportEndDate)}`],
-      ['Pedidos considerados', periodReport.orderCount, 'Datas de entrega', periodReport.dates.length],
+      ['Pedidos considerados', periodReport.orderCount, 'Datas de entrega', periodReport.dates.length, 'Locais', periodReport.locations.length],
       [],
-      ['Produto', 'UND', ...periodReport.dates.map(formatDate), 'Total'],
-      ...periodReport.rows.map(row => [row.product, row.unit, ...periodReport.dates.map(date => row.quantities[date] || 0), row.total]),
-      ['TOTAL GERAL', '', ...periodReport.dates.map(date => periodReport.dateTotals[date] || 0), periodReport.grandTotal],
+      ['Produto', 'UND', ...periodReport.columns.map(column => `${formatDate(column.date)} - ${column.pointLabel}`), 'Total'],
+      ...periodReport.rows.map(row => [row.product, row.unit, ...periodReport.columns.map(column => row.quantities[column.key] || 0), row.total]),
+      ['TOTAL GERAL', '', ...periodReport.columns.map(column => periodReport.columnTotals[column.key] || 0), periodReport.grandTotal],
     ];
     const workbook = XLSX.utils.book_new();
     const sheet = XLSX.utils.aoa_to_sheet(data);
     sheet['!cols'] = [
       { wch: 42 },
       { wch: 12 },
-      ...periodReport.dates.map(() => ({ wch: 14 })),
+      ...periodReport.columns.map(() => ({ wch: 28 })),
       { wch: 16 },
     ];
     sheet['!autofilter'] = { ref: XLSX.utils.encode_range({ s: { r: 5, c: 0 }, e: { r: data.length - 2, c: data[5].length - 1 } }) };
@@ -2481,7 +2498,7 @@ const Operations: React.FC = () => {
             <div className="view-header" style={{ marginBottom: '1rem', gap: '1rem' }}>
               <div>
                 <h2 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}><Search size={20} /> Relatório de produtos entregues</h2>
-                <p style={{ textAlign: 'left', marginBottom: 0 }}>Filtre por categoria, produto, período e local de entrega, com uma coluna para cada data.</p>
+                <p style={{ textAlign: 'left', marginBottom: 0 }}>Filtre por categoria, produto, período e local, com uma coluna para cada combinação de data e local de entrega.</p>
               </div>
             </div>
             <div className="period-report-filters">
@@ -2527,28 +2544,29 @@ const Operations: React.FC = () => {
               <span className="badge badge-blue">{periodReport.orderCount} pedido(s)</span>
               <span className="badge badge-green">{periodReport.rows.length} produto(s)</span>
               <span className="badge">{periodReport.dates.length} data(s)</span>
+              <span className="badge">{periodReport.locations.length} local(is)</span>
             </div>
             <div style={{ overflowX: 'auto', marginTop: '1rem' }}>
               <table className="data-table">
                 <thead>
-                  <tr><th>Produto</th><th>UND</th>{periodReport.dates.map(date => <th key={date}>{formatDate(date)}</th>)}<th>Total</th></tr>
+                  <tr><th>Produto</th><th>UND</th>{periodReport.columns.map(column => <th key={column.key}><span style={{ whiteSpace: 'nowrap' }}>{formatDate(column.date)}</span><br /><small>{column.pointLabel}</small></th>)}<th>Total</th></tr>
                 </thead>
                 <tbody>
                   {periodReport.rows.map(row => (
                     <tr key={stockKey(row.product, row.unit)}>
                       <td style={{ fontWeight: 600 }}>{row.product}</td><td>{row.unit}</td>
-                      {periodReport.dates.map(date => <td key={date}>{row.quantities[date] ? formatQuantity(row.quantities[date]) : '-'}</td>)}
+                      {periodReport.columns.map(column => <td key={column.key}>{row.quantities[column.key] ? formatQuantity(row.quantities[column.key]) : '-'}</td>)}
                       <td style={{ fontWeight: 700 }}>{formatQuantity(row.total)}</td>
                     </tr>
                   ))}
                   {periodReport.rows.length > 0 && (
                     <tr style={{ background: '#eff6ff', fontWeight: 800 }}>
                       <td>Total geral</td><td></td>
-                      {periodReport.dates.map(date => <td key={date}>{formatQuantity(periodReport.dateTotals[date] || 0)}</td>)}
+                      {periodReport.columns.map(column => <td key={column.key}>{formatQuantity(periodReport.columnTotals[column.key] || 0)}</td>)}
                       <td>{formatQuantity(periodReport.grandTotal)}</td>
                     </tr>
                   )}
-                  {periodReport.rows.length === 0 && <tr><td colSpan={periodReport.dates.length + 3} style={{ textAlign: 'center', padding: '2rem' }}>Nenhuma entrega encontrada para os filtros selecionados.</td></tr>}
+                  {periodReport.rows.length === 0 && <tr><td colSpan={periodReport.columns.length + 3} style={{ textAlign: 'center', padding: '2rem' }}>Nenhuma entrega encontrada para os filtros selecionados.</td></tr>}
                 </tbody>
               </table>
             </div>
