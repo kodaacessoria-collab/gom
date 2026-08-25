@@ -1828,23 +1828,44 @@ const Operations: React.FC = () => {
     const pointLabel = selectedReportPoint?.name || 'Todos os locais';
     const data: (string | number)[][] = [
       [`Relatório de produtos entregues - ${activeOperation.name}`],
-      ['Categoria', categoryLabel, 'Produto', productLabel],
-      ['Local de entrega', pointLabel, 'Período', `${formatDate(reportStartDate)} a ${formatDate(reportEndDate)}`],
+      ['Operação', activeOperation.name, 'Categoria', categoryLabel],
+      ['Produto', productLabel, 'Local de entrega', pointLabel],
+      ['Período', `${formatDate(reportStartDate)} a ${formatDate(reportEndDate)}`],
       ['Pedidos considerados', periodReport.orderCount, 'Datas de entrega', periodReport.dates.length, 'Locais', periodReport.locations.length],
       [],
-      ['Produto', 'UND', ...periodReport.columns.map(column => `${formatDate(column.date)} - ${column.pointLabel}`), 'Total'],
-      ...periodReport.rows.map(row => [row.product, row.unit, ...periodReport.columns.map(column => row.quantities[column.key] || 0), row.total]),
-      ['TOTAL GERAL', '', ...periodReport.columns.map(column => periodReport.columnTotals[column.key] || 0), periodReport.grandTotal],
+      ['Produto', 'UND', ...periodReport.columns.map(column => `${formatDate(column.date)} - ${column.pointLabel}`), 'Qtd. total', 'Preço de custo', 'Custo total'],
+      ...periodReport.rows.map(row => [row.product, row.unit, ...periodReport.columns.map(column => row.quantities[column.key] || 0), row.total, '', '']),
+      ['TOTAL GERAL', '', ...periodReport.columns.map(column => periodReport.columnTotals[column.key] || 0), periodReport.grandTotal, '', ''],
     ];
     const workbook = XLSX.utils.book_new();
     const sheet = XLSX.utils.aoa_to_sheet(data);
+    const headerRowIndex = 6;
+    const firstDataRowIndex = headerRowIndex + 1;
+    const totalRowIndex = data.length - 1;
+    const quantityTotalColumnIndex = periodReport.columns.length + 2;
+    const costPriceColumnIndex = quantityTotalColumnIndex + 1;
+    const totalCostColumnIndex = quantityTotalColumnIndex + 2;
+    periodReport.rows.forEach((_, rowIndex) => {
+      const dataRowIndex = firstDataRowIndex + rowIndex;
+      const quantityCell = XLSX.utils.encode_cell({ r: dataRowIndex, c: quantityTotalColumnIndex });
+      const costPriceCell = XLSX.utils.encode_cell({ r: dataRowIndex, c: costPriceColumnIndex });
+      const totalCostCell = XLSX.utils.encode_cell({ r: dataRowIndex, c: totalCostColumnIndex });
+      sheet[totalCostCell] = { t: 'n', f: `IF(${costPriceCell}="","",${quantityCell}*${costPriceCell})`, z: 'R$ #,##0.00' };
+      sheet[costPriceCell] = { t: 'z', z: 'R$ #,##0.00' };
+    });
+    const totalCostCell = XLSX.utils.encode_cell({ r: totalRowIndex, c: totalCostColumnIndex });
+    const firstTotalCostCell = XLSX.utils.encode_cell({ r: firstDataRowIndex, c: totalCostColumnIndex });
+    const lastTotalCostCell = XLSX.utils.encode_cell({ r: totalRowIndex - 1, c: totalCostColumnIndex });
+    sheet[totalCostCell] = { t: 'n', f: `SUM(${firstTotalCostCell}:${lastTotalCostCell})`, z: 'R$ #,##0.00' };
     sheet['!cols'] = [
       { wch: 42 },
       { wch: 12 },
       ...periodReport.columns.map(() => ({ wch: 28 })),
       { wch: 16 },
+      { wch: 18 },
+      { wch: 18 },
     ];
-    sheet['!autofilter'] = { ref: XLSX.utils.encode_range({ s: { r: 5, c: 0 }, e: { r: data.length - 2, c: data[5].length - 1 } }) };
+    sheet['!autofilter'] = { ref: XLSX.utils.encode_range({ s: { r: headerRowIndex, c: 0 }, e: { r: totalRowIndex - 1, c: data[headerRowIndex].length - 1 } }) };
     XLSX.utils.book_append_sheet(workbook, sheet, 'Produtos por data');
     XLSX.writeFile(workbook, getPeriodReportFileName('xlsx'));
   };
