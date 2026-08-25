@@ -225,7 +225,17 @@ const categoryToInventoryCategory = (category: DeliveryCategory) => {
 };
 
 const findHeaderRow = (rows: unknown[][]) =>
-  rows.findIndex(row => row.some(cell => normalizeKey(cell) === 'PRODUTO') && row.some(cell => ['QTD', 'QUANTIDADE'].includes(normalizeKey(cell))));
+  rows.findIndex(row => row.some(cell => normalizeKey(cell) === 'PRODUTO') && row.some(cell => ['QTD', 'QTDE', 'QUANTIDADE'].includes(normalizeKey(cell))));
+
+const extractDeliveryLabelFromRows = (rows: unknown[][]) => {
+  for (const row of rows.slice(0, 15)) {
+    const labelIndex = row.findIndex(cell => ['NOME DA ESCOLA', 'LOCAL DE ENTREGA', 'UNIDADE ESCOLAR'].includes(normalizeKey(cell)));
+    if (labelIndex < 0) continue;
+    const label = row.slice(labelIndex + 1).map(displayText).find(Boolean);
+    if (label) return label;
+  }
+  return '';
+};
 
 const extractDateFromRows = (rows: unknown[][]) => {
   for (const row of rows.slice(0, 12)) {
@@ -869,7 +879,7 @@ const Operations: React.FC = () => {
     const headers = rows[headerRow].map(normalizeKey);
     const productIndex = headers.findIndex(header => header === 'PRODUTO');
     const unitIndex = headers.findIndex(header => ['UND', 'UNIDADE', 'EMBALAGEM'].includes(header));
-    const quantityIndex = headers.findIndex(header => ['QTD', 'QUANTIDADE'].includes(header));
+    const quantityIndex = headers.findIndex(header => ['QTD', 'QTDE', 'QUANTIDADE'].includes(header));
     const notesIndex = headers.findIndex(header => header === 'OBS' || header === 'OBS.');
     if (productIndex < 0 || quantityIndex < 0) return null;
 
@@ -881,8 +891,11 @@ const Operations: React.FC = () => {
     })).filter(item => item.product && item.quantity > 0);
 
     if (items.length === 0) return null;
+    const deliveryLabel = extractDeliveryLabelFromRows(rows);
     const sheetKey = normalizeKey(sheetName);
-    const matchedPoint = findDeliveryPointByLabel(sheetName) || operationPoints.find(point => sheetKey.includes(normalizeKey(point.code)));
+    const matchedPoint = (deliveryLabel ? findDeliveryPointByLabel(deliveryLabel) : undefined) ||
+      findDeliveryPointByLabel(sheetName) ||
+      operationPoints.find(point => sheetKey.includes(normalizeKey(point.code)));
     if (!matchedPoint && (operationPoints.length !== 1 || ignoredDeliveryHeaders.has(sheetKey))) return null;
     return { id: makeId('delivery'), deliveryPointId: matchedPoint?.id || operationPoints[0].id, items: aggregateDeliveryItems(items) };
   };
@@ -995,6 +1008,7 @@ const Operations: React.FC = () => {
       const extension = file.name.split('.').pop()?.toLowerCase();
       const order = extension === 'pdf' ? await parsePdfOrder(file) : await parseExcelOrder(file);
       persistOrders([order, ...orders]);
+      setActiveModule('orders');
       alert(`Pedido importado com ${order.deliveries.length} local(is) de entrega.`);
     } catch (err: any) {
       alert(err.message || 'Não foi possível importar o pedido.');
