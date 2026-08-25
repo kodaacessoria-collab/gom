@@ -114,6 +114,7 @@ const OPERATIONS_KEY = 'gom_delivery_operations';
 const SECTORS_KEY = 'gom_delivery_sectors';
 const DELIVERY_POINTS_KEY = 'gom_delivery_points';
 const ORDERS_KEY = 'gom_delivery_operation_orders';
+const ACTIVE_OPERATION_KEY = 'gom_active_delivery_operation';
 type SharedStateKey = typeof OPERATIONS_KEY | typeof SECTORS_KEY | typeof DELIVERY_POINTS_KEY | typeof ORDERS_KEY;
 let sharedStateWriteQueue: Promise<void> = Promise.resolve();
 
@@ -376,7 +377,7 @@ const Operations: React.FC = () => {
   const [deliveryPoints, setDeliveryPoints] = useState<DeliveryPoint[]>(() => readStorage(DELIVERY_POINTS_KEY, []));
   const [orders, setOrders] = useState<OperationOrder[]>(() => readStorage(ORDERS_KEY, []));
   const [products, setProducts] = useState<Product[]>([]);
-  const [activeOperationId, setActiveOperationId] = useState(() => operations[0]?.id || 'boituva');
+  const [activeOperationId, setActiveOperationId] = useState(() => readStorage(ACTIVE_OPERATION_KEY, operations[0]?.id || 'boituva'));
   const [newOperation, setNewOperation] = useState<OperationForm>(() => emptyOperationForm());
   const [editingOperationId, setEditingOperationId] = useState<string | null>(null);
   const [operationEditForm, setOperationEditForm] = useState<OperationForm>(() => emptyOperationForm());
@@ -401,6 +402,8 @@ const Operations: React.FC = () => {
   const [draftDeliveries, setDraftDeliveries] = useState<OrderDelivery[]>([]);
   const [editingDraftItem, setEditingDraftItem] = useState<{ deliveryPointId: string; itemIndex: number } | null>(null);
   const [importing, setImporting] = useState(false);
+  const [selectedImportFile, setSelectedImportFile] = useState<File | null>(null);
+  const [importInputKey, setImportInputKey] = useState(0);
   const [importFeedback, setImportFeedback] = useState<{ type: 'progress' | 'success' | 'error'; message: string } | null>(null);
   const [creatingPurchase, setCreatingPurchase] = useState(false);
   const [activeModule, setActiveModule] = useState<OperationsModule | null>(null);
@@ -1000,12 +1003,23 @@ const Operations: React.FC = () => {
     };
   };
 
-  const handleImport = async (event: React.FormEvent<HTMLInputElement>) => {
-    const input = event.currentTarget;
-    const file = input.files?.[0];
+  const handleImportFileSelection = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.currentTarget.files?.[0] || null;
+    setSelectedImportFile(file);
+    setImportFeedback(file ? { type: 'progress', message: `${file.name} selecionado. Clique em “Importar pedido” para continuar.` } : null);
+  };
+
+  const handleActiveOperationChange = (operationId: string) => {
+    setActiveOperationId(operationId);
+    saveStorage(ACTIVE_OPERATION_KEY, operationId);
+    setSelectedImportFile(null);
+    setImportInputKey(current => current + 1);
+    setImportFeedback(null);
+  };
+
+  const handleImport = async () => {
+    const file = selectedImportFile;
     if (!file || !activeOperation) return;
-    if (input.dataset.importing === 'true') return;
-    input.dataset.importing = 'true';
     setImporting(true);
     setImportFeedback({ type: 'progress', message: `Lendo ${file.name}...` });
     try {
@@ -1020,6 +1034,8 @@ const Operations: React.FC = () => {
       setOrders(nextOrders);
       saveStorage(ORDERS_KEY, nextOrders);
       setActiveModule('orders');
+      setSelectedImportFile(null);
+      setImportInputKey(current => current + 1);
       setImportFeedback({ type: 'success', message: `Pedido importado: ${order.deliveries.length} local(is) de entrega e ${buildSummary(order.deliveries).length} produto(s).` });
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : 'Não foi possível importar o pedido.';
@@ -1027,8 +1043,6 @@ const Operations: React.FC = () => {
       setImportFeedback({ type: 'error', message });
     } finally {
       setImporting(false);
-      delete input.dataset.importing;
-      input.value = '';
     }
   };
 
@@ -1964,35 +1978,28 @@ const Operations: React.FC = () => {
           <h1>Operações e Entregas</h1>
           <p>Cadastre operações, setores, locais de entrega, pedidos dos clientes, romaneios e compras necessárias.</p>
         </div>
-        <label
-          className="button"
-          style={{
-            width: 'auto',
-            cursor: importing || !activeOperation ? 'not-allowed' : 'pointer',
-            opacity: importing || !activeOperation ? 0.6 : 1,
-            overflow: 'hidden',
-            position: 'relative',
-          }}
-        >
-          <Upload size={18} style={{ marginRight: '0.5rem' }} />
-          {importing ? 'Importando...' : 'Importar Pedido'}
+        <div style={{ alignItems: 'center', display: 'flex', flexWrap: 'wrap', gap: '0.75rem', justifyContent: 'flex-end' }}>
           <input
+            key={importInputKey}
             type="file"
-            aria-label="Importar pedido"
+            aria-label="Selecionar arquivo do pedido"
             accept=".xlsx,.xls,.pdf"
+            className="input-field"
             disabled={importing || !activeOperation}
-            onChange={handleImport}
-            onInput={handleImport}
-            style={{
-              cursor: importing || !activeOperation ? 'not-allowed' : 'pointer',
-              height: '100%',
-              inset: 0,
-              opacity: 0,
-              position: 'absolute',
-              width: '100%',
-            }}
+            onChange={handleImportFileSelection}
+            style={{ maxWidth: '330px', width: 'min(330px, 100%)' }}
           />
-        </label>
+          <button
+            type="button"
+            className="button"
+            disabled={importing || !activeOperation || !selectedImportFile}
+            onClick={handleImport}
+            style={{ opacity: importing || !activeOperation || !selectedImportFile ? 0.6 : 1, width: 'auto' }}
+          >
+            <Upload size={18} style={{ marginRight: '0.5rem' }} />
+            {importing ? 'Importando...' : 'Importar Pedido'}
+          </button>
+        </div>
       </div>
 
       {importFeedback && (
@@ -2013,7 +2020,7 @@ const Operations: React.FC = () => {
       <div className="operations-module-toolbar">
         <div className="operations-active-selector">
           <label htmlFor="active-operation">Operação selecionada</label>
-          <select id="active-operation" className="input-field" value={activeOperationId} onChange={event => setActiveOperationId(event.target.value)}>
+          <select id="active-operation" className="input-field" value={activeOperationId} onChange={event => handleActiveOperationChange(event.target.value)}>
             {operations.map(operation => <option key={operation.id} value={operation.id}>{operation.name}</option>)}
           </select>
         </div>
