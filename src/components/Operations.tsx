@@ -132,7 +132,7 @@ const saveSharedState = (key: SharedStateKey, value: unknown) => {
   return write;
 };
 const REPORT_FONT = 'courier';
-const REPORT_FONT_SIZE = 8;
+const REPORT_FONT_SIZE = 11;
 const DELIVERY_CATEGORIES: DeliveryCategory[] = ['Hortifrutigranjeiro', 'Estocáveis', 'Dietas e Fórmulas', 'Proteínas', 'Limpeza'];
 const DEFAULT_LOGO_VARIANT: PdfLogoVariant = 'gom';
 const LOGO_OPTIONS: { value: PdfLogoVariant; label: string }[] = [
@@ -306,7 +306,17 @@ const addHeader = async (doc: jsPDF, operation: OperationContract, order: Operat
     subtitle: details || 'Documentacao de entrega',
     footer: subtitle,
     logoVariant: operation.logoVariant || DEFAULT_LOGO_VARIANT,
+    titleFontSize: 14,
   });
+};
+
+const addDeliveryAddress = (doc: jsPDF, point?: DeliveryPoint, startY = 46) => {
+  const address = `Endereco: ${point?.address || '-'} | Bairro: ${point?.neighborhood || '-'}`;
+  const addressLines = (doc.splitTextToSize(address, 182) as string[]).slice(0, 2);
+  doc.setFont(REPORT_FONT, 'normal');
+  doc.setFontSize(11);
+  doc.text(addressLines, 14, startY);
+  return startY + (addressLines.length * 5) + 4;
 };
 
 const addOrderGeneralNotes = (doc: jsPDF, order: OperationOrder, startY = 39) => {
@@ -1316,8 +1326,8 @@ const Operations: React.FC = () => {
     doc.setFontSize(REPORT_FONT_SIZE);
     await addHeader(doc, reportOperation, order, `${sector?.name || 'Sem setor'} | ${point?.name || 'Local de entrega'}`);
     doc.text(`Local: ${point?.name || '-'} | Codigo: ${point?.code || '-'}`, 14, 39);
-    doc.text(`Endereco: ${point?.address || '-'} | Bairro: ${point?.neighborhood || '-'}`, 14, 45);
-    const tableStartY = addOrderGeneralNotes(doc, order, 52);
+    const addressEndY = addDeliveryAddress(doc, point);
+    const tableStartY = addOrderGeneralNotes(doc, order, addressEndY);
 
     autoTable(doc, {
       startY: tableStartY,
@@ -1395,8 +1405,8 @@ const Operations: React.FC = () => {
       doc.setFontSize(REPORT_FONT_SIZE);
       await addHeader(doc, reportOperation, order, `${sector.name} | ${displayCode} - ${point?.name || 'Local de entrega'}`);
       doc.text(`Local: ${point?.name || '-'} | Codigo: ${displayCode}`, 14, 39);
-      doc.text(`Endereco: ${point?.address || '-'} | Bairro: ${point?.neighborhood || '-'}`, 14, 45);
-      tableStartY = addOrderGeneralNotes(doc, order, 52);
+      const addressEndY = addDeliveryAddress(doc, point);
+      tableStartY = addOrderGeneralNotes(doc, order, addressEndY);
 
       autoTable(doc, {
         startY: tableStartY,
@@ -1750,7 +1760,7 @@ const Operations: React.FC = () => {
       head: [['Produto', 'UND', ...periodReport.columns.map(column => `${formatDate(column.date)}\n${column.pointLabel}`), 'Total']],
       body,
       theme: 'grid',
-      styles: { font: REPORT_FONT, fontSize: periodReport.columns.length > 10 ? 5 : 7, cellPadding: 1, overflow: 'linebreak', valign: 'middle' },
+      styles: { font: REPORT_FONT, fontSize: REPORT_FONT_SIZE, cellPadding: 1, overflow: 'linebreak', valign: 'middle' },
       headStyles: { font: REPORT_FONT, fontStyle: 'bold', fillColor: [219, 234, 254], textColor: [0, 0, 0], halign: 'center' },
       columnStyles,
       horizontalPageBreak: periodReport.columns.length > 10,
@@ -1857,7 +1867,7 @@ const Operations: React.FC = () => {
       ]),
       foot: [['TOTAL', '', '', '', ordersSummaryReport.locationCount, ordersSummaryReport.itemCount, formatQuantity(ordersSummaryReport.totalQuantity)]],
       theme: 'grid',
-      styles: { font: REPORT_FONT, fontSize: 8, cellPadding: 1.7, valign: 'middle' },
+      styles: { font: REPORT_FONT, fontSize: REPORT_FONT_SIZE, cellPadding: 1.7, valign: 'middle' },
       headStyles: { font: REPORT_FONT, fontStyle: 'bold', fillColor: [79, 70, 229] },
       footStyles: { font: REPORT_FONT, fontStyle: 'bold', fillColor: [226, 232, 240], textColor: [0, 0, 0] },
     });

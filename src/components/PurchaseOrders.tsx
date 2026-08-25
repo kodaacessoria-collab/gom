@@ -8,7 +8,7 @@ import * as XLSX from 'xlsx';
 import { addPdfHeader } from '../lib/pdfBranding';
 
 const REPORT_FONT = 'courier';
-const REPORT_FONT_SIZE = 8;
+const REPORT_FONT_SIZE = 11;
 const COMPATIBILITY_STORAGE_KEY = 'gom_product_compatibilities';
 const ORDER_SLIPS_STORAGE_KEY = 'gom_purchase_order_slips';
 

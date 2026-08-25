@@ -14,6 +14,8 @@ interface PdfHeaderOptions {
   titleColor?: Color;
   textColor?: Color;
   height?: number;
+  titleFontSize?: number;
+  detailFontSize?: number;
 }
 
 const logoSources: Record<PdfLogoVariant, string> = {
@@ -55,7 +57,9 @@ export const addPdfHeader = async (doc: jsPDF, options: PdfHeaderOptions) => {
     fillColor = [255, 255, 255],
     titleColor = [10, 48, 92],
     textColor = [10, 48, 92],
-    height = 30,
+    height = 34,
+    titleFontSize = 11,
+    detailFontSize = 11,
   } = options;
 
   const pageWidth = doc.internal.pageSize.getWidth();
@@ -73,15 +77,16 @@ export const addPdfHeader = async (doc: jsPDF, options: PdfHeaderOptions) => {
   }
 
   doc.setFont('courier', 'bold');
-  doc.setFontSize(8);
+  doc.setFontSize(titleFontSize);
   doc.setTextColor(...titleColor);
-  doc.text(title, 36, 10, { maxWidth: pageWidth - 46 });
+  const titleLines = (doc.splitTextToSize(title, pageWidth - 46) as string[]).slice(0, 2);
+  doc.text(titleLines, 36, 8);
 
   doc.setFont('courier', 'bold');
-  doc.setFontSize(8);
+  doc.setFontSize(detailFontSize);
   doc.setTextColor(...textColor);
-  if (subtitle) doc.text(subtitle, 36, 18, { maxWidth: pageWidth - 46 });
-  if (footer) doc.text(footer, 36, 26, { maxWidth: pageWidth - 46 });
+  if (subtitle) doc.text(subtitle, 36, 22, { maxWidth: pageWidth - 46 });
+  if (footer) doc.text(footer, 36, 29, { maxWidth: pageWidth - 46 });
 
   doc.setTextColor(31, 41, 55);
 };

@@ -11,7 +11,7 @@ interface ReportsProps {
 }
 
 const REPORT_FONT = 'courier';
-const REPORT_FONT_SIZE = 8;
+const REPORT_FONT_SIZE = 11;
 
 const reportTableOptions = {
   styles: { font: REPORT_FONT, fontSize: REPORT_FONT_SIZE, cellPadding: 1.5 },

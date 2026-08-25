@@ -11,7 +11,7 @@ import type { Category, Deposit } from '../types';
 import { addPdfHeader } from '../lib/pdfBranding';
 
 const REPORT_FONT = 'courier';
-const REPORT_FONT_SIZE = 8;
+const REPORT_FONT_SIZE = 11;
 
 /* ────────────── Types ────────────── */
 interface Audit {
