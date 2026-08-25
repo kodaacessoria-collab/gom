@@ -402,6 +402,7 @@ const Operations: React.FC = () => {
   const [draftDeliveries, setDraftDeliveries] = useState<OrderDelivery[]>([]);
   const [editingDraftItem, setEditingDraftItem] = useState<{ deliveryPointId: string; itemIndex: number } | null>(null);
   const [importing, setImporting] = useState(false);
+  const [importFeedback, setImportFeedback] = useState<{ type: 'progress' | 'success' | 'error'; message: string } | null>(null);
   const [creatingPurchase, setCreatingPurchase] = useState(false);
   const [activeModule, setActiveModule] = useState<OperationsModule | null>(null);
   const [deliverySortDirection, setDeliverySortDirection] = useState<'asc' | 'desc'>('desc');
@@ -1001,20 +1002,31 @@ const Operations: React.FC = () => {
   };
 
   const handleImport = async (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
+    const input = event.currentTarget;
+    const file = input.files?.[0];
     if (!file || !activeOperation) return;
     setImporting(true);
+    setImportFeedback({ type: 'progress', message: `Lendo ${file.name}...` });
     try {
       const extension = file.name.split('.').pop()?.toLowerCase();
+      if (!extension || !['xlsx', 'xls', 'pdf'].includes(extension)) {
+        throw new Error('Formato não suportado. Selecione um arquivo Excel (.xlsx ou .xls) ou PDF.');
+      }
       const order = extension === 'pdf' ? await parsePdfOrder(file) : await parseExcelOrder(file);
-      persistOrders([order, ...orders]);
+      const nextOrders = [order, ...orders];
+      setImportFeedback({ type: 'progress', message: `Salvando ${order.deliveries.length} local(is) de entrega...` });
+      await saveSharedState(ORDERS_KEY, nextOrders);
+      setOrders(nextOrders);
+      saveStorage(ORDERS_KEY, nextOrders);
       setActiveModule('orders');
-      alert(`Pedido importado com ${order.deliveries.length} local(is) de entrega.`);
-    } catch (err: any) {
-      alert(err.message || 'Não foi possível importar o pedido.');
+      setImportFeedback({ type: 'success', message: `Pedido importado: ${order.deliveries.length} local(is) de entrega e ${buildSummary(order.deliveries).length} produto(s).` });
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : 'Não foi possível importar o pedido.';
+      console.error('Falha ao importar pedido:', error);
+      setImportFeedback({ type: 'error', message });
     } finally {
       setImporting(false);
-      event.target.value = '';
+      input.value = '';
     }
   };
 
@@ -1969,6 +1981,21 @@ const Operations: React.FC = () => {
           onChange={handleImport}
         />
       </div>
+
+      {importFeedback && (
+        <div
+          className="card"
+          role={importFeedback.type === 'error' ? 'alert' : 'status'}
+          style={{
+            marginBottom: '1rem',
+            padding: '0.85rem 1rem',
+            borderColor: importFeedback.type === 'error' ? '#ef4444' : importFeedback.type === 'success' ? '#10b981' : '#6366f1',
+            color: importFeedback.type === 'error' ? '#fca5a5' : importFeedback.type === 'success' ? '#6ee7b7' : 'var(--text-muted)',
+          }}
+        >
+          {importFeedback.message}
+        </div>
+      )}
 
       <div className="operations-module-toolbar">
         <div className="operations-active-selector">
