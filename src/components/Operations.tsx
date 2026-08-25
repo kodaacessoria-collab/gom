@@ -37,7 +37,7 @@ GlobalWorkerOptions.workerSrc = new URL('pdfjs-dist/build/pdf.worker.mjs', impor
 
 type SourceType = 'Manual' | 'Excel' | 'PDF';
 type DeliveryCategory = 'Hortifrutigranjeiro' | 'Estocáveis' | 'Dietas e Fórmulas' | 'Proteínas' | 'Limpeza';
-type OperationsModule = 'operations' | 'locations' | 'order-entry' | 'orders' | 'history' | 'orders-summary-report' | 'period-report';
+type OperationsModule = 'operations' | 'locations' | 'order-entry' | 'orders' | 'history' | 'orders-summary-report' | 'period-report' | 'products-by-date-report';
 
 interface OperationContract {
   id: string;
@@ -1758,6 +1758,105 @@ const Operations: React.FC = () => {
     return `${sanitizeFileName(`RELATORIO PRODUTOS - ${operationName} - ${categoryName} - ${productName} - ${pointName} - ${formatDate(reportStartDate)} a ${formatDate(reportEndDate)}`)}.${extension}`;
   };
 
+  const productsByDateReport = useMemo(() => {
+    const filteredOrders = operationOrders.filter(order =>
+      (reportCategory === 'Todas' || order.category === reportCategory) &&
+      (!reportStartDate || order.deliveryDate >= reportStartDate) &&
+      (!reportEndDate || order.deliveryDate <= reportEndDate)
+    );
+    const dates = Array.from(new Set(filteredOrders.map(order => order.deliveryDate))).sort();
+    const productsByKey = new Map<string, { product: string; unit: string; quantities: Record<string, number>; total: number }>();
+
+    filteredOrders.forEach(order => {
+      order.deliveries.forEach(delivery => {
+        aggregateDeliveryItems(delivery.items).forEach(item => {
+          const key = stockKey(item.product, item.unit);
+          const current = productsByKey.get(key) || { product: item.product, unit: item.unit, quantities: {}, total: 0 };
+          current.quantities[order.deliveryDate] = (current.quantities[order.deliveryDate] || 0) + item.quantity;
+          current.total += item.quantity;
+          productsByKey.set(key, current);
+        });
+      });
+    });
+
+    const rows = Array.from(productsByKey.values()).sort((a, b) =>
+      a.product.localeCompare(b.product) || a.unit.localeCompare(b.unit)
+    );
+    const dateTotals = dates.reduce<Record<string, number>>((acc, date) => {
+      acc[date] = rows.reduce((sum, row) => sum + (row.quantities[date] || 0), 0);
+      return acc;
+    }, {});
+
+    return {
+      dates,
+      rows,
+      orderCount: filteredOrders.length,
+      deliveryCount: filteredOrders.reduce((sum, order) => sum + order.deliveries.length, 0),
+      dateTotals,
+      grandTotal: rows.reduce((sum, row) => sum + row.total, 0),
+    };
+  }, [operationOrders, reportCategory, reportStartDate, reportEndDate]);
+
+  const generateProductsByDateExcel = () => {
+    if (!activeOperation || productsByDateReport.rows.length === 0) {
+      alert('Nenhum produto foi encontrado para os filtros selecionados.');
+      return;
+    }
+    const categoryLabel = reportCategory === 'Todas' ? 'Todas as categorias' : reportCategory;
+    const data: (string | number)[][] = [
+      [`Total de produtos por data - ${activeOperation.name}`],
+      ['Operação', activeOperation.name, 'Categoria', categoryLabel],
+      ['Período', `${formatDate(reportStartDate)} a ${formatDate(reportEndDate)}`],
+      ['Pedidos considerados', productsByDateReport.orderCount, 'Entregas somadas', productsByDateReport.deliveryCount],
+      [],
+      ['Produto', 'UND', ...productsByDateReport.dates.map(formatDate), 'Qtd. total', 'Preço de custo', 'Custo total'],
+      ...productsByDateReport.rows.map(row => [
+        row.product,
+        row.unit,
+        ...productsByDateReport.dates.map(date => row.quantities[date] || 0),
+        row.total,
+        '',
+        '',
+      ]),
+      ['TOTAL GERAL', '', ...productsByDateReport.dates.map(date => productsByDateReport.dateTotals[date] || 0), productsByDateReport.grandTotal, '', ''],
+    ];
+    const workbook = XLSX.utils.book_new();
+    const sheet = XLSX.utils.aoa_to_sheet(data);
+    const headerRowIndex = 5;
+    const firstDataRowIndex = headerRowIndex + 1;
+    const totalRowIndex = data.length - 1;
+    const quantityTotalColumnIndex = productsByDateReport.dates.length + 2;
+    const costPriceColumnIndex = quantityTotalColumnIndex + 1;
+    const totalCostColumnIndex = quantityTotalColumnIndex + 2;
+
+    productsByDateReport.rows.forEach((_, rowIndex) => {
+      const dataRowIndex = firstDataRowIndex + rowIndex;
+      const quantityCell = XLSX.utils.encode_cell({ r: dataRowIndex, c: quantityTotalColumnIndex });
+      const costPriceCell = XLSX.utils.encode_cell({ r: dataRowIndex, c: costPriceColumnIndex });
+      const totalCostCell = XLSX.utils.encode_cell({ r: dataRowIndex, c: totalCostColumnIndex });
+      sheet[costPriceCell] = { t: 'z', z: 'R$ #,##0.00' };
+      sheet[totalCostCell] = { t: 'n', f: `IF(${costPriceCell}="","",${quantityCell}*${costPriceCell})`, z: 'R$ #,##0.00' };
+    });
+
+    const totalCostCell = XLSX.utils.encode_cell({ r: totalRowIndex, c: totalCostColumnIndex });
+    const firstTotalCostCell = XLSX.utils.encode_cell({ r: firstDataRowIndex, c: totalCostColumnIndex });
+    const lastTotalCostCell = XLSX.utils.encode_cell({ r: totalRowIndex - 1, c: totalCostColumnIndex });
+    sheet[totalCostCell] = { t: 'n', f: `SUM(${firstTotalCostCell}:${lastTotalCostCell})`, z: 'R$ #,##0.00' };
+    sheet['!cols'] = [
+      { wch: 42 },
+      { wch: 14 },
+      ...productsByDateReport.dates.map(() => ({ wch: 14 })),
+      { wch: 16 },
+      { wch: 18 },
+      { wch: 18 },
+    ];
+    sheet['!autofilter'] = { ref: XLSX.utils.encode_range({ s: { r: headerRowIndex, c: 0 }, e: { r: totalRowIndex - 1, c: totalCostColumnIndex } }) };
+    XLSX.utils.book_append_sheet(workbook, sheet, 'Total por data');
+    const categoryName = reportCategory === 'Todas' ? 'Todas categorias' : reportCategory;
+    const fileName = sanitizeFileName(`TOTAL PRODUTOS POR DATA - ${activeOperation.name} - ${categoryName} - ${formatDate(reportStartDate)} a ${formatDate(reportEndDate)}`);
+    XLSX.writeFile(workbook, `${fileName}.xlsx`);
+  };
+
   const generatePeriodReportPdf = async () => {
     if (!activeOperation || periodReport.rows.length === 0) {
       alert('Nenhum produto entregue foi encontrado para os filtros selecionados.');
@@ -2053,6 +2152,7 @@ const Operations: React.FC = () => {
           <button type="button" className="operations-module-button" onClick={() => setActiveModule('history')}><History size={22} /><span><strong>Histórico</strong><small>Consultar entregas anteriores</small></span></button>
           <button type="button" className="operations-module-button" onClick={() => setActiveModule('orders-summary-report')}><FileSpreadsheet size={22} /><span><strong>Relatório de pedidos</strong><small>Resumo sintético dos pedidos</small></span></button>
           <button type="button" className="operations-module-button" onClick={() => setActiveModule('period-report')}><Search size={22} /><span><strong>Produtos por categoria e período</strong><small>Filtrar categoria e datas</small></span></button>
+          <button type="button" className="operations-module-button" onClick={() => setActiveModule('products-by-date-report')}><FileSpreadsheet size={22} /><span><strong>Total de produtos por data</strong><small>Somar todos os locais por dia</small></span></button>
         </div>
       </div>
 
@@ -2673,6 +2773,68 @@ const Operations: React.FC = () => {
                     </tr>
                   )}
                   {periodReport.rows.length === 0 && <tr><td colSpan={periodReport.columns.length + 3} style={{ textAlign: 'center', padding: '2rem' }}>Nenhuma entrega encontrada para os filtros selecionados.</td></tr>}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <div className="card operations-module-window module-products-by-date-report" style={{ maxWidth: 'none', padding: '1.5rem' }}>
+            <div className="view-header" style={{ marginBottom: '1rem', gap: '1rem' }}>
+              <div>
+                <h2 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}><FileSpreadsheet size={20} /> Total de produtos por data</h2>
+                <p style={{ textAlign: 'left', marginBottom: 0 }}>Soma todos os locais de entrega e mostra uma única coluna para cada data.</p>
+              </div>
+            </div>
+            <div className="period-report-filters">
+              <div>
+                <label>Categoria</label>
+                <select className="input-field" value={reportCategory} onChange={event => setReportCategory(event.target.value as 'Todas' | DeliveryCategory)}>
+                  <option value="Todas">Todas as categorias</option>
+                  {DELIVERY_CATEGORIES.map(category => <option key={category} value={category}>{category}</option>)}
+                </select>
+              </div>
+              <div>
+                <label>Data inicial</label>
+                <input type="date" className="input-field" max={reportEndDate || undefined} value={reportStartDate} onChange={event => setReportStartDate(event.target.value)} />
+              </div>
+              <div>
+                <label>Data final</label>
+                <input type="date" className="input-field" min={reportStartDate || undefined} value={reportEndDate} onChange={event => setReportEndDate(event.target.value)} />
+              </div>
+              <div className="period-report-actions">
+                <button type="button" className="button button-outline excel-action" disabled={productsByDateReport.rows.length === 0} onClick={generateProductsByDateExcel}>
+                  <FileSpreadsheet size={17} style={{ marginRight: '0.45rem' }} /> Gerar Excel
+                </button>
+              </div>
+            </div>
+            <div className="period-report-summary">
+              <span className="badge badge-blue">{productsByDateReport.orderCount} pedido(s)</span>
+              <span className="badge badge-green">{productsByDateReport.rows.length} produto(s)</span>
+              <span className="badge">{productsByDateReport.dates.length} data(s)</span>
+              <span className="badge">{productsByDateReport.deliveryCount} entrega(s) somadas</span>
+            </div>
+            <div style={{ overflowX: 'auto', marginTop: '1rem' }}>
+              <table className="data-table">
+                <thead>
+                  <tr><th>Produto</th><th>UND</th>{productsByDateReport.dates.map(date => <th key={date}>{formatDate(date)}</th>)}<th>Qtd. total</th></tr>
+                </thead>
+                <tbody>
+                  {productsByDateReport.rows.map(row => (
+                    <tr key={stockKey(row.product, row.unit)}>
+                      <td style={{ fontWeight: 600 }}>{row.product}</td>
+                      <td>{row.unit}</td>
+                      {productsByDateReport.dates.map(date => <td key={date}>{row.quantities[date] ? formatQuantity(row.quantities[date]) : '-'}</td>)}
+                      <td style={{ fontWeight: 700 }}>{formatQuantity(row.total)}</td>
+                    </tr>
+                  ))}
+                  {productsByDateReport.rows.length > 0 && (
+                    <tr style={{ background: '#eff6ff', fontWeight: 800 }}>
+                      <td>Total geral</td><td></td>
+                      {productsByDateReport.dates.map(date => <td key={date}>{formatQuantity(productsByDateReport.dateTotals[date] || 0)}</td>)}
+                      <td>{formatQuantity(productsByDateReport.grandTotal)}</td>
+                    </tr>
+                  )}
+                  {productsByDateReport.rows.length === 0 && <tr><td colSpan={productsByDateReport.dates.length + 3} style={{ textAlign: 'center', padding: '2rem' }}>Nenhuma entrega encontrada para os filtros selecionados.</td></tr>}
                 </tbody>
               </table>
             </div>
