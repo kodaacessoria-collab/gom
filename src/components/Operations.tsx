@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ArrowDown,
   ArrowUp,
@@ -361,6 +361,7 @@ const getRomaneioFileName = (operation: OperationContract, order: OperationOrder
 };
 
 const Operations: React.FC = () => {
+  const importInputRef = useRef<HTMLInputElement>(null);
   const [operations, setOperations] = useState<OperationContract[]>(() => readStorage(OPERATIONS_KEY, defaultOperations));
   const [sectors, setSectors] = useState<Sector[]>(() => readStorage(SECTORS_KEY, defaultSectors));
   const [deliveryPoints, setDeliveryPoints] = useState<DeliveryPoint[]>(() => readStorage(DELIVERY_POINTS_KEY, []));
@@ -988,7 +989,6 @@ const Operations: React.FC = () => {
 
   const handleImport = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
-    event.target.value = '';
     if (!file || !activeOperation) return;
     setImporting(true);
     try {
@@ -1000,6 +1000,7 @@ const Operations: React.FC = () => {
       alert(err.message || 'Não foi possível importar o pedido.');
     } finally {
       setImporting(false);
+      event.target.value = '';
     }
   };
 
@@ -1935,11 +1936,24 @@ const Operations: React.FC = () => {
           <h1>Operações e Entregas</h1>
           <p>Cadastre operações, setores, locais de entrega, pedidos dos clientes, romaneios e compras necessárias.</p>
         </div>
-        <label className="button" style={{ width: 'auto', cursor: activeOperation ? 'pointer' : 'not-allowed', opacity: importing ? 0.6 : 1 }}>
+        <button
+          type="button"
+          className="button"
+          style={{ width: 'auto' }}
+          disabled={importing || !activeOperation}
+          onClick={() => importInputRef.current?.click()}
+        >
           <Upload size={18} style={{ marginRight: '0.5rem' }} />
           {importing ? 'Importando...' : 'Importar Pedido'}
-          <input type="file" hidden accept=".xlsx,.xls,.pdf" disabled={importing || !activeOperation} onChange={handleImport} />
-        </label>
+        </button>
+        <input
+          ref={importInputRef}
+          type="file"
+          hidden
+          accept=".xlsx,.xls,.pdf"
+          disabled={importing || !activeOperation}
+          onChange={handleImport}
+        />
       </div>
 
       <div className="operations-module-toolbar">
