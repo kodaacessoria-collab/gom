@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   ArrowDown,
   ArrowUp,
@@ -371,7 +371,6 @@ const getRomaneioFileName = (operation: OperationContract, order: OperationOrder
 };
 
 const Operations: React.FC = () => {
-  const importInputRef = useRef<HTMLInputElement>(null);
   const [operations, setOperations] = useState<OperationContract[]>(() => readStorage(OPERATIONS_KEY, defaultOperations));
   const [sectors, setSectors] = useState<Sector[]>(() => readStorage(SECTORS_KEY, defaultSectors));
   const [deliveryPoints, setDeliveryPoints] = useState<DeliveryPoint[]>(() => readStorage(DELIVERY_POINTS_KEY, []));
@@ -1001,10 +1000,12 @@ const Operations: React.FC = () => {
     };
   };
 
-  const handleImport = async (event: React.ChangeEvent<HTMLInputElement>) => {
+  const handleImport = async (event: React.FormEvent<HTMLInputElement>) => {
     const input = event.currentTarget;
     const file = input.files?.[0];
     if (!file || !activeOperation) return;
+    if (input.dataset.importing === 'true') return;
+    input.dataset.importing = 'true';
     setImporting(true);
     setImportFeedback({ type: 'progress', message: `Lendo ${file.name}...` });
     try {
@@ -1026,6 +1027,7 @@ const Operations: React.FC = () => {
       setImportFeedback({ type: 'error', message });
     } finally {
       setImporting(false);
+      delete input.dataset.importing;
       input.value = '';
     }
   };
@@ -1962,24 +1964,35 @@ const Operations: React.FC = () => {
           <h1>Operações e Entregas</h1>
           <p>Cadastre operações, setores, locais de entrega, pedidos dos clientes, romaneios e compras necessárias.</p>
         </div>
-        <button
-          type="button"
+        <label
           className="button"
-          style={{ width: 'auto' }}
-          disabled={importing || !activeOperation}
-          onClick={() => importInputRef.current?.click()}
+          style={{
+            width: 'auto',
+            cursor: importing || !activeOperation ? 'not-allowed' : 'pointer',
+            opacity: importing || !activeOperation ? 0.6 : 1,
+            overflow: 'hidden',
+            position: 'relative',
+          }}
         >
           <Upload size={18} style={{ marginRight: '0.5rem' }} />
           {importing ? 'Importando...' : 'Importar Pedido'}
-        </button>
-        <input
-          ref={importInputRef}
-          type="file"
-          hidden
-          accept=".xlsx,.xls,.pdf"
-          disabled={importing || !activeOperation}
-          onChange={handleImport}
-        />
+          <input
+            type="file"
+            aria-label="Importar pedido"
+            accept=".xlsx,.xls,.pdf"
+            disabled={importing || !activeOperation}
+            onChange={handleImport}
+            onInput={handleImport}
+            style={{
+              cursor: importing || !activeOperation ? 'not-allowed' : 'pointer',
+              height: '100%',
+              inset: 0,
+              opacity: 0,
+              position: 'absolute',
+              width: '100%',
+            }}
+          />
+        </label>
       </div>
 
       {importFeedback && (
