@@ -114,8 +114,14 @@ const OPERATIONS_KEY = 'gom_delivery_operations';
 const SECTORS_KEY = 'gom_delivery_sectors';
 const DELIVERY_POINTS_KEY = 'gom_delivery_points';
 const ORDERS_KEY = 'gom_delivery_operation_orders';
+const PRODUCT_PRICES_KEY = 'gom_delivery_product_prices';
 const ACTIVE_OPERATION_KEY = 'gom_active_delivery_operation';
-type SharedStateKey = typeof OPERATIONS_KEY | typeof SECTORS_KEY | typeof DELIVERY_POINTS_KEY | typeof ORDERS_KEY;
+type SharedStateKey = typeof OPERATIONS_KEY | typeof SECTORS_KEY | typeof DELIVERY_POINTS_KEY | typeof ORDERS_KEY | typeof PRODUCT_PRICES_KEY;
+interface ProductPrice {
+  costPrice: number;
+  salePrice: number;
+}
+type ProductPrices = Record<string, ProductPrice>;
 let sharedStateWriteQueue: Promise<void> = Promise.resolve();
 
 const saveSharedState = (key: SharedStateKey, value: unknown) => {
@@ -204,6 +210,7 @@ const formatDateTime = (value: string) => {
   return `${date.toLocaleDateString('pt-BR')} às ${date.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}`;
 };
 const formatQuantity = (value: number) => Number.isInteger(value) ? String(value) : value.toLocaleString('pt-BR', { maximumFractionDigits: 3 });
+const formatCurrency = (value: number) => value.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 
 const stockKey = (product: string, unit: string) => `${normalizeKey(product)}|${normalizeKey(unit || 'UN')}`;
 
@@ -376,6 +383,7 @@ const Operations: React.FC = () => {
   const [sectors, setSectors] = useState<Sector[]>(() => readStorage(SECTORS_KEY, defaultSectors));
   const [deliveryPoints, setDeliveryPoints] = useState<DeliveryPoint[]>(() => readStorage(DELIVERY_POINTS_KEY, []));
   const [orders, setOrders] = useState<OperationOrder[]>(() => readStorage(ORDERS_KEY, []));
+  const [productPrices, setProductPrices] = useState<ProductPrices>(() => readStorage(PRODUCT_PRICES_KEY, {}));
   const [products, setProducts] = useState<Product[]>([]);
   const [activeOperationId, setActiveOperationId] = useState(() => readStorage(ACTIVE_OPERATION_KEY, operations[0]?.id || 'boituva'));
   const [newOperation, setNewOperation] = useState<OperationForm>(() => emptyOperationForm());
@@ -452,6 +460,7 @@ const Operations: React.FC = () => {
         if (row.key === SECTORS_KEY) setSectors(row.value as Sector[]);
         if (row.key === DELIVERY_POINTS_KEY) setDeliveryPoints(row.value as DeliveryPoint[]);
         if (row.key === ORDERS_KEY) setOrders(row.value as OperationOrder[]);
+        if (row.key === PRODUCT_PRICES_KEY) setProductPrices(row.value as ProductPrices);
       })
       .subscribe();
     return () => { void supabase.removeChannel(channel); };
@@ -468,7 +477,7 @@ const Operations: React.FC = () => {
   }
 
   async function loadSharedState() {
-    const keys: SharedStateKey[] = [OPERATIONS_KEY, SECTORS_KEY, DELIVERY_POINTS_KEY, ORDERS_KEY];
+    const keys: SharedStateKey[] = [OPERATIONS_KEY, SECTORS_KEY, DELIVERY_POINTS_KEY, ORDERS_KEY, PRODUCT_PRICES_KEY];
     const { data, error } = await supabase.from('app_shared_state').select('key,value').in('key', keys);
     if (error) {
       console.error('Falha ao carregar dados compartilhados:', error);
@@ -482,15 +491,18 @@ const Operations: React.FC = () => {
     const nextSectors = (rows.get(SECTORS_KEY) as Sector[] | undefined) || sectors;
     const nextPoints = (rows.get(DELIVERY_POINTS_KEY) as DeliveryPoint[] | undefined) || deliveryPoints;
     const nextOrders = (rows.get(ORDERS_KEY) as OperationOrder[] | undefined) || orders;
+    const nextProductPrices = (rows.get(PRODUCT_PRICES_KEY) as ProductPrices | undefined) || productPrices;
 
     setOperations(nextOperations);
     setSectors(nextSectors);
     setDeliveryPoints(nextPoints);
     setOrders(nextOrders);
+    setProductPrices(nextProductPrices);
     saveStorage(OPERATIONS_KEY, nextOperations);
     saveStorage(SECTORS_KEY, nextSectors);
     saveStorage(DELIVERY_POINTS_KEY, nextPoints);
     saveStorage(ORDERS_KEY, nextOrders);
+    saveStorage(PRODUCT_PRICES_KEY, nextProductPrices);
     setActiveOperationId(current => nextOperations.some(operation => operation.id === current) ? current : (nextOperations[0]?.id || ''));
     setSharedStateReady(true);
   }
@@ -561,6 +573,22 @@ const Operations: React.FC = () => {
     setOrders(next);
     saveStorage(ORDERS_KEY, next);
     void saveSharedState(ORDERS_KEY, next).catch(reportSharedStateError);
+  };
+
+  const persistProductPrice = (key: string, field: keyof ProductPrice, value: string) => {
+    const parsedValue = Number(value);
+    const nextValue = Number.isFinite(parsedValue) ? Math.max(0, parsedValue) : 0;
+    const next = {
+      ...productPrices,
+      [key]: {
+        costPrice: productPrices[key]?.costPrice || 0,
+        salePrice: productPrices[key]?.salePrice || 0,
+        [field]: nextValue,
+      },
+    };
+    setProductPrices(next);
+    saveStorage(PRODUCT_PRICES_KEY, next);
+    void saveSharedState(PRODUCT_PRICES_KEY, next).catch(reportSharedStateError);
   };
 
   const addOperation = (event: React.FormEvent) => {
@@ -1804,56 +1832,45 @@ const Operations: React.FC = () => {
     }
     const categoryLabel = reportCategory === 'Todas' ? 'Todas as categorias' : reportCategory;
     const data: (string | number)[][] = [
-      [`Total de produtos por data - ${activeOperation.name}`],
+      [`Faturamento dos produtos entregues - ${activeOperation.name}`],
       ['Operação', activeOperation.name, 'Categoria', categoryLabel],
       ['Período', `${formatDate(reportStartDate)} a ${formatDate(reportEndDate)}`],
       ['Pedidos considerados', productsByDateReport.orderCount, 'Entregas somadas', productsByDateReport.deliveryCount],
       [],
-      ['Produto', 'UND', ...productsByDateReport.dates.map(formatDate), 'Qtd. total', 'Preço de custo', 'Custo total'],
-      ...productsByDateReport.rows.map(row => [
-        row.product,
-        row.unit,
-        ...productsByDateReport.dates.map(date => row.quantities[date] || 0),
-        row.total,
-        '',
-        '',
-      ]),
-      ['TOTAL GERAL', '', ...productsByDateReport.dates.map(date => productsByDateReport.dateTotals[date] || 0), productsByDateReport.grandTotal, '', ''],
+      ['Produto entregue', 'UND', 'Quantidade', 'Preço de custo', 'Total do custo', 'Margem venda', 'Preço de venda', 'Total da venda'],
+      ...productsByDateReport.rows.map(row => {
+        const price = productPrices[stockKey(row.product, row.unit)] || { costPrice: 0, salePrice: 0 };
+        const margin = price.salePrice > 0 ? ((price.salePrice - price.costPrice) / price.salePrice) * 100 : 0;
+        return [row.product, row.unit, row.total, price.costPrice, row.total * price.costPrice, margin / 100, price.salePrice, row.total * price.salePrice];
+      }),
+      ['TOTAL GERAL', '', productsByDateReport.grandTotal, '',
+        productsByDateReport.rows.reduce((sum, row) => sum + row.total * (productPrices[stockKey(row.product, row.unit)]?.costPrice || 0), 0),
+        '', '',
+        productsByDateReport.rows.reduce((sum, row) => sum + row.total * (productPrices[stockKey(row.product, row.unit)]?.salePrice || 0), 0)],
     ];
     const workbook = XLSX.utils.book_new();
     const sheet = XLSX.utils.aoa_to_sheet(data);
     const headerRowIndex = 5;
     const firstDataRowIndex = headerRowIndex + 1;
     const totalRowIndex = data.length - 1;
-    const quantityTotalColumnIndex = productsByDateReport.dates.length + 2;
-    const costPriceColumnIndex = quantityTotalColumnIndex + 1;
-    const totalCostColumnIndex = quantityTotalColumnIndex + 2;
-
-    productsByDateReport.rows.forEach((_, rowIndex) => {
-      const dataRowIndex = firstDataRowIndex + rowIndex;
-      const quantityCell = XLSX.utils.encode_cell({ r: dataRowIndex, c: quantityTotalColumnIndex });
-      const costPriceCell = XLSX.utils.encode_cell({ r: dataRowIndex, c: costPriceColumnIndex });
-      const totalCostCell = XLSX.utils.encode_cell({ r: dataRowIndex, c: totalCostColumnIndex });
-      sheet[costPriceCell] = { t: 'z', z: 'R$ #,##0.00' };
-      sheet[totalCostCell] = { t: 'n', f: `IF(${costPriceCell}="","",${quantityCell}*${costPriceCell})`, z: 'R$ #,##0.00' };
-    });
-
-    const totalCostCell = XLSX.utils.encode_cell({ r: totalRowIndex, c: totalCostColumnIndex });
-    const firstTotalCostCell = XLSX.utils.encode_cell({ r: firstDataRowIndex, c: totalCostColumnIndex });
-    const lastTotalCostCell = XLSX.utils.encode_cell({ r: totalRowIndex - 1, c: totalCostColumnIndex });
-    sheet[totalCostCell] = { t: 'n', f: `SUM(${firstTotalCostCell}:${lastTotalCostCell})`, z: 'R$ #,##0.00' };
+    for (let row = firstDataRowIndex; row <= totalRowIndex; row += 1) {
+      [3, 4, 6, 7].forEach(column => {
+        const cell = sheet[XLSX.utils.encode_cell({ r: row, c: column })];
+        if (cell) cell.z = 'R$ #,##0.00';
+      });
+      const marginCell = sheet[XLSX.utils.encode_cell({ r: row, c: 5 })];
+      if (marginCell) marginCell.z = '0.00%';
+    }
     sheet['!cols'] = [
       { wch: 42 },
-      { wch: 14 },
-      ...productsByDateReport.dates.map(() => ({ wch: 14 })),
-      { wch: 16 },
-      { wch: 18 },
-      { wch: 18 },
+      { wch: 12 }, { wch: 14 }, { wch: 18 }, { wch: 18 }, { wch: 16 }, { wch: 18 }, { wch: 18 },
     ];
-    sheet['!autofilter'] = { ref: XLSX.utils.encode_range({ s: { r: headerRowIndex, c: 0 }, e: { r: totalRowIndex - 1, c: totalCostColumnIndex } }) };
-    XLSX.utils.book_append_sheet(workbook, sheet, 'Total por data');
+    sheet['!autofilter'] = { ref: XLSX.utils.encode_range({ s: { r: headerRowIndex, c: 0 }, e: { r: totalRowIndex - 1, c: 7 } }) };
+    sheet['!pageSetup'] = { orientation: 'landscape', fitToWidth: 1, fitToHeight: 0 };
+    sheet['!margins'] = { left: 0.15, right: 0.15, top: 0.25, bottom: 0.25, header: 0.1, footer: 0.1 };
+    XLSX.utils.book_append_sheet(workbook, sheet, 'Faturamento');
     const categoryName = reportCategory === 'Todas' ? 'Todas categorias' : reportCategory;
-    const fileName = sanitizeFileName(`TOTAL PRODUTOS POR DATA - ${activeOperation.name} - ${categoryName} - ${formatDate(reportStartDate)} a ${formatDate(reportEndDate)}`);
+    const fileName = sanitizeFileName(`FATURAMENTO DE ENTREGAS - ${activeOperation.name} - ${categoryName} - ${formatDate(reportStartDate)} a ${formatDate(reportEndDate)}`);
     XLSX.writeFile(workbook, `${fileName}.xlsx`);
   };
 
@@ -1864,47 +1881,46 @@ const Operations: React.FC = () => {
     }
 
     const categoryLabel = reportCategory === 'Todas' ? 'Todas as categorias' : reportCategory;
-    const baseName = sanitizeFileName(`TOTAL PRODUTOS POR DATA - ${activeOperation.name} - ${categoryLabel} - ${formatDate(reportStartDate)} a ${formatDate(reportEndDate)}`);
+    const baseName = sanitizeFileName(`FATURAMENTO DE ENTREGAS - ${activeOperation.name} - ${categoryLabel} - ${formatDate(reportStartDate)} a ${formatDate(reportEndDate)}`);
     const fileName = `${baseName}.pdf`;
     const writer = await preparePdfWriter(activeOperation, fileName);
     const doc = new jsPDF({ orientation: 'landscape' });
     const letterheadTitle = `RELATORIO DOS PRODUTOS ENTREGUES - ${getOperationTitle(activeOperation).toUpperCase()}`;
     const letterheadSubtitle = `Categoria: ${categoryLabel} | Periodo: ${formatDate(reportStartDate)} a ${formatDate(reportEndDate)}`;
-    const totalColumnIndex = productsByDateReport.dates.length + 2;
-    const dateColumnWidth = Math.min(24, 190 / Math.max(productsByDateReport.dates.length, 1));
-    const columnStyles = productsByDateReport.dates.reduce<Record<number, any>>((acc, _, index) => {
-      acc[index + 2] = { cellWidth: dateColumnWidth, halign: 'center' };
-      return acc;
-    }, {
-      0: { cellWidth: 58 },
-      1: { cellWidth: 15, halign: 'center' },
-      [totalColumnIndex]: { cellWidth: 20, halign: 'center' },
-    });
+    const columnStyles: Record<number, any> = {
+      0: { cellWidth: 70 }, 1: { cellWidth: 16, halign: 'center' }, 2: { cellWidth: 22, halign: 'right' },
+      3: { cellWidth: 30, halign: 'right' }, 4: { cellWidth: 30, halign: 'right' }, 5: { cellWidth: 25, halign: 'right' },
+      6: { cellWidth: 30, halign: 'right' }, 7: { cellWidth: 30, halign: 'right' },
+    };
     const body: (string | number)[][] = productsByDateReport.rows.map(row => [
       row.product,
       row.unit,
-      ...productsByDateReport.dates.map(date => row.quantities[date] ? formatQuantity(row.quantities[date]) : '-'),
       formatQuantity(row.total),
+      formatCurrency(productPrices[stockKey(row.product, row.unit)]?.costPrice || 0),
+      formatCurrency(row.total * (productPrices[stockKey(row.product, row.unit)]?.costPrice || 0)),
+      `${((productPrices[stockKey(row.product, row.unit)]?.salePrice || 0) > 0 ? (((productPrices[stockKey(row.product, row.unit)]?.salePrice || 0) - (productPrices[stockKey(row.product, row.unit)]?.costPrice || 0)) / (productPrices[stockKey(row.product, row.unit)]?.salePrice || 1)) * 100 : 0).toLocaleString('pt-BR', { maximumFractionDigits: 2 })}%`,
+      formatCurrency(productPrices[stockKey(row.product, row.unit)]?.salePrice || 0),
+      formatCurrency(row.total * (productPrices[stockKey(row.product, row.unit)]?.salePrice || 0)),
     ]);
+    const totalCost = productsByDateReport.rows.reduce((sum, row) => sum + row.total * (productPrices[stockKey(row.product, row.unit)]?.costPrice || 0), 0);
+    const totalSale = productsByDateReport.rows.reduce((sum, row) => sum + row.total * (productPrices[stockKey(row.product, row.unit)]?.salePrice || 0), 0);
     const grandTotalRow = body.length;
     body.push([
       'TOTAL GERAL',
       '',
-      ...productsByDateReport.dates.map(date => formatQuantity(productsByDateReport.dateTotals[date] || 0)),
       formatQuantity(productsByDateReport.grandTotal),
+      '', formatCurrency(totalCost), totalSale > 0 ? `${(((totalSale - totalCost) / totalSale) * 100).toLocaleString('pt-BR', { maximumFractionDigits: 2 })}%` : '0%', '', formatCurrency(totalSale),
     ]);
 
     autoTable(doc, {
       startY: 55,
-      margin: { top: 55, right: 10, bottom: 13, left: 10 },
-      head: [['Produto', 'UND', ...productsByDateReport.dates.map(formatDate), 'Qtd. total']],
+      margin: { top: 48, right: 4, bottom: 10, left: 4 },
+      head: [['Produto entregue', 'UND', 'Quantidade', 'Preço custo', 'Total custo', 'Margem venda', 'Preço venda', 'Total venda']],
       body,
       theme: 'grid',
-      styles: { font: 'helvetica', fontSize: 8.3, cellPadding: 1.2, overflow: 'linebreak', valign: 'middle' },
+      styles: { font: 'helvetica', fontSize: 7.7, cellPadding: 1.1, overflow: 'linebreak', valign: 'middle' },
       headStyles: { font: 'helvetica', fontStyle: 'bold', fillColor: [219, 234, 254], textColor: [15, 23, 42], halign: 'center' },
       columnStyles,
-      horizontalPageBreak: productsByDateReport.dates.length > 9,
-      horizontalPageBreakRepeat: [0, 1],
       didParseCell: (data: any) => {
         if (data.section === 'body' && data.row.index === grandTotalRow) {
           data.cell.styles.fontStyle = 'bold';
@@ -2230,7 +2246,7 @@ const Operations: React.FC = () => {
           <button type="button" className="operations-module-button" onClick={() => setActiveModule('history')}><History size={22} /><span><strong>Histórico</strong><small>Consultar entregas anteriores</small></span></button>
           <button type="button" className="operations-module-button" onClick={() => setActiveModule('orders-summary-report')}><FileSpreadsheet size={22} /><span><strong>Relatório de pedidos</strong><small>Resumo sintético dos pedidos</small></span></button>
           <button type="button" className="operations-module-button" onClick={() => setActiveModule('period-report')}><Search size={22} /><span><strong>Produtos por categoria e período</strong><small>Filtrar categoria e datas</small></span></button>
-          <button type="button" className="operations-module-button" onClick={() => setActiveModule('products-by-date-report')}><FileSpreadsheet size={22} /><span><strong>Total de produtos por data</strong><small>Somar todos os locais por dia</small></span></button>
+          <button type="button" className="operations-module-button" onClick={() => setActiveModule('products-by-date-report')}><FileSpreadsheet size={22} /><span><strong>Faturamento de entregas</strong><small>Custos, vendas e margem</small></span></button>
         </div>
       </div>
 
@@ -2859,8 +2875,8 @@ const Operations: React.FC = () => {
           <div className="card operations-module-window module-products-by-date-report" style={{ maxWidth: 'none', padding: '1.5rem' }}>
             <div className="view-header" style={{ marginBottom: '1rem', gap: '1rem' }}>
               <div>
-                <h2 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}><FileSpreadsheet size={20} /> Total de produtos por data</h2>
-                <p style={{ textAlign: 'left', marginBottom: 0 }}>Soma todos os locais de entrega e mostra uma única coluna para cada data.</p>
+                <h2 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}><FileSpreadsheet size={20} /> Faturamento dos produtos entregues</h2>
+                <p style={{ textAlign: 'left', marginBottom: 0 }}>Soma as entregas do período, permite cadastrar custo e venda e calcula o faturamento e a margem.</p>
               </div>
             </div>
             <div className="period-report-filters">
@@ -2893,29 +2909,36 @@ const Operations: React.FC = () => {
               <span className="badge badge-green">{productsByDateReport.rows.length} produto(s)</span>
               <span className="badge">{productsByDateReport.dates.length} data(s)</span>
               <span className="badge">{productsByDateReport.deliveryCount} entrega(s) somadas</span>
+              <span className="badge">Custo: {formatCurrency(productsByDateReport.rows.reduce((sum, row) => sum + row.total * (productPrices[stockKey(row.product, row.unit)]?.costPrice || 0), 0))}</span>
+              <span className="badge badge-green">Venda: {formatCurrency(productsByDateReport.rows.reduce((sum, row) => sum + row.total * (productPrices[stockKey(row.product, row.unit)]?.salePrice || 0), 0))}</span>
             </div>
             <div style={{ overflowX: 'auto', marginTop: '1rem' }}>
               <table className="data-table">
                 <thead>
-                  <tr><th>Produto</th><th>UND</th>{productsByDateReport.dates.map(date => <th key={date}>{formatDate(date)}</th>)}<th>Qtd. total</th></tr>
+                  <tr><th>Produto entregue</th><th>UND</th><th>Quantidade</th><th>Preço de custo</th><th>Total do custo</th><th>Margem venda</th><th>Preço de venda</th><th>Total da venda</th></tr>
                 </thead>
                 <tbody>
                   {productsByDateReport.rows.map(row => (
                     <tr key={stockKey(row.product, row.unit)}>
                       <td style={{ fontWeight: 600 }}>{row.product}</td>
                       <td>{row.unit}</td>
-                      {productsByDateReport.dates.map(date => <td key={date}>{row.quantities[date] ? formatQuantity(row.quantities[date]) : '-'}</td>)}
                       <td style={{ fontWeight: 700 }}>{formatQuantity(row.total)}</td>
+                      <td><input aria-label={`Preço de custo de ${row.product}`} className="input-field" type="number" min="0" step="0.01" style={{ minWidth: 120, margin: 0 }} value={productPrices[stockKey(row.product, row.unit)]?.costPrice || ''} onChange={event => persistProductPrice(stockKey(row.product, row.unit), 'costPrice', event.target.value)} placeholder="0,00" /></td>
+                      <td>{formatCurrency(row.total * (productPrices[stockKey(row.product, row.unit)]?.costPrice || 0))}</td>
+                      <td>{((productPrices[stockKey(row.product, row.unit)]?.salePrice || 0) > 0 ? (((productPrices[stockKey(row.product, row.unit)]?.salePrice || 0) - (productPrices[stockKey(row.product, row.unit)]?.costPrice || 0)) / (productPrices[stockKey(row.product, row.unit)]?.salePrice || 1)) * 100 : 0).toLocaleString('pt-BR', { maximumFractionDigits: 2 })}%</td>
+                      <td><input aria-label={`Preço de venda de ${row.product}`} className="input-field" type="number" min="0" step="0.01" style={{ minWidth: 120, margin: 0 }} value={productPrices[stockKey(row.product, row.unit)]?.salePrice || ''} onChange={event => persistProductPrice(stockKey(row.product, row.unit), 'salePrice', event.target.value)} placeholder="0,00" /></td>
+                      <td style={{ fontWeight: 700 }}>{formatCurrency(row.total * (productPrices[stockKey(row.product, row.unit)]?.salePrice || 0))}</td>
                     </tr>
                   ))}
                   {productsByDateReport.rows.length > 0 && (
                     <tr style={{ background: '#eff6ff', fontWeight: 800 }}>
-                      <td>Total geral</td><td></td>
-                      {productsByDateReport.dates.map(date => <td key={date}>{formatQuantity(productsByDateReport.dateTotals[date] || 0)}</td>)}
-                      <td>{formatQuantity(productsByDateReport.grandTotal)}</td>
+                      <td>Total geral</td><td></td><td>{formatQuantity(productsByDateReport.grandTotal)}</td><td></td>
+                      <td>{formatCurrency(productsByDateReport.rows.reduce((sum, row) => sum + row.total * (productPrices[stockKey(row.product, row.unit)]?.costPrice || 0), 0))}</td>
+                      <td>{(() => { const cost = productsByDateReport.rows.reduce((sum, row) => sum + row.total * (productPrices[stockKey(row.product, row.unit)]?.costPrice || 0), 0); const sale = productsByDateReport.rows.reduce((sum, row) => sum + row.total * (productPrices[stockKey(row.product, row.unit)]?.salePrice || 0), 0); return sale > 0 ? `${(((sale - cost) / sale) * 100).toLocaleString('pt-BR', { maximumFractionDigits: 2 })}%` : '0%'; })()}</td><td></td>
+                      <td>{formatCurrency(productsByDateReport.rows.reduce((sum, row) => sum + row.total * (productPrices[stockKey(row.product, row.unit)]?.salePrice || 0), 0))}</td>
                     </tr>
                   )}
-                  {productsByDateReport.rows.length === 0 && <tr><td colSpan={productsByDateReport.dates.length + 3} style={{ textAlign: 'center', padding: '2rem' }}>Nenhuma entrega encontrada para os filtros selecionados.</td></tr>}
+                  {productsByDateReport.rows.length === 0 && <tr><td colSpan={8} style={{ textAlign: 'center', padding: '2rem' }}>Nenhuma entrega encontrada para os filtros selecionados.</td></tr>}
                 </tbody>
               </table>
             </div>
