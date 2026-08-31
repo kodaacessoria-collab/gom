@@ -1935,7 +1935,9 @@ const Operations: React.FC = () => {
       await addCompanyLetterhead(doc, {
         title: letterheadTitle,
         subtitle: letterheadSubtitle,
-        logoVariant: activeOperation.logoVariant || DEFAULT_LOGO_VARIANT,
+        // O faturamento é um documento comercial da Oliveira Mendes e deve
+        // usar sempre a identidade da empresa, não a do cliente/operação.
+        logoVariant: 'gom',
       });
       doc.setFont('helvetica', 'normal');
       doc.setFontSize(8);
