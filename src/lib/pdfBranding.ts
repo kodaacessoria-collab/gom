@@ -18,6 +18,12 @@ interface PdfHeaderOptions {
   detailFontSize?: number;
 }
 
+interface CompanyLetterheadOptions {
+  title: string;
+  subtitle?: string;
+  logoVariant?: PdfLogoVariant;
+}
+
 const logoSources: Record<PdfLogoVariant, string> = {
   gom: logoUrl,
   igeve: igeveLogoUrl,
@@ -88,5 +94,46 @@ export const addPdfHeader = async (doc: jsPDF, options: PdfHeaderOptions) => {
   if (subtitle) doc.text(subtitle, 36, 22, { maxWidth: pageWidth - 46 });
   if (footer) doc.text(footer, 36, 29, { maxWidth: pageWidth - 46 });
 
+  doc.setTextColor(31, 41, 55);
+};
+
+export const addCompanyLetterhead = async (doc: jsPDF, options: CompanyLetterheadOptions) => {
+  const {
+    title,
+    subtitle,
+    logoVariant = 'gom',
+  } = options;
+  const pageWidth = doc.internal.pageSize.getWidth();
+
+  doc.setFillColor(255, 255, 255);
+  doc.rect(0, 0, pageWidth, 43, 'F');
+
+  try {
+    const logoDataUrl = await loadLogoDataUrl(logoVariant);
+    doc.addImage(logoDataUrl, logoFormats[logoVariant], 12, 4, 24, 24);
+  } catch (err) {
+    console.warn('Nao foi possivel carregar a logo no timbre do PDF:', err);
+  }
+
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(16);
+  doc.setTextColor(151, 174, 207);
+  doc.text('OLIVEIRA MENDES DISTRIBUIDORA', pageWidth / 2, 11, { align: 'center' });
+  doc.setFontSize(13);
+  doc.text('57.135.668/0001-63', pageWidth / 2, 18, { align: 'center' });
+
+  doc.setDrawColor(177, 145, 145);
+  doc.setLineWidth(1.1);
+  doc.line(10, 30, pageWidth - 10, 30);
+
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(11);
+  doc.setTextColor(15, 23, 42);
+  doc.text(title, pageWidth / 2, 36, { align: 'center', maxWidth: pageWidth - 24 });
+  if (subtitle) {
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(8.5);
+    doc.text(subtitle, pageWidth / 2, 41, { align: 'center', maxWidth: pageWidth - 24 });
+  }
   doc.setTextColor(31, 41, 55);
 };

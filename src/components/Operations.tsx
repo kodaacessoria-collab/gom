@@ -28,7 +28,7 @@ import * as XLSX from 'xlsx';
 import { getDocument, GlobalWorkerOptions } from 'pdfjs-dist';
 import { supabase } from '../lib/supabase';
 import type { Deposit, Product } from '../types';
-import { addPdfHeader } from '../lib/pdfBranding';
+import { addCompanyLetterhead, addPdfHeader } from '../lib/pdfBranding';
 import type { PdfLogoVariant } from '../lib/pdfBranding';
 import { createOperationPdfWriter, getAllOperationPdfFolders, pickOperationPdfFolder, supportsOperationPdfFolders } from '../lib/operationPdfFolders';
 import type { OperationPdfFolder } from '../lib/operationPdfFolders';
@@ -1857,6 +1857,84 @@ const Operations: React.FC = () => {
     XLSX.writeFile(workbook, `${fileName}.xlsx`);
   };
 
+  const generateProductsByDatePdf = async () => {
+    if (!activeOperation || productsByDateReport.rows.length === 0) {
+      alert('Nenhum produto foi encontrado para os filtros selecionados.');
+      return;
+    }
+
+    const categoryLabel = reportCategory === 'Todas' ? 'Todas as categorias' : reportCategory;
+    const baseName = sanitizeFileName(`TOTAL PRODUTOS POR DATA - ${activeOperation.name} - ${categoryLabel} - ${formatDate(reportStartDate)} a ${formatDate(reportEndDate)}`);
+    const fileName = `${baseName}.pdf`;
+    const writer = await preparePdfWriter(activeOperation, fileName);
+    const doc = new jsPDF({ orientation: 'landscape' });
+    const letterheadTitle = `RELATORIO DOS PRODUTOS ENTREGUES - ${getOperationTitle(activeOperation).toUpperCase()}`;
+    const letterheadSubtitle = `Categoria: ${categoryLabel} | Periodo: ${formatDate(reportStartDate)} a ${formatDate(reportEndDate)}`;
+    const totalColumnIndex = productsByDateReport.dates.length + 2;
+    const dateColumnWidth = Math.min(24, 190 / Math.max(productsByDateReport.dates.length, 1));
+    const columnStyles = productsByDateReport.dates.reduce<Record<number, any>>((acc, _, index) => {
+      acc[index + 2] = { cellWidth: dateColumnWidth, halign: 'center' };
+      return acc;
+    }, {
+      0: { cellWidth: 58 },
+      1: { cellWidth: 15, halign: 'center' },
+      [totalColumnIndex]: { cellWidth: 20, halign: 'center' },
+    });
+    const body: (string | number)[][] = productsByDateReport.rows.map(row => [
+      row.product,
+      row.unit,
+      ...productsByDateReport.dates.map(date => row.quantities[date] ? formatQuantity(row.quantities[date]) : '-'),
+      formatQuantity(row.total),
+    ]);
+    const grandTotalRow = body.length;
+    body.push([
+      'TOTAL GERAL',
+      '',
+      ...productsByDateReport.dates.map(date => formatQuantity(productsByDateReport.dateTotals[date] || 0)),
+      formatQuantity(productsByDateReport.grandTotal),
+    ]);
+
+    autoTable(doc, {
+      startY: 55,
+      margin: { top: 55, right: 10, bottom: 13, left: 10 },
+      head: [['Produto', 'UND', ...productsByDateReport.dates.map(formatDate), 'Qtd. total']],
+      body,
+      theme: 'grid',
+      styles: { font: 'helvetica', fontSize: 8.3, cellPadding: 1.2, overflow: 'linebreak', valign: 'middle' },
+      headStyles: { font: 'helvetica', fontStyle: 'bold', fillColor: [219, 234, 254], textColor: [15, 23, 42], halign: 'center' },
+      columnStyles,
+      horizontalPageBreak: productsByDateReport.dates.length > 9,
+      horizontalPageBreakRepeat: [0, 1],
+      didParseCell: (data: any) => {
+        if (data.section === 'body' && data.row.index === grandTotalRow) {
+          data.cell.styles.fontStyle = 'bold';
+          data.cell.styles.fillColor = [226, 232, 240];
+        }
+      },
+    });
+
+    const pageCount = doc.getNumberOfPages();
+    for (let pageNumber = 1; pageNumber <= pageCount; pageNumber += 1) {
+      doc.setPage(pageNumber);
+      await addCompanyLetterhead(doc, {
+        title: letterheadTitle,
+        subtitle: letterheadSubtitle,
+        logoVariant: activeOperation.logoVariant || DEFAULT_LOGO_VARIANT,
+      });
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(8);
+      doc.setTextColor(71, 85, 105);
+      doc.text(
+        `${productsByDateReport.orderCount} pedido(s) | ${productsByDateReport.deliveryCount} entrega(s) somadas | Pagina ${pageNumber} de ${pageCount}`,
+        doc.internal.pageSize.getWidth() / 2,
+        doc.internal.pageSize.getHeight() - 5,
+        { align: 'center' },
+      );
+    }
+
+    await savePdf(doc, fileName, writer);
+  };
+
   const generatePeriodReportPdf = async () => {
     if (!activeOperation || periodReport.rows.length === 0) {
       alert('Nenhum produto entregue foi encontrado para os filtros selecionados.');
@@ -2802,6 +2880,9 @@ const Operations: React.FC = () => {
                 <input type="date" className="input-field" min={reportStartDate || undefined} value={reportEndDate} onChange={event => setReportEndDate(event.target.value)} />
               </div>
               <div className="period-report-actions">
+                <button type="button" className="button button-outline" disabled={productsByDateReport.rows.length === 0} onClick={generateProductsByDatePdf}>
+                  <FileText size={17} style={{ marginRight: '0.45rem' }} /> Gerar PDF
+                </button>
                 <button type="button" className="button button-outline excel-action" disabled={productsByDateReport.rows.length === 0} onClick={generateProductsByDateExcel}>
                   <FileSpreadsheet size={17} style={{ marginRight: '0.45rem' }} /> Gerar Excel
                 </button>
