@@ -693,6 +693,7 @@ label {
 
 .operations-menu-layout[data-active-module="period-report"] .module-period-report,
 .operations-menu-layout[data-active-module="romaneio-products-report"] .module-romaneio-products-report,
+.operations-menu-layout[data-active-module="purchase-period-report"] .module-purchase-period-report,
 .operations-menu-layout[data-active-module="products-by-date-report"] .module-products-by-date-report {
   display: block !important;
   position: fixed;

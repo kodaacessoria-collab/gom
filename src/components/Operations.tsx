@@ -37,7 +37,7 @@ GlobalWorkerOptions.workerSrc = new URL('pdfjs-dist/build/pdf.worker.mjs', impor
 
 type SourceType = 'Manual' | 'Excel' | 'PDF';
 type DeliveryCategory = 'Hortifrutigranjeiro' | 'Estocáveis' | 'Dietas e Fórmulas' | 'Proteínas' | 'Limpeza';
-type OperationsModule = 'operations' | 'locations' | 'order-entry' | 'orders' | 'history' | 'orders-summary-report' | 'deliveries-summary-report' | 'period-report' | 'romaneio-products-report' | 'products-by-date-report';
+type OperationsModule = 'operations' | 'locations' | 'order-entry' | 'orders' | 'history' | 'orders-summary-report' | 'deliveries-summary-report' | 'period-report' | 'romaneio-products-report' | 'purchase-period-report' | 'products-by-date-report';
 
 interface OperationContract {
   id: string;
@@ -417,6 +417,7 @@ const Operations: React.FC = () => {
   const [activeModule, setActiveModule] = useState<OperationsModule | null>(null);
   const [deliverySortDirection, setDeliverySortDirection] = useState<'asc' | 'desc'>('desc');
   const [expandedOrderId, setExpandedOrderId] = useState<string | null>(null);
+  const [ordersCategoryFilter, setOrdersCategoryFilter] = useState<'Todas' | DeliveryCategory>('Todas');
   const [reportCategory, setReportCategory] = useState<'Todas' | DeliveryCategory>('Todas');
   const [summaryOperationIds, setSummaryOperationIds] = useState<string[]>([]);
   const [reportStartDate, setReportStartDate] = useState(() => `${todayIso().slice(0, 8)}01`);
@@ -441,6 +442,10 @@ const Operations: React.FC = () => {
       return b.importedAt.localeCompare(a.importedAt);
     }),
     [operationOrders, deliverySortDirection]
+  );
+  const visibleOperationOrders = useMemo(
+    () => sortedOperationOrders.filter(order => ordersCategoryFilter === 'Todas' || order.category === ordersCategoryFilter),
+    [sortedOperationOrders, ordersCategoryFilter]
   );
 
   useEffect(() => {
@@ -1868,6 +1873,61 @@ const Operations: React.FC = () => {
     await savePdf(doc, fileName, writer);
   };
 
+  const purchasePeriodReport = useMemo(() => {
+    const filteredOrders = operationOrders.filter(order =>
+      (reportCategory === 'Todas' || order.category === reportCategory) &&
+      (!reportStartDate || order.deliveryDate >= reportStartDate) &&
+      (!reportEndDate || order.deliveryDate <= reportEndDate)
+    );
+    const productMap = new Map<string, { product: string; unit: string; quantity: number }>();
+    filteredOrders.forEach(order => {
+      buildSummary(order.deliveries).forEach(item => {
+        const key = stockKey(item.product, item.unit);
+        const current = productMap.get(key) || { product: item.product, unit: item.unit, quantity: 0 };
+        current.quantity += Number(item.quantity || 0);
+        productMap.set(key, current);
+      });
+    });
+    const rows = Array.from(productMap.values()).sort((a, b) =>
+      a.product.localeCompare(b.product, 'pt-BR') || a.unit.localeCompare(b.unit, 'pt-BR')
+    );
+    return {
+      rows,
+      orderCount: filteredOrders.length,
+      deliveryCount: filteredOrders.reduce((sum, order) => sum + order.deliveries.length, 0),
+      totalQuantity: rows.reduce((sum, row) => sum + row.quantity, 0),
+    };
+  }, [operationOrders, reportCategory, reportStartDate, reportEndDate]);
+
+  const generatePurchasePeriodPdf = async () => {
+    if (!activeOperation || purchasePeriodReport.rows.length === 0) {
+      alert('Nenhum item foi encontrado para os filtros selecionados.');
+      return;
+    }
+    const categoryLabel = reportCategory === 'Todas' ? 'Todas as categorias' : reportCategory;
+    const fileName = `${sanitizeFileName(`RELATORIO DE COMPRA - ${activeOperation.name} - ${categoryLabel} - ${formatDate(reportStartDate)} a ${formatDate(reportEndDate)}`)}.pdf`;
+    const writer = await preparePdfWriter(activeOperation, fileName);
+    const doc = new jsPDF();
+    await addPdfHeader(doc, {
+      title: `RELATORIO DE COMPRA - ${getOperationTitle(activeOperation).toUpperCase()}`,
+      subtitle: `Categoria: ${categoryLabel} | Periodo de entrega: ${formatDate(reportStartDate)} a ${formatDate(reportEndDate)}`,
+      footer: `${purchasePeriodReport.orderCount} pedido(s) | Quantidades integrais, sem desconto de estoque`,
+      logoVariant: activeOperation.logoVariant || DEFAULT_LOGO_VARIANT,
+    });
+    autoTable(doc, {
+      startY: 36,
+      head: [['Produto', 'UND', 'Quantidade a comprar']],
+      body: purchasePeriodReport.rows.map(row => [row.product, row.unit, formatQuantity(row.quantity)]),
+      foot: [['TOTAL GERAL', '', formatQuantity(purchasePeriodReport.totalQuantity)]],
+      theme: 'grid',
+      styles: { font: REPORT_FONT, fontSize: REPORT_FONT_SIZE, cellPadding: 1.8, valign: 'middle' },
+      headStyles: { font: REPORT_FONT, fontStyle: 'bold', fillColor: [5, 150, 105] },
+      footStyles: { font: REPORT_FONT, fontStyle: 'bold', fillColor: [226, 232, 240], textColor: [0, 0, 0] },
+      columnStyles: { 0: { cellWidth: 120 }, 1: { cellWidth: 25, halign: 'center' }, 2: { cellWidth: 40, halign: 'right' } },
+    });
+    await savePdf(doc, fileName, writer);
+  };
+
   const getPeriodReportFileName = (extension: 'pdf' | 'xlsx') => {
     const operationName = activeOperation?.name || 'Operacao';
     const categoryName = reportCategory === 'Todas' ? 'Todas categorias' : reportCategory;
@@ -2480,6 +2540,7 @@ const Operations: React.FC = () => {
           <button type="button" className="operations-module-button" onClick={() => setActiveModule('deliveries-summary-report')}><FileText size={22} /><span><strong>Relatório de entregas</strong><small>Sintético por operação e categoria</small></span></button>
           <button type="button" className="operations-module-button" onClick={() => setActiveModule('period-report')}><Search size={22} /><span><strong>Produtos por categoria e período</strong><small>Filtrar categoria e datas</small></span></button>
           <button type="button" className="operations-module-button" onClick={() => setActiveModule('romaneio-products-report')}><FileText size={22} /><span><strong>Produtos por romaneio</strong><small>Sintético, sem misturar pedidos</small></span></button>
+          <button type="button" className="operations-module-button" onClick={() => setActiveModule('purchase-period-report')}><ShoppingCart size={22} /><span><strong>Compra por período</strong><small>Soma integral, sem considerar estoque</small></span></button>
           <button type="button" className="operations-module-button" onClick={() => setActiveModule('products-by-date-report')}><FileSpreadsheet size={22} /><span><strong>Faturamento de entregas</strong><small>Custos, vendas e margem</small></span></button>
         </div>
       </div>
@@ -2806,6 +2867,13 @@ const Operations: React.FC = () => {
                 <h2>Pedidos da operação</h2>
                 <p style={{ textAlign: 'left', marginBottom: 0 }}>Gere romaneios por local, PDF único com total da entrega, somas por setor, soma geral e análise de compra.</p>
               </div>
+              <div style={{ width: '260px', marginLeft: 'auto' }}>
+                <label>Filtrar por categoria</label>
+                <select className="input-field" value={ordersCategoryFilter} onChange={event => { setOrdersCategoryFilter(event.target.value as 'Todas' | DeliveryCategory); setExpandedOrderId(null); }}>
+                  <option value="Todas">Todas as categorias</option>
+                  {DELIVERY_CATEGORIES.map(category => <option key={category} value={category}>{category}</option>)}
+                </select>
+              </div>
             </div>
             <div style={{ overflowX: 'auto' }}>
               <table className="data-table">
@@ -2838,7 +2906,7 @@ const Operations: React.FC = () => {
                   </tr>
                 </thead>
                 <tbody>
-                  {sortedOperationOrders.map(order => {
+                  {visibleOperationOrders.map(order => {
                     const needs = getPurchaseNeeds(order);
                     const isExpanded = expandedOrderId === order.id;
                     return (
@@ -2927,7 +2995,7 @@ const Operations: React.FC = () => {
                       </React.Fragment>
                     );
                   })}
-                  {operationOrders.length === 0 && <tr><td colSpan={3} style={{ textAlign: 'center', padding: '2rem' }}>Nenhum pedido lançado nesta operação.</td></tr>}
+                  {visibleOperationOrders.length === 0 && <tr><td colSpan={3} style={{ textAlign: 'center', padding: '2rem' }}>Nenhum pedido encontrado para esta categoria.</td></tr>}
                 </tbody>
               </table>
             </div>
@@ -3274,6 +3342,55 @@ const Operations: React.FC = () => {
                     </tr>
                   )}
                   {periodReport.rows.length === 0 && <tr><td colSpan={periodReport.columns.length + 3} style={{ textAlign: 'center', padding: '2rem' }}>Nenhuma entrega encontrada para os filtros selecionados.</td></tr>}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <div className="card operations-module-window module-purchase-period-report" style={{ maxWidth: 'none', padding: '1.5rem' }}>
+            <div className="view-header" style={{ marginBottom: '1rem', gap: '1rem' }}>
+              <div>
+                <h2 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}><ShoppingCart size={20} /> Relatório de compra por período</h2>
+                <p style={{ textAlign: 'left', marginBottom: 0 }}>Soma integralmente os itens dos pedidos. O estoque disponível não é consultado nem descontado.</p>
+              </div>
+            </div>
+            <div className="period-report-filters">
+              <div>
+                <label>Categoria</label>
+                <select className="input-field" value={reportCategory} onChange={event => setReportCategory(event.target.value as 'Todas' | DeliveryCategory)}>
+                  <option value="Todas">Todas as categorias</option>
+                  {DELIVERY_CATEGORIES.map(category => <option key={category} value={category}>{category}</option>)}
+                </select>
+              </div>
+              <div>
+                <label>Data inicial da entrega</label>
+                <input type="date" className="input-field" max={reportEndDate || undefined} value={reportStartDate} onChange={event => setReportStartDate(event.target.value)} />
+              </div>
+              <div>
+                <label>Data final da entrega</label>
+                <input type="date" className="input-field" min={reportStartDate || undefined} value={reportEndDate} onChange={event => setReportEndDate(event.target.value)} />
+              </div>
+              <div className="period-report-actions">
+                <button type="button" className="button button-outline" disabled={purchasePeriodReport.rows.length === 0} onClick={generatePurchasePeriodPdf}>
+                  <FileText size={17} style={{ marginRight: '0.45rem' }} /> Gerar PDF de compra
+                </button>
+              </div>
+            </div>
+            <div className="period-report-summary">
+              <span className="badge badge-blue">{purchasePeriodReport.orderCount} pedido(s)</span>
+              <span className="badge badge-green">{purchasePeriodReport.rows.length} produto(s)</span>
+              <span className="badge">{purchasePeriodReport.deliveryCount} entrega(s) somadas</span>
+              <span className="badge">{formatQuantity(purchasePeriodReport.totalQuantity)} unidade(s)</span>
+            </div>
+            <div style={{ overflowX: 'auto', marginTop: '1rem' }}>
+              <table className="data-table">
+                <thead><tr><th>Produto</th><th>UND</th><th>Quantidade a comprar</th></tr></thead>
+                <tbody>
+                  {purchasePeriodReport.rows.map(row => (
+                    <tr key={stockKey(row.product, row.unit)}><td style={{ fontWeight: 600 }}>{row.product}</td><td>{row.unit}</td><td style={{ fontWeight: 700 }}>{formatQuantity(row.quantity)}</td></tr>
+                  ))}
+                  {purchasePeriodReport.rows.length > 0 && <tr style={{ background: '#eff6ff', fontWeight: 800 }}><td>Total geral</td><td></td><td>{formatQuantity(purchasePeriodReport.totalQuantity)}</td></tr>}
+                  {purchasePeriodReport.rows.length === 0 && <tr><td colSpan={3} style={{ textAlign: 'center', padding: '2rem' }}>Nenhum item encontrado para os filtros selecionados.</td></tr>}
                 </tbody>
               </table>
             </div>
