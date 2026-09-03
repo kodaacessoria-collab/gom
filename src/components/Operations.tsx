@@ -37,7 +37,7 @@ GlobalWorkerOptions.workerSrc = new URL('pdfjs-dist/build/pdf.worker.mjs', impor
 
 type SourceType = 'Manual' | 'Excel' | 'PDF';
 type DeliveryCategory = 'Hortifrutigranjeiro' | 'Estocáveis' | 'Dietas e Fórmulas' | 'Proteínas' | 'Limpeza';
-type OperationsModule = 'operations' | 'locations' | 'order-entry' | 'orders' | 'history' | 'orders-summary-report' | 'period-report' | 'products-by-date-report';
+type OperationsModule = 'operations' | 'locations' | 'order-entry' | 'orders' | 'history' | 'orders-summary-report' | 'deliveries-summary-report' | 'period-report' | 'products-by-date-report';
 
 interface OperationContract {
   id: string;
@@ -417,6 +417,7 @@ const Operations: React.FC = () => {
   const [activeModule, setActiveModule] = useState<OperationsModule | null>(null);
   const [deliverySortDirection, setDeliverySortDirection] = useState<'asc' | 'desc'>('desc');
   const [reportCategory, setReportCategory] = useState<'Todas' | DeliveryCategory>('Todas');
+  const [summaryOperationId, setSummaryOperationId] = useState('Todas');
   const [reportStartDate, setReportStartDate] = useState(() => `${todayIso().slice(0, 8)}01`);
   const [reportEndDate, setReportEndDate] = useState(todayIso);
   const [reportProduct, setReportProduct] = useState('Todos');
@@ -2157,6 +2158,104 @@ const Operations: React.FC = () => {
     XLSX.writeFile(workbook, getOrdersSummaryFileName('xlsx'));
   };
 
+  const deliveriesSummaryReport = useMemo(() => {
+    const groups = new Map<string, {
+      operation: OperationContract;
+      category: DeliveryCategory;
+      orderIds: Set<string>;
+      deliveryCount: number;
+      pointIds: Set<string>;
+      itemCount: number;
+      totalQuantity: number;
+    }>();
+
+    orders
+      .filter(order =>
+        (summaryOperationId === 'Todas' || order.operationId === summaryOperationId) &&
+        (reportCategory === 'Todas' || order.category === reportCategory) &&
+        (!reportStartDate || order.deliveryDate >= reportStartDate) &&
+        (!reportEndDate || order.deliveryDate <= reportEndDate)
+      )
+      .forEach(order => {
+        const operation = operations.find(item => item.id === order.operationId);
+        if (!operation) return;
+        const key = `${order.operationId}::${order.category}`;
+        const group = groups.get(key) || {
+          operation,
+          category: order.category,
+          orderIds: new Set<string>(),
+          deliveryCount: 0,
+          pointIds: new Set<string>(),
+          itemCount: 0,
+          totalQuantity: 0,
+        };
+        group.orderIds.add(order.id);
+        order.deliveries.forEach(delivery => {
+          group.deliveryCount += 1;
+          group.pointIds.add(delivery.deliveryPointId);
+          group.itemCount += delivery.items.length;
+          group.totalQuantity += delivery.items.reduce((sum, item) => sum + Number(item.quantity || 0), 0);
+        });
+        groups.set(key, group);
+      });
+
+    const rows = Array.from(groups.values()).sort((a, b) =>
+      a.operation.name.localeCompare(b.operation.name, 'pt-BR') || a.category.localeCompare(b.category, 'pt-BR')
+    );
+    return {
+      rows,
+      orderCount: rows.reduce((sum, row) => sum + row.orderIds.size, 0),
+      deliveryCount: rows.reduce((sum, row) => sum + row.deliveryCount, 0),
+      locationCount: rows.reduce((sum, row) => sum + row.pointIds.size, 0),
+      itemCount: rows.reduce((sum, row) => sum + row.itemCount, 0),
+      totalQuantity: rows.reduce((sum, row) => sum + row.totalQuantity, 0),
+    };
+  }, [orders, operations, summaryOperationId, reportCategory, reportStartDate, reportEndDate]);
+
+  const getDeliveriesSummaryFileName = () => {
+    const operationName = summaryOperationId === 'Todas'
+      ? 'Todas operacoes'
+      : operations.find(operation => operation.id === summaryOperationId)?.name || 'Operacao';
+    const categoryName = reportCategory === 'Todas' ? 'Todas categorias' : reportCategory;
+    return `${sanitizeFileName(`RELATORIO SINTETICO DE ENTREGAS - ${operationName} - ${categoryName} - ${formatDate(reportStartDate)} a ${formatDate(reportEndDate)}`)}.pdf`;
+  };
+
+  const generateDeliveriesSummaryPdf = async () => {
+    if (deliveriesSummaryReport.rows.length === 0) {
+      alert('Nenhuma entrega foi encontrada para os filtros selecionados.');
+      return;
+    }
+    const fileName = getDeliveriesSummaryFileName();
+    const selectedOperation = summaryOperationId === 'Todas'
+      ? undefined
+      : operations.find(operation => operation.id === summaryOperationId);
+    const writer = selectedOperation ? await preparePdfWriter(selectedOperation, fileName) : null;
+    const operationLabel = selectedOperation?.name || 'Todas as operações';
+    const categoryLabel = reportCategory === 'Todas' ? 'Todas as categorias' : reportCategory;
+    const doc = new jsPDF({ orientation: 'landscape' });
+    await addPdfHeader(doc, {
+      title: 'RELATORIO SINTETICO DE ENTREGAS',
+      subtitle: `Operacao: ${operationLabel} | Categoria: ${categoryLabel} | Periodo: ${formatDate(reportStartDate)} a ${formatDate(reportEndDate)}`,
+      footer: `${deliveriesSummaryReport.deliveryCount} entrega(s) | ${deliveriesSummaryReport.orderCount} pedido(s)`,
+      logoVariant: selectedOperation?.logoVariant || DEFAULT_LOGO_VARIANT,
+    });
+    autoTable(doc, {
+      startY: 36,
+      head: [['Operação', 'Categoria', 'Pedidos', 'Entregas', 'Locais', 'Itens', 'Qtd. total']],
+      body: deliveriesSummaryReport.rows.map(row => [
+        getOperationTitle(row.operation), row.category, row.orderIds.size, row.deliveryCount,
+        row.pointIds.size, row.itemCount, formatQuantity(row.totalQuantity),
+      ]),
+      foot: [['TOTAL', '', deliveriesSummaryReport.orderCount, deliveriesSummaryReport.deliveryCount,
+        deliveriesSummaryReport.locationCount, deliveriesSummaryReport.itemCount, formatQuantity(deliveriesSummaryReport.totalQuantity)]],
+      theme: 'grid',
+      styles: { font: REPORT_FONT, fontSize: REPORT_FONT_SIZE, cellPadding: 1.7, valign: 'middle' },
+      headStyles: { font: REPORT_FONT, fontStyle: 'bold', fillColor: [79, 70, 229] },
+      footStyles: { font: REPORT_FONT, fontStyle: 'bold', fillColor: [226, 232, 240], textColor: [0, 0, 0] },
+    });
+    await savePdf(doc, fileName, writer);
+  };
+
   const totals = useMemo(() => {
     const deliveries = operationOrders.reduce((sum, order) => sum + order.deliveries.length, 0);
     const items = operationOrders.reduce((sum, order) => sum + buildSummary(order.deliveries).length, 0);
@@ -2247,6 +2346,7 @@ const Operations: React.FC = () => {
           <button type="button" className="operations-module-button" onClick={() => setActiveModule('orders')}><FileText size={22} /><span><strong>Pedidos e arquivos</strong><small>Gerar PDF ou Excel</small></span></button>
           <button type="button" className="operations-module-button" onClick={() => setActiveModule('history')}><History size={22} /><span><strong>Histórico</strong><small>Consultar entregas anteriores</small></span></button>
           <button type="button" className="operations-module-button" onClick={() => setActiveModule('orders-summary-report')}><FileSpreadsheet size={22} /><span><strong>Relatório de pedidos</strong><small>Resumo sintético dos pedidos</small></span></button>
+          <button type="button" className="operations-module-button" onClick={() => setActiveModule('deliveries-summary-report')}><FileText size={22} /><span><strong>Relatório de entregas</strong><small>Sintético por operação e categoria</small></span></button>
           <button type="button" className="operations-module-button" onClick={() => setActiveModule('period-report')}><Search size={22} /><span><strong>Produtos por categoria e período</strong><small>Filtrar categoria e datas</small></span></button>
           <button type="button" className="operations-module-button" onClick={() => setActiveModule('products-by-date-report')}><FileSpreadsheet size={22} /><span><strong>Faturamento de entregas</strong><small>Custos, vendas e margem</small></span></button>
         </div>
@@ -2791,6 +2891,68 @@ const Operations: React.FC = () => {
                     <tr style={{ fontWeight: 800, background: '#eff6ff' }}><td>Total</td><td></td><td></td><td></td><td>{ordersSummaryReport.locationCount}</td><td>{ordersSummaryReport.itemCount}</td><td>{formatQuantity(ordersSummaryReport.totalQuantity)}</td></tr>
                   )}
                   {ordersSummaryReport.rows.length === 0 && <tr><td colSpan={7} style={{ textAlign: 'center', padding: '2rem' }}>Nenhum pedido encontrado para os filtros selecionados.</td></tr>}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <div className="card operations-module-window module-deliveries-summary-report" style={{ maxWidth: 'none', padding: '1.5rem' }}>
+            <div className="view-header" style={{ marginBottom: '1rem', gap: '1rem' }}>
+              <div>
+                <h2 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}><FileText size={20} /> Relatório sintético de entregas</h2>
+                <p style={{ textAlign: 'left', marginBottom: 0 }}>Consolida todas as entregas do período por operação e categoria.</p>
+              </div>
+            </div>
+            <div className="period-report-filters">
+              <div>
+                <label>Operação</label>
+                <select className="input-field" value={summaryOperationId} onChange={event => setSummaryOperationId(event.target.value)}>
+                  <option value="Todas">Todas as operações</option>
+                  {operations.map(operation => <option key={operation.id} value={operation.id}>{operation.name}</option>)}
+                </select>
+              </div>
+              <div>
+                <label>Categoria</label>
+                <select className="input-field" value={reportCategory} onChange={event => setReportCategory(event.target.value as 'Todas' | DeliveryCategory)}>
+                  <option value="Todas">Todas as categorias</option>
+                  {DELIVERY_CATEGORIES.map(category => <option key={category} value={category}>{category}</option>)}
+                </select>
+              </div>
+              <div>
+                <label>Data inicial da entrega</label>
+                <input type="date" className="input-field" max={reportEndDate || undefined} value={reportStartDate} onChange={event => setReportStartDate(event.target.value)} />
+              </div>
+              <div>
+                <label>Data final da entrega</label>
+                <input type="date" className="input-field" min={reportStartDate || undefined} value={reportEndDate} onChange={event => setReportEndDate(event.target.value)} />
+              </div>
+              <div className="period-report-actions">
+                <button type="button" className="button button-outline" disabled={deliveriesSummaryReport.rows.length === 0} onClick={generateDeliveriesSummaryPdf}>
+                  <FileText size={17} style={{ marginRight: '0.45rem' }} /> Gerar PDF
+                </button>
+              </div>
+            </div>
+            <div className="period-report-summary">
+              <span className="badge badge-blue">{deliveriesSummaryReport.orderCount} pedido(s)</span>
+              <span className="badge badge-green">{deliveriesSummaryReport.deliveryCount} entrega(s)</span>
+              <span className="badge">{deliveriesSummaryReport.itemCount} item(ns)</span>
+              <span className="badge">{formatQuantity(deliveriesSummaryReport.totalQuantity)} unidade(s)</span>
+            </div>
+            <div style={{ overflowX: 'auto', marginTop: '1rem' }}>
+              <table className="data-table">
+                <thead><tr><th>Operação</th><th>Categoria</th><th>Pedidos</th><th>Entregas</th><th>Locais</th><th>Itens</th><th>Qtd. total</th></tr></thead>
+                <tbody>
+                  {deliveriesSummaryReport.rows.map(row => (
+                    <tr key={`${row.operation.id}_${row.category}`}>
+                      <td style={{ fontWeight: 600 }}>{getOperationTitle(row.operation)}</td>
+                      <td><span className="badge badge-blue">{row.category}</span></td>
+                      <td>{row.orderIds.size}</td><td>{row.deliveryCount}</td><td>{row.pointIds.size}</td><td>{row.itemCount}</td><td>{formatQuantity(row.totalQuantity)}</td>
+                    </tr>
+                  ))}
+                  {deliveriesSummaryReport.rows.length > 0 && (
+                    <tr style={{ fontWeight: 800, background: '#eff6ff' }}><td>Total</td><td></td><td>{deliveriesSummaryReport.orderCount}</td><td>{deliveriesSummaryReport.deliveryCount}</td><td>{deliveriesSummaryReport.locationCount}</td><td>{deliveriesSummaryReport.itemCount}</td><td>{formatQuantity(deliveriesSummaryReport.totalQuantity)}</td></tr>
+                  )}
+                  {deliveriesSummaryReport.rows.length === 0 && <tr><td colSpan={7} style={{ textAlign: 'center', padding: '2rem' }}>Nenhuma entrega encontrada para os filtros selecionados.</td></tr>}
                 </tbody>
               </table>
             </div>
