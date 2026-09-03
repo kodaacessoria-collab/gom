@@ -37,7 +37,7 @@ GlobalWorkerOptions.workerSrc = new URL('pdfjs-dist/build/pdf.worker.mjs', impor
 
 type SourceType = 'Manual' | 'Excel' | 'PDF';
 type DeliveryCategory = 'Hortifrutigranjeiro' | 'Estocáveis' | 'Dietas e Fórmulas' | 'Proteínas' | 'Limpeza';
-type OperationsModule = 'operations' | 'locations' | 'order-entry' | 'orders' | 'history' | 'orders-summary-report' | 'deliveries-summary-report' | 'period-report' | 'products-by-date-report';
+type OperationsModule = 'operations' | 'locations' | 'order-entry' | 'orders' | 'history' | 'orders-summary-report' | 'deliveries-summary-report' | 'period-report' | 'romaneio-products-report' | 'products-by-date-report';
 
 interface OperationContract {
   id: string;
@@ -1779,6 +1779,94 @@ const Operations: React.FC = () => {
     };
   }, [operationOrders, operationPoints, reportCategory, reportStartDate, reportEndDate, reportProduct, reportDeliveryPointId]);
 
+  const romaneioProductsReport = useMemo(() => {
+    const reportOrders = operationOrders
+      .filter(order =>
+        (reportCategory === 'Todas' || order.category === reportCategory) &&
+        (!reportStartDate || order.deliveryDate >= reportStartDate) &&
+        (!reportEndDate || order.deliveryDate <= reportEndDate)
+      )
+      .sort((a, b) => a.deliveryDate.localeCompare(b.deliveryDate) || a.importedAt.localeCompare(b.importedAt));
+    const productMap = new Map<string, { product: string; unit: string; quantities: Record<string, number>; total: number }>();
+
+    reportOrders.forEach(order => {
+      order.deliveries.forEach(delivery => {
+        aggregateDeliveryItems(delivery.items)
+          .filter(item => reportProduct === 'Todos' || stockKey(item.product, item.unit) === reportProduct)
+          .forEach(item => {
+            const key = stockKey(item.product, item.unit);
+            const current = productMap.get(key) || { product: item.product, unit: item.unit, quantities: {}, total: 0 };
+            current.quantities[order.id] = (current.quantities[order.id] || 0) + item.quantity;
+            current.total += item.quantity;
+            productMap.set(key, current);
+          });
+      });
+    });
+
+    const rows = Array.from(productMap.values()).sort((a, b) =>
+      a.product.localeCompare(b.product, 'pt-BR') || a.unit.localeCompare(b.unit, 'pt-BR')
+    );
+    const columns = reportOrders.filter(order => rows.some(row => (row.quantities[order.id] || 0) > 0));
+    const columnTotals = columns.reduce<Record<string, number>>((totals, order) => {
+      totals[order.id] = rows.reduce((sum, row) => sum + (row.quantities[order.id] || 0), 0);
+      return totals;
+    }, {});
+
+    return {
+      columns,
+      rows,
+      columnTotals,
+      deliveryCount: columns.reduce((sum, order) => sum + order.deliveries.length, 0),
+      grandTotal: rows.reduce((sum, row) => sum + row.total, 0),
+    };
+  }, [operationOrders, reportCategory, reportStartDate, reportEndDate, reportProduct]);
+
+  const generateRomaneioProductsPdf = async () => {
+    if (!activeOperation || romaneioProductsReport.rows.length === 0) {
+      alert('Nenhum produto foi encontrado para os filtros selecionados.');
+      return;
+    }
+    const categoryLabel = reportCategory === 'Todas' ? 'Todas as categorias' : reportCategory;
+    const productLabel = selectedReportProduct ? `${selectedReportProduct.product} - ${selectedReportProduct.unit}` : 'Todos os produtos';
+    const fileName = `${sanitizeFileName(`RELATORIO SINTETICO POR ROMANEIO - ${activeOperation.name} - ${categoryLabel} - ${formatDate(reportStartDate)} a ${formatDate(reportEndDate)}`)}.pdf`;
+    const writer = await preparePdfWriter(activeOperation, fileName);
+    const doc = new jsPDF({ orientation: 'landscape' });
+    await addPdfHeader(doc, {
+      title: `PRODUTOS ENTREGUES - SINTETICO POR ROMANEIO - ${getOperationTitle(activeOperation).toUpperCase()}`,
+      subtitle: `Categoria: ${categoryLabel} | Produto: ${productLabel} | Periodo: ${formatDate(reportStartDate)} a ${formatDate(reportEndDate)}`,
+      footer: `${romaneioProductsReport.columns.length} romaneio(s) | ${romaneioProductsReport.deliveryCount} entrega(s) somadas`,
+      logoVariant: activeOperation.logoVariant || DEFAULT_LOGO_VARIANT,
+    });
+    autoTable(doc, {
+      startY: 36,
+      head: [[
+        'Produto', 'UND',
+        ...romaneioProductsReport.columns.map((order, index) =>
+          `${formatDate(order.deliveryDate)}\nRomaneio ${index + 1}\n${order.category}\n${order.generalNotes?.trim() || 'Sem observação'}`
+        ),
+        'Total',
+      ]],
+      body: romaneioProductsReport.rows.map(row => [
+        row.product, row.unit,
+        ...romaneioProductsReport.columns.map(order => row.quantities[order.id] ? formatQuantity(row.quantities[order.id]) : '-'),
+        formatQuantity(row.total),
+      ]),
+      foot: [[
+        'TOTAL', '',
+        ...romaneioProductsReport.columns.map(order => formatQuantity(romaneioProductsReport.columnTotals[order.id] || 0)),
+        formatQuantity(romaneioProductsReport.grandTotal),
+      ]],
+      theme: 'grid',
+      styles: { font: REPORT_FONT, fontSize: 8, cellPadding: 1.4, valign: 'middle', overflow: 'linebreak' },
+      headStyles: { font: REPORT_FONT, fontStyle: 'bold', fillColor: [79, 70, 229], halign: 'center' },
+      footStyles: { font: REPORT_FONT, fontStyle: 'bold', fillColor: [226, 232, 240], textColor: [0, 0, 0] },
+      columnStyles: { 0: { cellWidth: 48 }, 1: { cellWidth: 18, halign: 'center' } },
+      horizontalPageBreak: true,
+      horizontalPageBreakRepeat: [0, 1],
+    });
+    await savePdf(doc, fileName, writer);
+  };
+
   const getPeriodReportFileName = (extension: 'pdf' | 'xlsx') => {
     const operationName = activeOperation?.name || 'Operacao';
     const categoryName = reportCategory === 'Todas' ? 'Todas categorias' : reportCategory;
@@ -2390,6 +2478,7 @@ const Operations: React.FC = () => {
           <button type="button" className="operations-module-button" onClick={() => setActiveModule('orders-summary-report')}><FileSpreadsheet size={22} /><span><strong>Relatório de pedidos</strong><small>Resumo sintético dos pedidos</small></span></button>
           <button type="button" className="operations-module-button" onClick={() => setActiveModule('deliveries-summary-report')}><FileText size={22} /><span><strong>Relatório de entregas</strong><small>Sintético por operação e categoria</small></span></button>
           <button type="button" className="operations-module-button" onClick={() => setActiveModule('period-report')}><Search size={22} /><span><strong>Produtos por categoria e período</strong><small>Filtrar categoria e datas</small></span></button>
+          <button type="button" className="operations-module-button" onClick={() => setActiveModule('romaneio-products-report')}><FileText size={22} /><span><strong>Produtos por romaneio</strong><small>Sintético, sem misturar pedidos</small></span></button>
           <button type="button" className="operations-module-button" onClick={() => setActiveModule('products-by-date-report')}><FileSpreadsheet size={22} /><span><strong>Faturamento de entregas</strong><small>Custos, vendas e margem</small></span></button>
         </div>
       </div>
@@ -3012,6 +3101,84 @@ const Operations: React.FC = () => {
                     <tr style={{ fontWeight: 800, background: '#eff6ff' }}><td>Total</td><td></td><td></td><td></td><td>{deliveriesSummaryReport.orderCount}</td><td>{deliveriesSummaryReport.deliveryCount}</td><td>{deliveriesSummaryReport.locationCount}</td><td>{deliveriesSummaryReport.itemCount}</td><td>{formatQuantity(deliveriesSummaryReport.totalQuantity)}</td></tr>
                   )}
                   {deliveriesSummaryReport.rows.length === 0 && <tr><td colSpan={9} style={{ textAlign: 'center', padding: '2rem' }}>Nenhuma entrega encontrada para os filtros selecionados.</td></tr>}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <div className="card operations-module-window module-romaneio-products-report" style={{ maxWidth: 'none', padding: '1.5rem' }}>
+            <div className="view-header" style={{ marginBottom: '1rem', gap: '1rem' }}>
+              <div>
+                <h2 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}><FileText size={20} /> Produtos entregues - sintético por romaneio</h2>
+                <p style={{ textAlign: 'left', marginBottom: 0 }}>Soma todos os locais e entregas de cada romaneio, mantendo separados pedidos diferentes da mesma data.</p>
+              </div>
+            </div>
+            <div className="period-report-filters">
+              <div>
+                <label>Categoria</label>
+                <select className="input-field" value={reportCategory} onChange={event => setReportCategory(event.target.value as 'Todas' | DeliveryCategory)}>
+                  <option value="Todas">Todas as categorias</option>
+                  {DELIVERY_CATEGORIES.map(category => <option key={category} value={category}>{category}</option>)}
+                </select>
+              </div>
+              <div>
+                <label>Produto</label>
+                <select className="input-field" value={reportProduct} onChange={event => setReportProduct(event.target.value)}>
+                  <option value="Todos">Todos os produtos</option>
+                  {reportProductOptions.map(option => <option key={option.key} value={option.key}>{option.product} — {option.unit}</option>)}
+                </select>
+              </div>
+              <div>
+                <label>Data inicial</label>
+                <input type="date" className="input-field" max={reportEndDate || undefined} value={reportStartDate} onChange={event => setReportStartDate(event.target.value)} />
+              </div>
+              <div>
+                <label>Data final</label>
+                <input type="date" className="input-field" min={reportStartDate || undefined} value={reportEndDate} onChange={event => setReportEndDate(event.target.value)} />
+              </div>
+              <div className="period-report-actions">
+                <button type="button" className="button button-outline" disabled={romaneioProductsReport.rows.length === 0} onClick={generateRomaneioProductsPdf}>
+                  <FileText size={17} style={{ marginRight: '0.45rem' }} /> Gerar PDF sintético
+                </button>
+              </div>
+            </div>
+            <div className="period-report-summary">
+              <span className="badge badge-blue">{romaneioProductsReport.columns.length} romaneio(s)</span>
+              <span className="badge badge-green">{romaneioProductsReport.rows.length} produto(s)</span>
+              <span className="badge">{romaneioProductsReport.deliveryCount} entrega(s) somadas</span>
+              <span className="badge">{formatQuantity(romaneioProductsReport.grandTotal)} unidade(s)</span>
+            </div>
+            <div style={{ overflowX: 'auto', marginTop: '1rem' }}>
+              <table className="data-table">
+                <thead>
+                  <tr>
+                    <th>Produto</th><th>UND</th>
+                    {romaneioProductsReport.columns.map((order, index) => (
+                      <th key={order.id}>
+                        <span style={{ whiteSpace: 'nowrap' }}>{formatDate(order.deliveryDate)} - Romaneio {index + 1}</span><br />
+                        <small>{order.category}</small><br />
+                        <small>{order.generalNotes?.trim() || 'Sem observação'}</small>
+                      </th>
+                    ))}
+                    <th>Total</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {romaneioProductsReport.rows.map(row => (
+                    <tr key={stockKey(row.product, row.unit)}>
+                      <td style={{ fontWeight: 600 }}>{row.product}</td><td>{row.unit}</td>
+                      {romaneioProductsReport.columns.map(order => <td key={order.id}>{row.quantities[order.id] ? formatQuantity(row.quantities[order.id]) : '-'}</td>)}
+                      <td style={{ fontWeight: 700 }}>{formatQuantity(row.total)}</td>
+                    </tr>
+                  ))}
+                  {romaneioProductsReport.rows.length > 0 && (
+                    <tr style={{ background: '#eff6ff', fontWeight: 800 }}>
+                      <td>Total geral</td><td></td>
+                      {romaneioProductsReport.columns.map(order => <td key={order.id}>{formatQuantity(romaneioProductsReport.columnTotals[order.id] || 0)}</td>)}
+                      <td>{formatQuantity(romaneioProductsReport.grandTotal)}</td>
+                    </tr>
+                  )}
+                  {romaneioProductsReport.rows.length === 0 && <tr><td colSpan={romaneioProductsReport.columns.length + 3} style={{ textAlign: 'center', padding: '2rem' }}>Nenhum produto encontrado para os filtros selecionados.</td></tr>}
                 </tbody>
               </table>
             </div>
