@@ -419,7 +419,7 @@ const Operations: React.FC = () => {
   const [expandedOrderId, setExpandedOrderId] = useState<string | null>(null);
   const [ordersCategoryFilter, setOrdersCategoryFilter] = useState<'Todas' | DeliveryCategory>('Todas');
   const [reportCategory, setReportCategory] = useState<'Todas' | DeliveryCategory>('Todas');
-  const [purchaseOperationFilter, setPurchaseOperationFilter] = useState('Todas');
+  const [purchaseOperationIds, setPurchaseOperationIds] = useState<string[]>([]);
   const [summaryOperationIds, setSummaryOperationIds] = useState<string[]>([]);
   const [reportStartDate, setReportStartDate] = useState(() => `${todayIso().slice(0, 8)}01`);
   const [reportEndDate, setReportEndDate] = useState(todayIso);
@@ -1876,7 +1876,7 @@ const Operations: React.FC = () => {
 
   const purchasePeriodReport = useMemo(() => {
     const filteredOrders = orders.filter(order =>
-      (purchaseOperationFilter === 'Todas' || order.operationId === purchaseOperationFilter) &&
+      (purchaseOperationIds.length === 0 || purchaseOperationIds.includes(order.operationId)) &&
       (reportCategory === 'Todas' || order.category === reportCategory) &&
       (!reportStartDate || order.deliveryDate >= reportStartDate) &&
       (!reportEndDate || order.deliveryDate <= reportEndDate)
@@ -1900,7 +1900,26 @@ const Operations: React.FC = () => {
       deliveryCount: filteredOrders.reduce((sum, order) => sum + order.deliveries.length, 0),
       totalQuantity: rows.reduce((sum, row) => sum + row.quantity, 0),
     };
-  }, [orders, purchaseOperationFilter, reportCategory, reportStartDate, reportEndDate]);
+  }, [orders, purchaseOperationIds, reportCategory, reportStartDate, reportEndDate]);
+
+  const togglePurchaseOperation = (operationId: string) => {
+    setPurchaseOperationIds(current => {
+      if (current.length === 0) {
+        return operations.map(operation => operation.id).filter(id => id !== operationId);
+      }
+      if (current.includes(operationId)) {
+        return current.length === 1 ? current : current.filter(id => id !== operationId);
+      }
+      const next = [...current, operationId];
+      return next.length === operations.length ? [] : next;
+    });
+  };
+
+  const purchaseOperationLabel = purchaseOperationIds.length === 0
+    ? 'Todas as operações'
+    : purchaseOperationIds.length === 1
+      ? operations.find(operation => operation.id === purchaseOperationIds[0])?.name || '1 operação selecionada'
+      : `${purchaseOperationIds.length} operações selecionadas`;
 
   const generatePurchasePeriodPdf = async () => {
     if (purchasePeriodReport.rows.length === 0) {
@@ -1908,8 +1927,12 @@ const Operations: React.FC = () => {
       return;
     }
     const categoryLabel = reportCategory === 'Todas' ? 'Todas as categorias' : reportCategory;
-    const operation = operations.find(item => item.id === purchaseOperationFilter);
-    const operationLabel = operation ? getOperationTitle(operation) : 'Todas as operacoes';
+    const selectedOperations = purchaseOperationIds.map(id => operations.find(operation => operation.id === id)).filter(Boolean) as OperationContract[];
+    const operationLabel = purchaseOperationIds.length === 0
+      ? 'Todas as operacoes'
+      : selectedOperations.length === 1
+        ? getOperationTitle(selectedOperations[0])
+        : `${selectedOperations.length} operacoes selecionadas`;
     const fileName = `${sanitizeFileName(`RELATORIO DE COMPRA - ${operationLabel} - ${categoryLabel} - ${formatDate(reportStartDate)} a ${formatDate(reportEndDate)}`)}.pdf`;
     const doc = new jsPDF();
     await addPdfHeader(doc, {
@@ -3370,10 +3393,25 @@ const Operations: React.FC = () => {
             <div className="period-report-filters">
               <div>
                 <label>Operações</label>
-                <select className="input-field" value={purchaseOperationFilter} onChange={event => setPurchaseOperationFilter(event.target.value)}>
-                  <option value="Todas">Todas as operações</option>
-                  {operations.map(operation => <option key={operation.id} value={operation.id}>{getOperationTitle(operation)}</option>)}
-                </select>
+                <details className="operation-multiselect">
+                  <summary className="input-field">{purchaseOperationLabel}</summary>
+                  <div className="operation-multiselect-options">
+                    <label className="operation-checkbox-option">
+                      <input type="checkbox" checked={purchaseOperationIds.length === 0} onChange={() => setPurchaseOperationIds([])} />
+                      <span>Todas as operações</span>
+                    </label>
+                    {operations.map(operation => (
+                      <label className="operation-checkbox-option" key={operation.id}>
+                        <input
+                          type="checkbox"
+                          checked={purchaseOperationIds.length === 0 || purchaseOperationIds.includes(operation.id)}
+                          onChange={() => togglePurchaseOperation(operation.id)}
+                        />
+                        <span>{getOperationTitle(operation)}</span>
+                      </label>
+                    ))}
+                  </div>
+                </details>
               </div>
               <div>
                 <label>Categoria</label>
