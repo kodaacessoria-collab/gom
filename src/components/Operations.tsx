@@ -511,6 +511,20 @@ const Operations: React.FC = () => {
   }, []);
 
   useEffect(() => {
+    const closeOperationSelectors = (event: PointerEvent) => {
+      const target = event.target;
+      if (!(target instanceof Node)) return;
+
+      document.querySelectorAll<HTMLDetailsElement>('.operation-multiselect[open]').forEach(selector => {
+        if (!selector.contains(target)) selector.removeAttribute('open');
+      });
+    };
+
+    document.addEventListener('pointerdown', closeOperationSelectors);
+    return () => document.removeEventListener('pointerdown', closeOperationSelectors);
+  }, []);
+
+  useEffect(() => {
     const channel = supabase
       .channel('app-shared-state')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'app_shared_state' }, payload => {
