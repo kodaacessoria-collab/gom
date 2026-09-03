@@ -417,7 +417,7 @@ const Operations: React.FC = () => {
   const [activeModule, setActiveModule] = useState<OperationsModule | null>(null);
   const [deliverySortDirection, setDeliverySortDirection] = useState<'asc' | 'desc'>('desc');
   const [reportCategory, setReportCategory] = useState<'Todas' | DeliveryCategory>('Todas');
-  const [summaryOperationId, setSummaryOperationId] = useState('Todas');
+  const [summaryOperationIds, setSummaryOperationIds] = useState<string[]>([]);
   const [reportStartDate, setReportStartDate] = useState(() => `${todayIso().slice(0, 8)}01`);
   const [reportEndDate, setReportEndDate] = useState(todayIso);
   const [reportProduct, setReportProduct] = useState('Todos');
@@ -2173,7 +2173,7 @@ const Operations: React.FC = () => {
 
     orders
       .filter(order =>
-        (summaryOperationId === 'Todas' || order.operationId === summaryOperationId) &&
+        (summaryOperationIds.length === 0 || summaryOperationIds.includes(order.operationId)) &&
         (reportCategory === 'Todas' || order.category === reportCategory) &&
         (!reportStartDate || order.deliveryDate >= reportStartDate) &&
         (!reportEndDate || order.deliveryDate <= reportEndDate)
@@ -2217,12 +2217,33 @@ const Operations: React.FC = () => {
       itemCount: rows.reduce((sum, row) => sum + row.itemCount, 0),
       totalQuantity: rows.reduce((sum, row) => sum + row.totalQuantity, 0),
     };
-  }, [orders, operations, summaryOperationId, reportCategory, reportStartDate, reportEndDate]);
+  }, [orders, operations, summaryOperationIds, reportCategory, reportStartDate, reportEndDate]);
+
+  const toggleSummaryOperation = (operationId: string) => {
+    setSummaryOperationIds(current => {
+      if (current.length === 0) {
+        return operations.map(operation => operation.id).filter(id => id !== operationId);
+      }
+      if (current.includes(operationId)) {
+        return current.length === 1 ? current : current.filter(id => id !== operationId);
+      }
+      const next = [...current, operationId];
+      return next.length === operations.length ? [] : next;
+    });
+  };
+
+  const summaryOperationLabel = summaryOperationIds.length === 0
+    ? 'Todas as operações'
+    : summaryOperationIds.length === 1
+      ? operations.find(operation => operation.id === summaryOperationIds[0])?.name || '1 operação selecionada'
+      : `${summaryOperationIds.length} operações selecionadas`;
 
   const getDeliveriesSummaryFileName = () => {
-    const operationName = summaryOperationId === 'Todas'
+    const operationName = summaryOperationIds.length === 0
       ? 'Todas operacoes'
-      : operations.find(operation => operation.id === summaryOperationId)?.name || 'Operacao';
+      : summaryOperationIds.length === 1
+        ? operations.find(operation => operation.id === summaryOperationIds[0])?.name || 'Operacao'
+        : 'Operacoes selecionadas';
     const categoryName = reportCategory === 'Todas' ? 'Todas categorias' : reportCategory;
     return `${sanitizeFileName(`RELATORIO SINTETICO DE ENTREGAS - ${operationName} - ${categoryName} - ${formatDate(reportStartDate)} a ${formatDate(reportEndDate)}`)}.pdf`;
   };
@@ -2233,11 +2254,13 @@ const Operations: React.FC = () => {
       return;
     }
     const fileName = getDeliveriesSummaryFileName();
-    const selectedOperation = summaryOperationId === 'Todas'
-      ? undefined
-      : operations.find(operation => operation.id === summaryOperationId);
+    const selectedOperation = summaryOperationIds.length === 1
+      ? operations.find(operation => operation.id === summaryOperationIds[0])
+      : undefined;
     const writer = selectedOperation ? await preparePdfWriter(selectedOperation, fileName) : null;
-    const operationLabel = selectedOperation?.name || 'Todas as operações';
+    const operationLabel = summaryOperationIds.length === 0
+      ? 'Todas as operações'
+      : summaryOperationIds.map(id => operations.find(operation => operation.id === id)?.name).filter(Boolean).join(', ');
     const categoryLabel = reportCategory === 'Todas' ? 'Todas as categorias' : reportCategory;
     const doc = new jsPDF({ orientation: 'landscape' });
     await addPdfHeader(doc, {
@@ -2925,10 +2948,25 @@ const Operations: React.FC = () => {
             <div className="period-report-filters">
               <div>
                 <label>Operação</label>
-                <select className="input-field" value={summaryOperationId} onChange={event => setSummaryOperationId(event.target.value)}>
-                  <option value="Todas">Todas as operações</option>
-                  {operations.map(operation => <option key={operation.id} value={operation.id}>{operation.name}</option>)}
-                </select>
+                <details className="operation-multiselect">
+                  <summary className="input-field">{summaryOperationLabel}</summary>
+                  <div className="operation-multiselect-options">
+                    <label className="operation-checkbox-option">
+                      <input type="checkbox" checked={summaryOperationIds.length === 0} onChange={() => setSummaryOperationIds([])} />
+                      <span>Todas as operações</span>
+                    </label>
+                    {operations.map(operation => (
+                      <label className="operation-checkbox-option" key={operation.id}>
+                        <input
+                          type="checkbox"
+                          checked={summaryOperationIds.length === 0 || summaryOperationIds.includes(operation.id)}
+                          onChange={() => toggleSummaryOperation(operation.id)}
+                        />
+                        <span>{operation.name}</span>
+                      </label>
+                    ))}
+                  </div>
+                </details>
               </div>
               <div>
                 <label>Categoria</label>
