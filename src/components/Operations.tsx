@@ -416,6 +416,7 @@ const Operations: React.FC = () => {
   const [creatingPurchase, setCreatingPurchase] = useState(false);
   const [activeModule, setActiveModule] = useState<OperationsModule | null>(null);
   const [deliverySortDirection, setDeliverySortDirection] = useState<'asc' | 'desc'>('desc');
+  const [expandedOrderId, setExpandedOrderId] = useState<string | null>(null);
   const [reportCategory, setReportCategory] = useState<'Todas' | DeliveryCategory>('Todas');
   const [summaryOperationIds, setSummaryOperationIds] = useState<string[]>([]);
   const [reportStartDate, setReportStartDate] = useState(() => `${todayIso().slice(0, 8)}01`);
@@ -2834,27 +2835,40 @@ const Operations: React.FC = () => {
                     </th>
                     <th>Inserido em</th>
                     <th>Categoria</th>
-                    <th>Origem</th>
-                    <th>Locais</th>
-                    <th>Itens</th>
-                    <th>Comprar</th>
-                    <th>Ações</th>
                   </tr>
                 </thead>
                 <tbody>
                   {sortedOperationOrders.map(order => {
                     const needs = getPurchaseNeeds(order);
+                    const isExpanded = expandedOrderId === order.id;
                     return (
-                      <tr key={order.id}>
-                        <td>{formatDate(order.deliveryDate)}</td>
-                        <td style={{ whiteSpace: 'nowrap' }}>{formatDateTime(order.importedAt)}</td>
-                        <td><span className="badge badge-blue">{order.category}</span></td>
-                        <td>{order.sourceType}</td>
-                        <td>{order.deliveries.length}</td>
-                        <td>{buildSummary(order.deliveries).length}</td>
-                        <td><span className={`badge ${needs.length ? 'badge-red' : 'badge-green'}`}>{needs.length ? `${needs.length} faltante(s)` : 'OK'}</span></td>
-                        <td>
-                          <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+                      <React.Fragment key={order.id}>
+                        <tr
+                          className={`order-summary-row ${isExpanded ? 'is-expanded' : ''}`}
+                          onClick={() => setExpandedOrderId(current => current === order.id ? null : order.id)}
+                          aria-expanded={isExpanded}
+                        >
+                          <td>
+                            <span className="order-delivery-date">
+                              {formatDate(order.deliveryDate)}
+                              {isExpanded ? <ArrowUp size={17} /> : <ArrowDown size={17} />}
+                            </span>
+                          </td>
+                          <td style={{ whiteSpace: 'nowrap' }}>{formatDateTime(order.importedAt)}</td>
+                          <td><span className="badge badge-blue">{order.category}</span></td>
+                        </tr>
+                        {isExpanded && (
+                          <tr className="order-details-row">
+                            <td colSpan={3}>
+                              <div className="order-expanded-content">
+                                <div className="order-expanded-meta">
+                                  <span><small>Origem</small><strong>{order.sourceType}</strong></span>
+                                  <span><small>Locais</small><strong>{order.deliveries.length}</strong></span>
+                                  <span><small>Itens</small><strong>{buildSummary(order.deliveries).length}</strong></span>
+                                  <span><small>Comprar</small><strong><span className={`badge ${needs.length ? 'badge-red' : 'badge-green'}`}>{needs.length ? `${needs.length} faltante(s)` : 'OK'}</span></strong></span>
+                                  {order.generalNotes?.trim() && <span className="order-expanded-note"><small>Observação</small><strong>{order.generalNotes}</strong></span>}
+                                </div>
+                                <div className="order-expanded-actions" onClick={event => event.stopPropagation()}>
                             <button className={`button ${editingOrderId === order.id ? '' : 'button-outline'}`} type="button" style={{ width: '42px', height: '36px', padding: 0 }} title="Editar pedido de entrega" onClick={() => startEditOrder(order)}>
                               <Edit3 size={16} />
                             </button>
@@ -2905,12 +2919,15 @@ const Operations: React.FC = () => {
                             <button className="button" style={{ width: '42px', height: '36px', padding: 0, backgroundColor: '#ef4444' }} title="Excluir pedido" onClick={() => deleteOrder(order.id)}>
                               <Trash2 size={16} />
                             </button>
+                                </div>
                           </div>
-                        </td>
-                      </tr>
+                            </td>
+                          </tr>
+                        )}
+                      </React.Fragment>
                     );
                   })}
-                  {operationOrders.length === 0 && <tr><td colSpan={8} style={{ textAlign: 'center', padding: '2rem' }}>Nenhum pedido lançado nesta operação.</td></tr>}
+                  {operationOrders.length === 0 && <tr><td colSpan={3} style={{ textAlign: 'center', padding: '2rem' }}>Nenhum pedido lançado nesta operação.</td></tr>}
                 </tbody>
               </table>
             </div>
