@@ -245,22 +245,62 @@ const extractDeliveryLabelFromRows = (rows: unknown[][]) => {
   return '';
 };
 
-const extractDateFromRows = (rows: unknown[][]) => {
-  for (const row of rows.slice(0, 12)) {
-    const labelIndex = row.findIndex(cell => normalizeKey(cell).includes('DATA'));
-    if (labelIndex >= 0) {
-      const rawDate = row.slice(labelIndex + 1).find(cell => String(cell ?? '').trim());
-      if (rawDate instanceof Date) return rawDate.toISOString().split('T')[0];
-      if (typeof rawDate === 'number') return new Date((rawDate - 25569) * 86400 * 1000).toISOString().split('T')[0];
-      const textDate = String(rawDate ?? '').trim();
-      if (/^\d{4}-\d{2}-\d{2}/.test(textDate)) return textDate.slice(0, 10);
-      if (/^\d{2}\/\d{2}\/\d{4}$/.test(textDate)) {
-        const [day, month, year] = textDate.split('/');
-        return `${year}-${month}-${day}`;
-      }
-    }
+const parseExcelDateValue = (value: unknown) => {
+  if (value instanceof Date && !Number.isNaN(value.getTime())) {
+    const year = value.getFullYear();
+    const month = String(value.getMonth() + 1).padStart(2, '0');
+    const day = String(value.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
   }
-  return todayIso();
+  if (typeof value === 'number') {
+    const parsed = XLSX.SSF.parse_date_code(value);
+    if (parsed) return `${parsed.y}-${String(parsed.m).padStart(2, '0')}-${String(parsed.d).padStart(2, '0')}`;
+  }
+  const text = displayText(value);
+  if (/^\d{4}-\d{2}-\d{2}/.test(text)) return text.slice(0, 10);
+  const brazilianDate = text.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{4})$/);
+  if (brazilianDate) return `${brazilianDate[3]}-${brazilianDate[2].padStart(2, '0')}-${brazilianDate[1].padStart(2, '0')}`;
+  return '';
+};
+
+interface ExcelOrderMetadata {
+  deliveryDate: string;
+  consumptionPeriod: string;
+  category?: DeliveryCategory;
+  categoryText: string;
+  generalNotes: string;
+}
+
+const extractExcelOrderMetadata = (rows: unknown[][]): ExcelOrderMetadata => {
+  const metadata: ExcelOrderMetadata = {
+    deliveryDate: '',
+    consumptionPeriod: '',
+    categoryText: '',
+    generalNotes: '',
+  };
+
+  rows.slice(0, 20).forEach(row => {
+    row.forEach((cell, index) => {
+      const label = normalizeKey(cell).replace(/\s*:\s*$/, '');
+      const inlineValue = displayText(cell).includes(':') ? displayText(cell).split(':').slice(1).join(':').trim() : '';
+      const adjacentValue = row.slice(index + 1).find(value => displayText(value));
+      const value = inlineValue || adjacentValue;
+
+      if (label === 'DATA DE ENTREGA' && !metadata.deliveryDate) {
+        metadata.deliveryDate = parseExcelDateValue(value);
+      } else if (label === 'PERIODO DE CONSUMO' && !metadata.consumptionPeriod) {
+        metadata.consumptionPeriod = displayText(value);
+      } else if (label === 'CATEGORIA' && !metadata.categoryText) {
+        metadata.categoryText = displayText(value);
+        const normalizedCategory = normalizeKey(value);
+        metadata.category = DELIVERY_CATEGORIES.find(category => normalizeKey(category) === normalizedCategory);
+      } else if ((label === 'OBSERVACAO' || label === 'OBSERVACOES') && !metadata.generalNotes) {
+        metadata.generalNotes = displayText(value);
+      }
+    });
+  });
+
+  return metadata;
 };
 
 const buildSummary = (deliveries: OrderDelivery[]) => {
@@ -986,13 +1026,20 @@ const Operations: React.FC = () => {
     if (!activeOperation || operationPoints.length === 0) throw new Error('Cadastre ao menos um local de entrega antes de importar.');
     const data = await file.arrayBuffer();
     const workbook = XLSX.read(data, { type: 'array', cellDates: true });
-    let deliveryDate = orderForm.deliveryDate || todayIso();
+    let metadata: ExcelOrderMetadata = { deliveryDate: '', consumptionPeriod: '', categoryText: '', generalNotes: '' };
     const deliveries: OrderDelivery[] = [];
 
     workbook.SheetNames.forEach(sheetName => {
       const rows = XLSX.utils.sheet_to_json(workbook.Sheets[sheetName], { header: 1, defval: '' }) as unknown[][];
       if (!rows.length) return;
-      deliveryDate = extractDateFromRows(rows) || deliveryDate;
+      const sheetMetadata = extractExcelOrderMetadata(rows);
+      metadata = {
+        deliveryDate: metadata.deliveryDate || sheetMetadata.deliveryDate,
+        consumptionPeriod: metadata.consumptionPeriod || sheetMetadata.consumptionPeriod,
+        category: metadata.category || sheetMetadata.category,
+        categoryText: metadata.categoryText || sheetMetadata.categoryText,
+        generalNotes: metadata.generalNotes || sheetMetadata.generalNotes,
+      };
       const parsedUnit = parseUnitSheet(sheetName, rows);
       if (parsedUnit) deliveries.push(parsedUnit);
       if (!parsedUnit) deliveries.push(...parseMatrixSheet(rows));
@@ -1002,14 +1049,22 @@ const Operations: React.FC = () => {
     if (normalizedDeliveries.length === 0) {
       throw new Error('Não encontrei locais de entrega compatíveis com os locais cadastrados. Confira se as abas/colunas do Excel usam o mesmo nome ou código dos locais.');
     }
+    if (!metadata.deliveryDate) {
+      throw new Error('Não encontrei uma Data de Entrega válida no cabeçalho do Excel. Use o campo “Data de Entrega:” conforme o modelo.');
+    }
+    if (!metadata.category) {
+      const receivedCategory = metadata.categoryText ? ` Valor encontrado: “${metadata.categoryText}”.` : '';
+      throw new Error(`Não encontrei uma Categoria válida no cabeçalho do Excel.${receivedCategory} Use uma das categorias cadastradas no sistema.`);
+    }
     return {
       id: makeId('order'),
       operationId: activeOperation.id,
-      category: orderForm.category,
+      category: metadata.category,
       sourceFileName: file.name,
       sourceType: 'Excel',
-      deliveryDate,
-      consumptionPeriod: displayText(orderForm.consumptionPeriod),
+      deliveryDate: metadata.deliveryDate,
+      consumptionPeriod: metadata.consumptionPeriod,
+      generalNotes: metadata.generalNotes,
       importedAt: new Date().toISOString(),
       deliveries: normalizedDeliveries,
     };
@@ -1085,7 +1140,10 @@ const Operations: React.FC = () => {
       setActiveModule('orders');
       setSelectedImportFile(null);
       setImportInputKey(current => current + 1);
-      setImportFeedback({ type: 'success', message: `Pedido importado: ${order.deliveries.length} local(is) de entrega e ${buildSummary(order.deliveries).length} produto(s).` });
+      setImportFeedback({
+        type: 'success',
+        message: `Pedido importado: ${order.category} | Entrega ${formatDate(order.deliveryDate)} | ${order.deliveries.length} local(is) e ${buildSummary(order.deliveries).length} produto(s).`,
+      });
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : 'Não foi possível importar o pedido.';
       console.error('Falha ao importar pedido:', error);
