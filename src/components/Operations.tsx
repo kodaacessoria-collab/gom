@@ -2162,6 +2162,8 @@ const Operations: React.FC = () => {
     const groups = new Map<string, {
       operation: OperationContract;
       category: DeliveryCategory;
+      deliveryDate: string;
+      notes: Set<string>;
       orderIds: Set<string>;
       deliveryCount: number;
       pointIds: Set<string>;
@@ -2179,10 +2181,12 @@ const Operations: React.FC = () => {
       .forEach(order => {
         const operation = operations.find(item => item.id === order.operationId);
         if (!operation) return;
-        const key = `${order.operationId}::${order.category}`;
+        const key = `${order.operationId}::${order.deliveryDate}::${order.category}`;
         const group = groups.get(key) || {
           operation,
           category: order.category,
+          deliveryDate: order.deliveryDate,
+          notes: new Set<string>(),
           orderIds: new Set<string>(),
           deliveryCount: 0,
           pointIds: new Set<string>(),
@@ -2190,6 +2194,7 @@ const Operations: React.FC = () => {
           totalQuantity: 0,
         };
         group.orderIds.add(order.id);
+        if (order.generalNotes?.trim()) group.notes.add(order.generalNotes.trim());
         order.deliveries.forEach(delivery => {
           group.deliveryCount += 1;
           group.pointIds.add(delivery.deliveryPointId);
@@ -2200,7 +2205,9 @@ const Operations: React.FC = () => {
       });
 
     const rows = Array.from(groups.values()).sort((a, b) =>
-      a.operation.name.localeCompare(b.operation.name, 'pt-BR') || a.category.localeCompare(b.category, 'pt-BR')
+      b.deliveryDate.localeCompare(a.deliveryDate) ||
+      a.operation.name.localeCompare(b.operation.name, 'pt-BR') ||
+      a.category.localeCompare(b.category, 'pt-BR')
     );
     return {
       rows,
@@ -2241,17 +2248,29 @@ const Operations: React.FC = () => {
     });
     autoTable(doc, {
       startY: 36,
-      head: [['Operação', 'Categoria', 'Pedidos', 'Entregas', 'Locais', 'Itens', 'Qtd. total']],
+      head: [['Operação', 'Data entrega', 'Categoria', 'Observação', 'Pedidos', 'Entregas', 'Locais', 'Itens', 'Qtd. total']],
       body: deliveriesSummaryReport.rows.map(row => [
-        getOperationTitle(row.operation), row.category, row.orderIds.size, row.deliveryCount,
+        getOperationTitle(row.operation), formatDate(row.deliveryDate), row.category,
+        Array.from(row.notes).join(' | ') || '-', row.orderIds.size, row.deliveryCount,
         row.pointIds.size, row.itemCount, formatQuantity(row.totalQuantity),
       ]),
-      foot: [['TOTAL', '', deliveriesSummaryReport.orderCount, deliveriesSummaryReport.deliveryCount,
+      foot: [['TOTAL', '', '', '', deliveriesSummaryReport.orderCount, deliveriesSummaryReport.deliveryCount,
         deliveriesSummaryReport.locationCount, deliveriesSummaryReport.itemCount, formatQuantity(deliveriesSummaryReport.totalQuantity)]],
       theme: 'grid',
-      styles: { font: REPORT_FONT, fontSize: REPORT_FONT_SIZE, cellPadding: 1.7, valign: 'middle' },
+      styles: { font: REPORT_FONT, fontSize: 9, cellPadding: 1.5, valign: 'middle', overflow: 'linebreak' },
       headStyles: { font: REPORT_FONT, fontStyle: 'bold', fillColor: [79, 70, 229] },
       footStyles: { font: REPORT_FONT, fontStyle: 'bold', fillColor: [226, 232, 240], textColor: [0, 0, 0] },
+      columnStyles: {
+        0: { cellWidth: 40 },
+        1: { cellWidth: 22 },
+        2: { cellWidth: 32 },
+        3: { cellWidth: 'auto' },
+        4: { cellWidth: 15, halign: 'center' },
+        5: { cellWidth: 17, halign: 'center' },
+        6: { cellWidth: 14, halign: 'center' },
+        7: { cellWidth: 13, halign: 'center' },
+        8: { cellWidth: 22, halign: 'right' },
+      },
     });
     await savePdf(doc, fileName, writer);
   };
@@ -2900,7 +2919,7 @@ const Operations: React.FC = () => {
             <div className="view-header" style={{ marginBottom: '1rem', gap: '1rem' }}>
               <div>
                 <h2 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}><FileText size={20} /> Relatório sintético de entregas</h2>
-                <p style={{ textAlign: 'left', marginBottom: 0 }}>Consolida todas as entregas do período por operação e categoria.</p>
+                <p style={{ textAlign: 'left', marginBottom: 0 }}>Soma todas as entregas do mesmo romaneio, agrupando por data, operação e categoria.</p>
               </div>
             </div>
             <div className="period-report-filters">
@@ -2940,19 +2959,21 @@ const Operations: React.FC = () => {
             </div>
             <div style={{ overflowX: 'auto', marginTop: '1rem' }}>
               <table className="data-table">
-                <thead><tr><th>Operação</th><th>Categoria</th><th>Pedidos</th><th>Entregas</th><th>Locais</th><th>Itens</th><th>Qtd. total</th></tr></thead>
+                <thead><tr><th>Operação</th><th>Data da entrega</th><th>Categoria</th><th>Observação</th><th>Pedidos</th><th>Entregas</th><th>Locais</th><th>Itens</th><th>Qtd. total</th></tr></thead>
                 <tbody>
                   {deliveriesSummaryReport.rows.map(row => (
-                    <tr key={`${row.operation.id}_${row.category}`}>
+                    <tr key={`${row.operation.id}_${row.deliveryDate}_${row.category}`}>
                       <td style={{ fontWeight: 600 }}>{getOperationTitle(row.operation)}</td>
+                      <td style={{ whiteSpace: 'nowrap' }}>{formatDate(row.deliveryDate)}</td>
                       <td><span className="badge badge-blue">{row.category}</span></td>
+                      <td>{Array.from(row.notes).join(' | ') || '-'}</td>
                       <td>{row.orderIds.size}</td><td>{row.deliveryCount}</td><td>{row.pointIds.size}</td><td>{row.itemCount}</td><td>{formatQuantity(row.totalQuantity)}</td>
                     </tr>
                   ))}
                   {deliveriesSummaryReport.rows.length > 0 && (
-                    <tr style={{ fontWeight: 800, background: '#eff6ff' }}><td>Total</td><td></td><td>{deliveriesSummaryReport.orderCount}</td><td>{deliveriesSummaryReport.deliveryCount}</td><td>{deliveriesSummaryReport.locationCount}</td><td>{deliveriesSummaryReport.itemCount}</td><td>{formatQuantity(deliveriesSummaryReport.totalQuantity)}</td></tr>
+                    <tr style={{ fontWeight: 800, background: '#eff6ff' }}><td>Total</td><td></td><td></td><td></td><td>{deliveriesSummaryReport.orderCount}</td><td>{deliveriesSummaryReport.deliveryCount}</td><td>{deliveriesSummaryReport.locationCount}</td><td>{deliveriesSummaryReport.itemCount}</td><td>{formatQuantity(deliveriesSummaryReport.totalQuantity)}</td></tr>
                   )}
-                  {deliveriesSummaryReport.rows.length === 0 && <tr><td colSpan={7} style={{ textAlign: 'center', padding: '2rem' }}>Nenhuma entrega encontrada para os filtros selecionados.</td></tr>}
+                  {deliveriesSummaryReport.rows.length === 0 && <tr><td colSpan={9} style={{ textAlign: 'center', padding: '2rem' }}>Nenhuma entrega encontrada para os filtros selecionados.</td></tr>}
                 </tbody>
               </table>
             </div>
