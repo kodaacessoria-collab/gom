@@ -419,6 +419,7 @@ const Operations: React.FC = () => {
   const [expandedOrderId, setExpandedOrderId] = useState<string | null>(null);
   const [ordersCategoryFilter, setOrdersCategoryFilter] = useState<'Todas' | DeliveryCategory>('Todas');
   const [reportCategory, setReportCategory] = useState<'Todas' | DeliveryCategory>('Todas');
+  const [purchaseOperationFilter, setPurchaseOperationFilter] = useState('Todas');
   const [summaryOperationIds, setSummaryOperationIds] = useState<string[]>([]);
   const [reportStartDate, setReportStartDate] = useState(() => `${todayIso().slice(0, 8)}01`);
   const [reportEndDate, setReportEndDate] = useState(todayIso);
@@ -1874,7 +1875,8 @@ const Operations: React.FC = () => {
   };
 
   const purchasePeriodReport = useMemo(() => {
-    const filteredOrders = operationOrders.filter(order =>
+    const filteredOrders = orders.filter(order =>
+      (purchaseOperationFilter === 'Todas' || order.operationId === purchaseOperationFilter) &&
       (reportCategory === 'Todas' || order.category === reportCategory) &&
       (!reportStartDate || order.deliveryDate >= reportStartDate) &&
       (!reportEndDate || order.deliveryDate <= reportEndDate)
@@ -1894,25 +1896,27 @@ const Operations: React.FC = () => {
     return {
       rows,
       orderCount: filteredOrders.length,
+      operationCount: new Set(filteredOrders.map(order => order.operationId)).size,
       deliveryCount: filteredOrders.reduce((sum, order) => sum + order.deliveries.length, 0),
       totalQuantity: rows.reduce((sum, row) => sum + row.quantity, 0),
     };
-  }, [operationOrders, reportCategory, reportStartDate, reportEndDate]);
+  }, [orders, purchaseOperationFilter, reportCategory, reportStartDate, reportEndDate]);
 
   const generatePurchasePeriodPdf = async () => {
-    if (!activeOperation || purchasePeriodReport.rows.length === 0) {
+    if (purchasePeriodReport.rows.length === 0) {
       alert('Nenhum item foi encontrado para os filtros selecionados.');
       return;
     }
     const categoryLabel = reportCategory === 'Todas' ? 'Todas as categorias' : reportCategory;
-    const fileName = `${sanitizeFileName(`RELATORIO DE COMPRA - ${activeOperation.name} - ${categoryLabel} - ${formatDate(reportStartDate)} a ${formatDate(reportEndDate)}`)}.pdf`;
-    const writer = await preparePdfWriter(activeOperation, fileName);
+    const operation = operations.find(item => item.id === purchaseOperationFilter);
+    const operationLabel = operation ? getOperationTitle(operation) : 'Todas as operacoes';
+    const fileName = `${sanitizeFileName(`RELATORIO DE COMPRA - ${operationLabel} - ${categoryLabel} - ${formatDate(reportStartDate)} a ${formatDate(reportEndDate)}`)}.pdf`;
     const doc = new jsPDF();
     await addPdfHeader(doc, {
-      title: `RELATORIO DE COMPRA - ${getOperationTitle(activeOperation).toUpperCase()}`,
-      subtitle: `Categoria: ${categoryLabel} | Periodo de entrega: ${formatDate(reportStartDate)} a ${formatDate(reportEndDate)}`,
-      footer: `${purchasePeriodReport.orderCount} pedido(s) | Quantidades integrais, sem desconto de estoque`,
-      logoVariant: activeOperation.logoVariant || DEFAULT_LOGO_VARIANT,
+      title: 'RELATORIO GERAL DE COMPRA POR PERIODO',
+      subtitle: `Operacoes: ${operationLabel} | Categoria: ${categoryLabel} | Periodo: ${formatDate(reportStartDate)} a ${formatDate(reportEndDate)}`,
+      footer: `${purchasePeriodReport.operationCount} operacao(oes) | ${purchasePeriodReport.orderCount} pedido(s) | Sem desconto de estoque`,
+      logoVariant: DEFAULT_LOGO_VARIANT,
     });
     autoTable(doc, {
       startY: 36,
@@ -1925,7 +1929,7 @@ const Operations: React.FC = () => {
       footStyles: { font: REPORT_FONT, fontStyle: 'bold', fillColor: [226, 232, 240], textColor: [0, 0, 0] },
       columnStyles: { 0: { cellWidth: 120 }, 1: { cellWidth: 25, halign: 'center' }, 2: { cellWidth: 40, halign: 'right' } },
     });
-    await savePdf(doc, fileName, writer);
+    await savePdf(doc, fileName, null);
   };
 
   const getPeriodReportFileName = (extension: 'pdf' | 'xlsx') => {
@@ -2523,6 +2527,16 @@ const Operations: React.FC = () => {
         </div>
       )}
 
+      <div className="operations-global-reports">
+        <div>
+          <strong>Relatórios gerais</strong>
+          <small>Consultam todas as operações, independentemente da operação selecionada abaixo.</small>
+        </div>
+        <button type="button" className="operations-module-button" onClick={() => setActiveModule('purchase-period-report')}>
+          <ShoppingCart size={22} /><span><strong>Compra por período</strong><small>Todas as operações, sem considerar estoque</small></span>
+        </button>
+      </div>
+
       <div className="operations-module-toolbar">
         <div className="operations-active-selector">
           <label htmlFor="active-operation">Operação selecionada</label>
@@ -2540,7 +2554,6 @@ const Operations: React.FC = () => {
           <button type="button" className="operations-module-button" onClick={() => setActiveModule('deliveries-summary-report')}><FileText size={22} /><span><strong>Relatório de entregas</strong><small>Sintético por operação e categoria</small></span></button>
           <button type="button" className="operations-module-button" onClick={() => setActiveModule('period-report')}><Search size={22} /><span><strong>Produtos por categoria e período</strong><small>Filtrar categoria e datas</small></span></button>
           <button type="button" className="operations-module-button" onClick={() => setActiveModule('romaneio-products-report')}><FileText size={22} /><span><strong>Produtos por romaneio</strong><small>Sintético, sem misturar pedidos</small></span></button>
-          <button type="button" className="operations-module-button" onClick={() => setActiveModule('purchase-period-report')}><ShoppingCart size={22} /><span><strong>Compra por período</strong><small>Soma integral, sem considerar estoque</small></span></button>
           <button type="button" className="operations-module-button" onClick={() => setActiveModule('products-by-date-report')}><FileSpreadsheet size={22} /><span><strong>Faturamento de entregas</strong><small>Custos, vendas e margem</small></span></button>
         </div>
       </div>
@@ -3356,6 +3369,13 @@ const Operations: React.FC = () => {
             </div>
             <div className="period-report-filters">
               <div>
+                <label>Operações</label>
+                <select className="input-field" value={purchaseOperationFilter} onChange={event => setPurchaseOperationFilter(event.target.value)}>
+                  <option value="Todas">Todas as operações</option>
+                  {operations.map(operation => <option key={operation.id} value={operation.id}>{getOperationTitle(operation)}</option>)}
+                </select>
+              </div>
+              <div>
                 <label>Categoria</label>
                 <select className="input-field" value={reportCategory} onChange={event => setReportCategory(event.target.value as 'Todas' | DeliveryCategory)}>
                   <option value="Todas">Todas as categorias</option>
@@ -3377,6 +3397,7 @@ const Operations: React.FC = () => {
               </div>
             </div>
             <div className="period-report-summary">
+              <span className="badge">{purchasePeriodReport.operationCount} operação(ões)</span>
               <span className="badge badge-blue">{purchasePeriodReport.orderCount} pedido(s)</span>
               <span className="badge badge-green">{purchasePeriodReport.rows.length} produto(s)</span>
               <span className="badge">{purchasePeriodReport.deliveryCount} entrega(s) somadas</span>
