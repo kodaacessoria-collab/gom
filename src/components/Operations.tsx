@@ -360,8 +360,21 @@ const toColumnLetters = (index: number) => {
 };
 
 const addReceiptFields = (doc: jsPDF, startY: number) => {
-  const y = Math.min(startY + 12, 260);
+  const pageHeight = doc.internal.pageSize.getHeight();
+  const receiptHeight = 26;
+  const bottomMargin = 14;
+  let y = startY + 10;
+
+  if (y + receiptHeight > pageHeight - bottomMargin) {
+    doc.addPage('a4', 'portrait');
+    doc.setFont(REPORT_FONT, 'bold');
+    doc.setFontSize(REPORT_FONT_SIZE);
+    doc.text('CONFIRMACAO DE RECEBIMENTO', 14, 20);
+    y = 34;
+  }
+
   doc.setFont(REPORT_FONT, 'normal');
+  doc.setFontSize(REPORT_FONT_SIZE);
   doc.text('Data de recebimento: ____/____/________', 14, y);
   doc.text('Nome de quem recebeu: _______________________________________________', 14, y + 8);
   doc.text('RG: __________________________   Assinatura: ________________________', 14, y + 16);
