@@ -1959,6 +1959,61 @@ const Operations: React.FC = () => {
     await savePdf(doc, fileName, writer);
   };
 
+  const generateRomaneioProductsExcel = () => {
+    if (!activeOperation || romaneioProductsReport.rows.length === 0) {
+      alert('Nenhum produto foi encontrado para os filtros selecionados.');
+      return;
+    }
+    const categoryLabel = reportCategory === 'Todas' ? 'Todas as categorias' : reportCategory;
+    const productLabel = selectedReportProduct ? `${selectedReportProduct.product} - ${selectedReportProduct.unit}` : 'Todos os produtos';
+    const fileName = `${sanitizeFileName(`RELATORIO SINTETICO POR ROMANEIO - ${activeOperation.name} - ${categoryLabel} - ${formatDate(reportStartDate)} a ${formatDate(reportEndDate)}`)}.xlsx`;
+    const headerRowIndex = 6;
+    const data: (string | number)[][] = [
+      [`Produtos entregues - sintético por romaneio - ${getOperationTitle(activeOperation)}`],
+      ['Operação', getOperationTitle(activeOperation)],
+      ['Categoria', categoryLabel, 'Produto', productLabel],
+      ['Período', `${formatDate(reportStartDate)} a ${formatDate(reportEndDate)}`],
+      ['Romaneios', romaneioProductsReport.columns.length, 'Entregas somadas', romaneioProductsReport.deliveryCount],
+      [],
+      [
+        'Produto',
+        'UND',
+        ...romaneioProductsReport.columns.map((order, index) =>
+          `${formatDate(order.deliveryDate)} - Romaneio ${index + 1} - ${order.category} - ${order.generalNotes?.trim() || 'Sem observação'}`
+        ),
+        'Total',
+      ],
+      ...romaneioProductsReport.rows.map(row => [
+        row.product,
+        row.unit,
+        ...romaneioProductsReport.columns.map(order => row.quantities[order.id] || 0),
+        row.total,
+      ]),
+      [
+        'TOTAL GERAL',
+        '',
+        ...romaneioProductsReport.columns.map(order => romaneioProductsReport.columnTotals[order.id] || 0),
+        romaneioProductsReport.grandTotal,
+      ],
+    ];
+    const workbook = XLSX.utils.book_new();
+    const sheet = XLSX.utils.aoa_to_sheet(data);
+    sheet['!cols'] = [
+      { wch: 38 },
+      { wch: 16 },
+      ...romaneioProductsReport.columns.map(() => ({ wch: 42 })),
+      { wch: 16 },
+    ];
+    sheet['!autofilter'] = {
+      ref: XLSX.utils.encode_range({
+        s: { r: headerRowIndex, c: 0 },
+        e: { r: data.length - 2, c: data[headerRowIndex].length - 1 },
+      }),
+    };
+    XLSX.utils.book_append_sheet(workbook, sheet, 'Produtos por romaneio');
+    XLSX.writeFile(workbook, fileName);
+  };
+
   const purchasePeriodReport = useMemo(() => {
     const filteredOrders = orders.filter(order =>
       (purchaseOperationIds.length === 0 || purchaseOperationIds.includes(order.operationId)) &&
@@ -3345,6 +3400,9 @@ const Operations: React.FC = () => {
               <div className="period-report-actions">
                 <button type="button" className="button button-outline" disabled={romaneioProductsReport.rows.length === 0} onClick={generateRomaneioProductsPdf}>
                   <FileText size={17} style={{ marginRight: '0.45rem' }} /> Gerar PDF sintético
+                </button>
+                <button type="button" className="button button-outline excel-action" disabled={romaneioProductsReport.rows.length === 0} onClick={generateRomaneioProductsExcel}>
+                  <FileSpreadsheet size={17} style={{ marginRight: '0.45rem' }} /> Gerar Excel
                 </button>
               </div>
             </div>
