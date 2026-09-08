@@ -26,6 +26,7 @@ import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import * as XLSX from 'xlsx';
 import { getDocument, GlobalWorkerOptions } from 'pdfjs-dist';
+import { getOrderControlNumber } from '../lib/orderControlNumber';
 import { supabase } from '../lib/supabase';
 import type { Deposit, Product } from '../types';
 import { addCompanyLetterhead, addPdfHeader } from '../lib/pdfBranding';
@@ -379,6 +380,10 @@ const addDeliveryAddress = (doc: jsPDF, point?: DeliveryPoint, startY = 46) => {
 
 const addOrderGeneralNotes = (doc: jsPDF, order: OperationOrder, startY = 39) => {
   const notes = displayText(order.generalNotes);
+  doc.setFont(REPORT_FONT, 'bold');
+  doc.setFontSize(REPORT_FONT_SIZE);
+  doc.text(`Controle: ${getOrderControlNumber(order.importedAt)}`, 14, startY);
+  startY += 7;
   if (!notes) return startY;
 
   const lines = doc.splitTextToSize(`Observacao geral: ${notes}`, 182);
@@ -1643,6 +1648,7 @@ const Operations: React.FC = () => {
     const data: (string | number)[][] = [
       [operation.name, `${operation.city}/${operation.uf || '--'}`],
       [title],
+      ['Número de controle', getOrderControlNumber(order.importedAt)],
       ['Entrega', formatDate(order.deliveryDate), 'Categoria', order.category],
       ['Período', order.consumptionPeriod || '-', 'Origem', order.sourceType],
       ...(order.generalNotes ? [['Observação', order.generalNotes]] : []),
@@ -1920,7 +1926,7 @@ const Operations: React.FC = () => {
       head: [[
         'Produto', 'UND',
         ...romaneioProductsReport.columns.map((order, index) =>
-          `${formatDate(order.deliveryDate)}\nRomaneio ${index + 1}\n${order.category}\n${order.generalNotes?.trim() || 'Sem observação'}`
+          `${formatDate(order.deliveryDate)}\nRomaneio ${index + 1} - Controle ${getOrderControlNumber(order.importedAt)}\n${order.category}\n${order.generalNotes?.trim() || 'Sem observação'}`
         ),
         'Total',
       ]],
@@ -1965,7 +1971,7 @@ const Operations: React.FC = () => {
         'Produto',
         'UND',
         ...romaneioProductsReport.columns.map((order, index) =>
-          `${formatDate(order.deliveryDate)} - Romaneio ${index + 1} - ${order.category} - ${order.generalNotes?.trim() || 'Sem observação'}`
+          `${formatDate(order.deliveryDate)} - Romaneio ${index + 1} - Controle ${getOrderControlNumber(order.importedAt)} - ${order.category} - ${order.generalNotes?.trim() || 'Sem observação'}`
         ),
         'Total',
       ],
@@ -2417,9 +2423,10 @@ const Operations: React.FC = () => {
     });
     autoTable(doc, {
       startY: 36,
-      head: [['Entrega', 'Inserido em', 'Categoria', 'Origem', 'Locais', 'Itens', 'Qtd. total']],
+      head: [['Entrega', 'Controle', 'Inserido em', 'Categoria', 'Origem', 'Locais', 'Itens', 'Qtd. total']],
       body: ordersSummaryReport.rows.map(({ order, locationCount, itemCount, totalQuantity }) => [
         formatDate(order.deliveryDate),
+        getOrderControlNumber(order.importedAt),
         formatDateTime(order.importedAt),
         order.category,
         order.sourceType,
@@ -2427,7 +2434,7 @@ const Operations: React.FC = () => {
         itemCount,
         formatQuantity(totalQuantity),
       ]),
-      foot: [['TOTAL', '', '', '', ordersSummaryReport.locationCount, ordersSummaryReport.itemCount, formatQuantity(ordersSummaryReport.totalQuantity)]],
+      foot: [['TOTAL', '', '', '', '', ordersSummaryReport.locationCount, ordersSummaryReport.itemCount, formatQuantity(ordersSummaryReport.totalQuantity)]],
       theme: 'grid',
       styles: { font: REPORT_FONT, fontSize: REPORT_FONT_SIZE, cellPadding: 1.7, valign: 'middle' },
       headStyles: { font: REPORT_FONT, fontStyle: 'bold', fillColor: [79, 70, 229] },
@@ -2446,16 +2453,16 @@ const Operations: React.FC = () => {
       [`Relatório sintético de pedidos - ${activeOperation.name}`],
       ['Categoria', categoryLabel, 'Período de entrega', `${formatDate(reportStartDate)} a ${formatDate(reportEndDate)}`],
       [],
-      ['Entrega', 'Inserido em', 'Categoria', 'Origem', 'Locais', 'Itens', 'Quantidade total'],
+      ['Entrega', 'Controle', 'Inserido em', 'Categoria', 'Origem', 'Locais', 'Itens', 'Quantidade total'],
       ...ordersSummaryReport.rows.map(({ order, locationCount, itemCount, totalQuantity }) => [
-        formatDate(order.deliveryDate), formatDateTime(order.importedAt), order.category, order.sourceType, locationCount, itemCount, totalQuantity,
+        formatDate(order.deliveryDate), getOrderControlNumber(order.importedAt), formatDateTime(order.importedAt), order.category, order.sourceType, locationCount, itemCount, totalQuantity,
       ]),
-      ['TOTAL', '', '', '', ordersSummaryReport.locationCount, ordersSummaryReport.itemCount, ordersSummaryReport.totalQuantity],
+      ['TOTAL', '', '', '', '', ordersSummaryReport.locationCount, ordersSummaryReport.itemCount, ordersSummaryReport.totalQuantity],
     ];
     const workbook = XLSX.utils.book_new();
     const sheet = XLSX.utils.aoa_to_sheet(data);
-    sheet['!cols'] = [{ wch: 14 }, { wch: 22 }, { wch: 26 }, { wch: 14 }, { wch: 12 }, { wch: 12 }, { wch: 18 }];
-    sheet['!autofilter'] = { ref: XLSX.utils.encode_range({ s: { r: 3, c: 0 }, e: { r: data.length - 2, c: 6 } }) };
+    sheet['!cols'] = [{ wch: 14 }, { wch: 20 }, { wch: 22 }, { wch: 26 }, { wch: 14 }, { wch: 12 }, { wch: 12 }, { wch: 18 }];
+    sheet['!autofilter'] = { ref: XLSX.utils.encode_range({ s: { r: 3, c: 0 }, e: { r: data.length - 2, c: 7 } }) };
     XLSX.utils.book_append_sheet(workbook, sheet, 'Pedidos');
     XLSX.writeFile(workbook, getOrdersSummaryFileName('xlsx'));
   };
@@ -3063,7 +3070,7 @@ const Operations: React.FC = () => {
                         {deliverySortDirection === 'asc' ? <ArrowUp size={15} /> : <ArrowDown size={15} />}
                       </button>
                     </th>
-                    <th>Inserido em</th>
+                    <th>Número de controle</th><th>Inserido em</th>
                     <th>Categoria</th>
                   </tr>
                 </thead>
@@ -3084,12 +3091,13 @@ const Operations: React.FC = () => {
                               {isExpanded ? <ArrowUp size={17} /> : <ArrowDown size={17} />}
                             </span>
                           </td>
-                          <td style={{ whiteSpace: 'nowrap' }}>{formatDateTime(order.importedAt)}</td>
+                          <td style={{ whiteSpace: 'nowrap' }}>{getOrderControlNumber(order.importedAt)}</td>
+                      <td style={{ whiteSpace: 'nowrap' }}>{formatDateTime(order.importedAt)}</td>
                           <td><span className="badge badge-blue">{order.category}</span></td>
                         </tr>
                         {isExpanded && (
                           <tr className="order-details-row">
-                            <td colSpan={3}>
+                            <td colSpan={4}>
                               <div className="order-expanded-content">
                                 <div className="order-expanded-meta">
                                   <span><small>Origem</small><strong>{order.sourceType}</strong></span>
@@ -3157,7 +3165,7 @@ const Operations: React.FC = () => {
                       </React.Fragment>
                     );
                   })}
-                  {visibleOperationOrders.length === 0 && <tr><td colSpan={3} style={{ textAlign: 'center', padding: '2rem' }}>Nenhum pedido encontrado para esta categoria.</td></tr>}
+                  {visibleOperationOrders.length === 0 && <tr><td colSpan={4} style={{ textAlign: 'center', padding: '2rem' }}>Nenhum pedido encontrado para esta categoria.</td></tr>}
                 </tbody>
               </table>
             </div>
@@ -3252,11 +3260,12 @@ const Operations: React.FC = () => {
             </div>
             <div style={{ overflowX: 'auto', marginTop: '1rem' }}>
               <table className="data-table">
-                <thead><tr><th>Entrega</th><th>Inserido em</th><th>Categoria</th><th>Origem</th><th>Locais</th><th>Itens</th><th>Qtd. total</th></tr></thead>
+                <thead><tr><th>Entrega</th><th>Número de controle</th><th>Inserido em</th><th>Categoria</th><th>Origem</th><th>Locais</th><th>Itens</th><th>Qtd. total</th></tr></thead>
                 <tbody>
                   {ordersSummaryReport.rows.map(({ order, locationCount, itemCount, totalQuantity }) => (
                     <tr key={order.id}>
                       <td>{formatDate(order.deliveryDate)}</td>
+                      <td style={{ whiteSpace: 'nowrap' }}>{getOrderControlNumber(order.importedAt)}</td>
                       <td style={{ whiteSpace: 'nowrap' }}>{formatDateTime(order.importedAt)}</td>
                       <td><span className="badge badge-blue">{order.category}</span></td>
                       <td>{order.sourceType}</td>
@@ -3266,9 +3275,9 @@ const Operations: React.FC = () => {
                     </tr>
                   ))}
                   {ordersSummaryReport.rows.length > 0 && (
-                    <tr style={{ fontWeight: 800, background: '#eff6ff' }}><td>Total</td><td></td><td></td><td></td><td>{ordersSummaryReport.locationCount}</td><td>{ordersSummaryReport.itemCount}</td><td>{formatQuantity(ordersSummaryReport.totalQuantity)}</td></tr>
+                    <tr style={{ fontWeight: 800, background: '#eff6ff' }}><td>Total</td><td></td><td></td><td></td><td></td><td>{ordersSummaryReport.locationCount}</td><td>{ordersSummaryReport.itemCount}</td><td>{formatQuantity(ordersSummaryReport.totalQuantity)}</td></tr>
                   )}
-                  {ordersSummaryReport.rows.length === 0 && <tr><td colSpan={7} style={{ textAlign: 'center', padding: '2rem' }}>Nenhum pedido encontrado para os filtros selecionados.</td></tr>}
+                  {ordersSummaryReport.rows.length === 0 && <tr><td colSpan={8} style={{ textAlign: 'center', padding: '2rem' }}>Nenhum pedido encontrado para os filtros selecionados.</td></tr>}
                 </tbody>
               </table>
             </div>
@@ -3405,7 +3414,7 @@ const Operations: React.FC = () => {
                     <th>Produto</th><th>UND</th>
                     {romaneioProductsReport.columns.map((order, index) => (
                       <th key={order.id}>
-                        <span style={{ whiteSpace: 'nowrap' }}>{formatDate(order.deliveryDate)} - Romaneio {index + 1}</span><br />
+                        <span style={{ whiteSpace: 'nowrap' }}>{formatDate(order.deliveryDate)} - Romaneio {index + 1} - Controle {getOrderControlNumber(order.importedAt)}</span><br />
                         <small>{order.category}</small><br />
                         <small>{order.generalNotes?.trim() || 'Sem observação'}</small>
                       </th>
