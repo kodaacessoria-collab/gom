@@ -824,9 +824,25 @@ const Operations: React.FC = () => {
     })));
   };
 
-  const deleteOrder = (orderId: string) => {
-    if (!confirm('Deseja excluir este pedido da operação?')) return;
-    persistOrders(orders.filter(order => order.id !== orderId));
+  const deleteOrder = async (orderId: string) => {
+    if (!window.confirm('Deseja excluir este pedido da operação?')) return;
+
+    const previousOrders = orders;
+    const nextOrders = orders.filter(order => order.id !== orderId);
+
+    setOrders(nextOrders);
+    saveStorage(ORDERS_KEY, nextOrders);
+    setExpandedOrderId(current => current === orderId ? null : current);
+
+    try {
+      await saveSharedState(ORDERS_KEY, nextOrders);
+      setSharedStateError('');
+    } catch (error) {
+      setOrders(previousOrders);
+      saveStorage(ORDERS_KEY, previousOrders);
+      reportSharedStateError(error);
+      window.alert('Não foi possível excluir o pedido. A alteração foi desfeita; verifique a conexão e tente novamente.');
+    }
   };
 
   const deleteDelivery = (orderId: string, deliveryId: string) => {
@@ -3154,7 +3170,7 @@ const Operations: React.FC = () => {
                             <button className="button button-outline" disabled={creatingPurchase} style={{ width: '42px', height: '36px', padding: 0 }} title="Gerar pedido de compra" onClick={() => createPurchaseOrderFromOperation(order)}>
                               <ShoppingCart size={16} />
                             </button>
-                            <button className="button" style={{ width: '42px', height: '36px', padding: 0, backgroundColor: '#ef4444' }} title="Excluir pedido" onClick={() => deleteOrder(order.id)}>
+                            <button type="button" className="button" style={{ width: '42px', height: '36px', padding: 0, backgroundColor: '#ef4444' }} title="Excluir pedido" aria-label={`Excluir pedido ${getOrderControlNumber(order.importedAt)}`} onClick={() => void deleteOrder(order.id)}>
                               <Trash2 size={16} />
                             </button>
                                 </div>
