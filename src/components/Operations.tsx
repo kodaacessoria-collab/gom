@@ -487,6 +487,9 @@ const Operations: React.FC = () => {
   const [sharedStateReady, setSharedStateReady] = useState(false);
   const [sharedStateError, setSharedStateError] = useState('');
   const [pdfFolders, setPdfFolders] = useState<Record<string, OperationPdfFolder>>({});
+  const [locationsImporting, setLocationsImporting] = useState(false);
+  const [locationsImportInputKey, setLocationsImportInputKey] = useState(0);
+  const [locationsImportFeedback, setLocationsImportFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
 
   const activeOperation = operations.find(operation => operation.id === activeOperationId) || operations[0];
   const operationSectors = sectors.filter(sector => sector.operationId === activeOperation?.id);
@@ -777,6 +780,123 @@ const Operations: React.FC = () => {
     persistDeliveryPoints([...deliveryPoints, point]);
     setNewPoint({ ...newPoint, code: '', name: '', address: '', neighborhood: '' });
     if (!orderForm.deliveryPointId) setOrderForm({ ...orderForm, deliveryPointId: point.id });
+  };
+
+  const downloadLocationsTemplate = () => {
+    const worksheet = XLSX.utils.aoa_to_sheet([
+      ['SETOR', 'CÓDIGO', 'LOCAL', 'ENDEREÇO', 'BAIRRO'],
+      ['Setor 01', '001', 'Escola Exemplo', 'Rua Exemplo, 100', 'Centro'],
+    ]);
+    worksheet['!cols'] = [
+      { wch: 20 },
+      { wch: 16 },
+      { wch: 36 },
+      { wch: 44 },
+      { wch: 24 },
+    ];
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, 'Locais');
+    XLSX.writeFile(workbook, 'Modelo_Importacao_Locais.xlsx');
+  };
+
+  const importLocationsFromExcel = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.currentTarget.files?.[0];
+    if (!file || !activeOperation) return;
+
+    setLocationsImporting(true);
+    setLocationsImportFeedback(null);
+
+    try {
+      const workbook = XLSX.read(await file.arrayBuffer(), { type: 'array' });
+      const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
+      if (!firstSheet) throw new Error('O arquivo não possui uma planilha para importar.');
+
+      const rows = XLSX.utils.sheet_to_json(firstSheet, { header: 1, defval: '' }) as unknown[][];
+      const headerRowIndex = rows.findIndex(row => {
+        const headers = row.map(normalizeKey);
+        return headers.includes('SETOR') && headers.some(header => ['LOCAL', 'ESCOLA', 'NOME', 'LOCAL DE ENTREGA', 'NOME DO LOCAL'].includes(header));
+      });
+      if (headerRowIndex < 0) {
+        throw new Error('Cabeçalho não encontrado. Use as colunas SETOR, CÓDIGO, LOCAL, ENDEREÇO e BAIRRO.');
+      }
+
+      const headers = rows[headerRowIndex].map(normalizeKey);
+      const sectorIndex = headers.findIndex(header => header === 'SETOR');
+      const codeIndex = headers.findIndex(header => ['CODIGO', 'CÓDIGO'].includes(header));
+      const nameIndex = headers.findIndex(header => ['LOCAL', 'ESCOLA', 'NOME', 'LOCAL DE ENTREGA', 'NOME DO LOCAL'].includes(header));
+      const addressIndex = headers.findIndex(header => ['ENDERECO', 'ENDEREÇO'].includes(header));
+      const neighborhoodIndex = headers.findIndex(header => header === 'BAIRRO');
+
+      const nextSectors = [...sectors];
+      const sectorByName = new Map(
+        nextSectors
+          .filter(sector => sector.operationId === activeOperation.id)
+          .map(sector => [normalizeKey(sector.name), sector])
+      );
+      const nextPoints = [...deliveryPoints];
+      const existingCodes = new Set(operationPoints.map(point => normalizeKey(point.code)).filter(Boolean));
+      const existingNames = new Set(operationPoints.map(point => normalizeKey(point.name)).filter(Boolean));
+      let importedCount = 0;
+      let duplicateCount = 0;
+      let invalidCount = 0;
+
+      rows.slice(headerRowIndex + 1).forEach(row => {
+        const sectorName = displayText(row[sectorIndex]);
+        const name = displayText(row[nameIndex]);
+        const code = displayText(codeIndex >= 0 ? row[codeIndex] : '') || name;
+        if (!sectorName || !name) {
+          if (row.some(cell => displayText(cell))) invalidCount += 1;
+          return;
+        }
+
+        const codeKey = normalizeKey(code);
+        const nameKey = normalizeKey(name);
+        if (existingCodes.has(codeKey) || existingNames.has(nameKey)) {
+          duplicateCount += 1;
+          return;
+        }
+
+        const sectorKey = normalizeKey(sectorName);
+        let sector = sectorByName.get(sectorKey);
+        if (!sector) {
+          sector = { id: makeId('sector'), operationId: activeOperation.id, name: sectorName };
+          nextSectors.push(sector);
+          sectorByName.set(sectorKey, sector);
+        }
+
+        nextPoints.push({
+          id: makeId('point'),
+          operationId: activeOperation.id,
+          sectorId: sector.id,
+          code,
+          name,
+          address: displayText(addressIndex >= 0 ? row[addressIndex] : ''),
+          neighborhood: displayText(neighborhoodIndex >= 0 ? row[neighborhoodIndex] : ''),
+        });
+        existingCodes.add(codeKey);
+        existingNames.add(nameKey);
+        importedCount += 1;
+      });
+
+      if (importedCount === 0) {
+        throw new Error(duplicateCount > 0
+          ? `Nenhum local novo foi importado. ${duplicateCount} linha(s) já estavam cadastradas.`
+          : 'Nenhum local válido foi encontrado. Preencha SETOR e LOCAL em cada linha.');
+      }
+
+      persistSectors(nextSectors);
+      persistDeliveryPoints(nextPoints);
+      setLocationsImportFeedback({
+        type: 'success',
+        message: `${importedCount} local(is) importado(s). ${duplicateCount} duplicado(s) e ${invalidCount} linha(s) inválida(s) foram ignorados.`,
+      });
+    } catch (error) {
+      console.error('Falha ao importar locais:', error);
+      setLocationsImportFeedback({ type: 'error', message: (error as Error).message || 'Não foi possível importar os locais.' });
+    } finally {
+      setLocationsImporting(false);
+      setLocationsImportInputKey(current => current + 1);
+    }
   };
 
   const startEditPoint = (point: DeliveryPoint) => {
@@ -2889,6 +3009,33 @@ const Operations: React.FC = () => {
                 </div>
                 <button className="button" type="submit" style={{ gridColumn: '1 / -1' }}><MapPin size={16} style={{ marginRight: '0.5rem' }} /> Adicionar local</button>
               </form>
+            </div>
+            <div style={{ marginTop: '1rem', padding: '1rem', border: '1px solid var(--border)', borderRadius: '0.75rem', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '1rem', flexWrap: 'wrap' }}>
+              <div>
+                <h3 style={{ marginBottom: '0.25rem' }}>Importar locais em massa</h3>
+                <p style={{ margin: 0, color: 'var(--text-muted)' }}>Use um Excel com as colunas SETOR, CÓDIGO, LOCAL, ENDEREÇO e BAIRRO.</p>
+              </div>
+              <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap' }}>
+                <button type="button" className="button button-outline" style={{ width: 'auto' }} onClick={downloadLocationsTemplate}>
+                  <Download size={16} /> Baixar modelo Excel
+                </button>
+                <label className="button" style={{ width: 'auto', cursor: locationsImporting ? 'wait' : 'pointer', opacity: locationsImporting ? 0.65 : 1 }}>
+                  <Upload size={16} /> {locationsImporting ? 'Importando...' : 'Importar locais'}
+                  <input
+                    key={locationsImportInputKey}
+                    type="file"
+                    accept=".xlsx,.xls"
+                    disabled={locationsImporting}
+                    onChange={event => void importLocationsFromExcel(event)}
+                    style={{ display: 'none' }}
+                  />
+                </label>
+              </div>
+              {locationsImportFeedback && (
+                <div role="status" style={{ width: '100%', padding: '0.75rem', borderRadius: '0.5rem', color: locationsImportFeedback.type === 'success' ? '#22c55e' : '#ef4444', background: locationsImportFeedback.type === 'success' ? 'rgba(34, 197, 94, 0.1)' : 'rgba(239, 68, 68, 0.1)' }}>
+                  {locationsImportFeedback.message}
+                </div>
+              )}
             </div>
             <div style={{ overflowX: 'auto', marginTop: '1rem' }}>
               <table className="data-table">
