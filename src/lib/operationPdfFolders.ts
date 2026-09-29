@@ -4,10 +4,11 @@ const STORE_NAME = 'folders';
 interface WritableDirectoryHandle extends FileSystemDirectoryHandle {
   queryPermission(options: { mode: 'readwrite' }): Promise<PermissionState>;
   requestPermission(options: { mode: 'readwrite' }): Promise<PermissionState>;
+  removeEntry(name: string): Promise<void>;
 }
 
 interface DirectoryPickerWindow extends Window {
-  showDirectoryPicker(options: { mode: 'readwrite' }): Promise<WritableDirectoryHandle>;
+  showDirectoryPicker(options: { mode: 'readwrite'; id?: string }): Promise<WritableDirectoryHandle>;
 }
 
 export interface OperationPdfFolder {
@@ -35,23 +36,63 @@ const runRequest = <T,>(mode: IDBTransactionMode, action: (store: IDBObjectStore
     transaction.onerror = () => reject(transaction.error);
   }));
 
-export const supportsOperationPdfFolders = () => 'showDirectoryPicker' in window;
-export const getAllOperationPdfFolders = () => runRequest<OperationPdfFolder[]>('readonly', store => store.getAll());
+const isDirectoryHandle = (value: unknown): value is WritableDirectoryHandle => {
+  const handle = value as Partial<WritableDirectoryHandle> | undefined;
+  return Boolean(handle && handle.kind === 'directory' && typeof handle.getFileHandle === 'function');
+};
+
+const pickerIdForOperation = (operationId: string) => {
+  let hash = 2166136261;
+  for (const character of operationId) {
+    hash ^= character.charCodeAt(0);
+    hash = Math.imul(hash, 16777619);
+  }
+  return `gom-pdf-${(hash >>> 0).toString(36)}`;
+};
+
+const ensureWritePermission = async (handle: WritableDirectoryHandle) => {
+  const currentPermission = await handle.queryPermission({ mode: 'readwrite' });
+  if (currentPermission === 'granted') return;
+  const requestedPermission = await handle.requestPermission({ mode: 'readwrite' });
+  if (requestedPermission !== 'granted') throw new Error('PERMISSION_DENIED');
+};
+
+export const supportsOperationPdfFolders = () =>
+  window.isSecureContext && typeof (window as unknown as Partial<DirectoryPickerWindow>).showDirectoryPicker === 'function';
+
+export const getAllOperationPdfFolders = async () => {
+  const folders = await runRequest<OperationPdfFolder[]>('readonly', store => store.getAll());
+  return folders.filter(folder => folder?.operationId && isDirectoryHandle(folder.handle));
+};
 export const saveOperationPdfFolder = (folder: OperationPdfFolder) => runRequest<IDBValidKey>('readwrite', store => store.put(folder));
 
 export const pickOperationPdfFolder = async (operationId: string) => {
   if (!supportsOperationPdfFolders()) throw new Error('UNSUPPORTED');
-  // The picker `id` has a strict 32-character limit in Chromium. Operation IDs
-  // can be longer, so folder ownership is kept only in IndexedDB below.
-  const handle = await (window as unknown as DirectoryPickerWindow).showDirectoryPicker({ mode: 'readwrite' });
+  // A short stable id lets Chromium remember the last folder used by each
+  // operation without exceeding the API's 32-character limit.
+  const handle = await (window as unknown as DirectoryPickerWindow).showDirectoryPicker({
+    mode: 'readwrite',
+    id: pickerIdForOperation(operationId),
+  });
+  await ensureWritePermission(handle);
   const folder = { operationId, name: handle.name, handle };
   await saveOperationPdfFolder(folder);
   return folder;
 };
 
+export const verifyOperationPdfFolder = async (folder: OperationPdfFolder) => {
+  await ensureWritePermission(folder.handle);
+  const testFileName = `.gom-pdf-${Date.now()}.tmp`;
+  const fileHandle = await folder.handle.getFileHandle(testFileName, { create: true });
+  const writer = await fileHandle.createWritable();
+  await writer.write(new Blob(['ok'], { type: 'text/plain' }));
+  await writer.close();
+  await folder.handle.removeEntry(testFileName);
+};
+
 export const createOperationPdfWriter = async (folder: OperationPdfFolder, fileName: string) => {
-  const permission = await folder.handle.requestPermission({ mode: 'readwrite' });
-  if (permission !== 'granted') throw new Error('PERMISSION_DENIED');
+  if (!isDirectoryHandle(folder.handle)) throw new Error('INVALID_DIRECTORY_HANDLE');
+  await ensureWritePermission(folder.handle);
   const fileHandle = await folder.handle.getFileHandle(fileName, { create: true });
   return fileHandle.createWritable();
 };
