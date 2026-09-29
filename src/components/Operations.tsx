@@ -475,6 +475,7 @@ const Operations: React.FC = () => {
   const [activeModule, setActiveModule] = useState<OperationsModule | null>(null);
   const [deliverySortDirection, setDeliverySortDirection] = useState<'asc' | 'desc'>('desc');
   const [expandedOrderId, setExpandedOrderId] = useState<string | null>(null);
+  const [pendingDeleteOrderId, setPendingDeleteOrderId] = useState<string | null>(null);
   const [ordersCategoryFilter, setOrdersCategoryFilter] = useState<'Todas' | DeliveryCategory>('Todas');
   const [reportCategory, setReportCategory] = useState<'Todas' | DeliveryCategory>('Todas');
   const [purchaseOperationIds, setPurchaseOperationIds] = useState<string[]>([]);
@@ -825,8 +826,6 @@ const Operations: React.FC = () => {
   };
 
   const deleteOrder = async (orderId: string) => {
-    if (!window.confirm('Deseja excluir este pedido da operação?')) return;
-
     const previousOrders = orders;
     const nextOrders = orders.filter(order => order.id !== orderId);
 
@@ -837,6 +836,7 @@ const Operations: React.FC = () => {
     try {
       await saveSharedState(ORDERS_KEY, nextOrders);
       setSharedStateError('');
+      setPendingDeleteOrderId(null);
     } catch (error) {
       setOrders(previousOrders);
       saveStorage(ORDERS_KEY, previousOrders);
@@ -3170,7 +3170,7 @@ const Operations: React.FC = () => {
                             <button className="button button-outline" disabled={creatingPurchase} style={{ width: '42px', height: '36px', padding: 0 }} title="Gerar pedido de compra" onClick={() => createPurchaseOrderFromOperation(order)}>
                               <ShoppingCart size={16} />
                             </button>
-                            <button type="button" className="button" style={{ width: '42px', height: '36px', padding: 0, backgroundColor: '#ef4444' }} title="Excluir pedido" aria-label={`Excluir pedido ${getOrderControlNumber(order.importedAt)}`} onClick={() => void deleteOrder(order.id)}>
+                            <button type="button" className="button" style={{ width: '42px', height: '36px', padding: 0, backgroundColor: '#ef4444' }} title="Excluir pedido" aria-label={`Excluir pedido ${getOrderControlNumber(order.importedAt)}`} onClick={() => setPendingDeleteOrderId(order.id)}>
                               <Trash2 size={16} />
                             </button>
                                 </div>
@@ -3185,6 +3185,25 @@ const Operations: React.FC = () => {
                 </tbody>
               </table>
             </div>
+            {pendingDeleteOrderId && (() => {
+              const pendingOrder = orders.find(order => order.id === pendingDeleteOrderId);
+              if (!pendingOrder) return null;
+              return (
+                <div className="operations-delete-confirmation" role="dialog" aria-modal="true" aria-labelledby="delete-order-title" style={{ position: 'fixed', inset: 0, zIndex: 10003, display: 'grid', placeItems: 'center', padding: '1rem' }}>
+                  <button type="button" className="operations-modal-backdrop" aria-label="Cancelar exclusão" onClick={() => setPendingDeleteOrderId(null)} />
+                  <div className="card operations-delete-confirmation-card" style={{ position: 'relative', zIndex: 10004, width: 'min(100%, 440px)', padding: '1.5rem', boxShadow: '0 24px 60px rgba(0, 0, 0, 0.45)' }}>
+                    <h3 id="delete-order-title">Excluir pedido?</h3>
+                    <p style={{ margin: '0.75rem 0 1.25rem', color: 'var(--text-muted)' }}>O pedido <strong>{getOrderControlNumber(pendingOrder.importedAt)}</strong> e todos os seus romaneios serão excluídos.</p>
+                    <div className="operations-delete-confirmation-actions" style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.75rem' }}>
+                      <button type="button" className="button button-outline" style={{ width: 'auto' }} onClick={() => setPendingDeleteOrderId(null)}>Cancelar</button>
+                      <button type="button" className="button" style={{ width: 'auto', backgroundColor: '#ef4444' }} onClick={() => void deleteOrder(pendingOrder.id)}>
+                        <Trash2 size={16} /> Confirmar exclusão
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              );
+            })()}
           </div>
 
           <div className="card operations-module-window module-history" style={{ maxWidth: 'none', padding: '1.5rem' }}>
