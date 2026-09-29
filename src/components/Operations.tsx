@@ -31,7 +31,7 @@ import { supabase } from '../lib/supabase';
 import type { Deposit, Product } from '../types';
 import { addCompanyLetterhead, addPdfHeader } from '../lib/pdfBranding';
 import type { PdfLogoVariant } from '../lib/pdfBranding';
-import { createOperationPdfWriter, getAllOperationPdfFolders, pickOperationPdfFolder, supportsOperationPdfFolders } from '../lib/operationPdfFolders';
+import { createOperationPdfWriter, getAllOperationPdfFolders, pickOperationPdfFolder, supportsOperationPdfFolders, verifyOperationPdfFolder } from '../lib/operationPdfFolders';
 import type { OperationPdfFolder } from '../lib/operationPdfFolders';
 
 GlobalWorkerOptions.workerSrc = new URL('pdfjs-dist/build/pdf.worker.mjs', import.meta.url).toString();
@@ -585,7 +585,9 @@ const Operations: React.FC = () => {
   const configurePdfFolder = async (operation: OperationContract) => {
     try {
       const folder = await pickOperationPdfFolder(operation.id);
+      await verifyOperationPdfFolder(folder);
       setPdfFolders(current => ({ ...current, [operation.id]: folder }));
+      alert(`Pasta “${folder.name}” configurada para os PDFs de ${operation.name}.`);
     } catch (error) {
       if ((error as DOMException)?.name === 'AbortError') return;
       if ((error as Error)?.message === 'UNSUPPORTED') {
@@ -593,7 +595,7 @@ const Operations: React.FC = () => {
         return;
       }
       console.error('Falha ao configurar pasta de PDFs:', error);
-      alert('Não foi possível configurar a pasta de PDFs desta operação.');
+      alert('Não foi possível gravar na pasta escolhida. Selecione outra pasta e confirme a permissão de leitura e gravação.');
     }
   };
 
