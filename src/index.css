@@ -463,6 +463,15 @@ label {
   background-color: rgba(255, 255, 255, 0.05) !important;
 }
 
+.button-outline.whatsapp-action {
+  border-color: rgba(37, 211, 102, 0.55) !important;
+  color: #25d366 !important;
+}
+
+.button-outline.whatsapp-action:hover {
+  background-color: rgba(37, 211, 102, 0.12) !important;
+}
+
 .operations-layout {
   display: grid;
   grid-template-columns: 300px 1fr;
