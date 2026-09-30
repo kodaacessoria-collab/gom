@@ -767,6 +767,50 @@ const Operations: React.FC = () => {
     setSectorEditName('');
   };
 
+  const deleteSector = (sector: Sector) => {
+    const relatedPoints = deliveryPoints.filter(point => point.sectorId === sector.id);
+    const relatedPointIds = new Set(relatedPoints.map(point => point.id));
+    const relatedDeliveries = orders.reduce(
+      (total, order) => total + order.deliveries.filter(delivery => relatedPointIds.has(delivery.deliveryPointId)).length,
+      0
+    );
+    const affectedOrders = orders.filter(order => order.deliveries.some(delivery => relatedPointIds.has(delivery.deliveryPointId)));
+    const ordersToDelete = affectedOrders.filter(order => order.deliveries.every(delivery => relatedPointIds.has(delivery.deliveryPointId)));
+    const confirmed = window.confirm(
+      `Excluir o setor "${sector.name}"?\n\n` +
+      `Também serão excluídos ${relatedPoints.length} local(is) de entrega e ${relatedDeliveries} romaneio(s) vinculado(s).` +
+      (ordersToDelete.length > 0 ? ` ${ordersToDelete.length} pedido(s) sem outros romaneios também serão excluídos.` : '') +
+      '\n\nEsta ação não pode ser desfeita.'
+    );
+    if (!confirmed) return;
+
+    const nextOrders = orders
+      .map(order => ({
+        ...order,
+        deliveries: order.deliveries.filter(delivery => !relatedPointIds.has(delivery.deliveryPointId)),
+      }))
+      .filter(order => order.deliveries.length > 0);
+
+    persistSectors(sectors.filter(item => item.id !== sector.id));
+    persistDeliveryPoints(deliveryPoints.filter(point => point.sectorId !== sector.id));
+    if (relatedDeliveries > 0) persistOrders(nextOrders);
+
+    if (editingSectorId === sector.id) {
+      setEditingSectorId(null);
+      setSectorEditName('');
+    }
+    if (editingPointId && relatedPointIds.has(editingPointId)) setEditingPointId(null);
+    if (newPoint.sectorId === sector.id) {
+      const nextSector = operationSectors.find(item => item.id !== sector.id);
+      setNewPoint(current => ({ ...current, sectorId: nextSector?.id || '' }));
+    }
+    if (orderForm.deliveryPointId && relatedPointIds.has(orderForm.deliveryPointId)) {
+      const nextPoint = operationPoints.find(point => !relatedPointIds.has(point.id));
+      setOrderForm(current => ({ ...current, deliveryPointId: nextPoint?.id || '' }));
+    }
+    setDraftDeliveries(current => current.filter(delivery => !relatedPointIds.has(delivery.deliveryPointId)));
+  };
+
   const addDeliveryPoint = (event: React.FormEvent) => {
     event.preventDefault();
     if (!activeOperation || !displayText(newPoint.name) || !newPoint.sectorId) return;
@@ -2980,6 +3024,7 @@ const Operations: React.FC = () => {
                         <>
                           <span className="badge badge-blue" style={{ flex: 1, borderRadius: '0.5rem', padding: '0.65rem' }}>{sector.name}</span>
                           <button className="button button-outline" type="button" title="Editar setor" onClick={() => startEditSector(sector)} style={{ width: '38px', height: '38px', padding: 0 }}><Edit3 size={14} /></button>
+                          <button className="button button-outline" type="button" title="Excluir setor" aria-label={`Excluir setor ${sector.name}`} onClick={() => deleteSector(sector)} style={{ width: '38px', height: '38px', padding: 0, color: '#ef4444' }}><Trash2 size={14} /></button>
                         </>
                       )}
                     </div>
