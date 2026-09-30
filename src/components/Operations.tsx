@@ -3428,7 +3428,7 @@ const Operations: React.FC = () => {
                 <button type="button" className="operations-modal-backdrop" aria-label="Fechar instruções de envio" onClick={() => setPendingWhatsAppShare(null)} />
                 <div className="card operations-delete-confirmation-card" style={{ position: 'relative', zIndex: 10004, width: 'min(100%, 520px)', padding: '1.5rem', boxShadow: '0 24px 60px rgba(0, 0, 0, 0.45)' }}>
                   <h3 id="whatsapp-share-title" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}><MessageCircle size={20} color="#25d366" /> PDF pronto para anexar</h3>
-                  <p style={{ margin: '0.75rem 0', color: 'var(--text-muted)' }}>O Firefox no Linux não permite colar um PDF diretamente no WhatsApp. O arquivo já foi baixado:</p>
+                  <p style={{ margin: '0.75rem 0', color: 'var(--text-muted)' }}>O Chrome no Linux não permite anexar automaticamente um PDF ao WhatsApp Web. Por segurança, o WhatsApp exige que o documento seja escolhido pelo usuário. O arquivo já foi baixado:</p>
                   <p style={{ padding: '0.75rem', border: '1px solid var(--border)', borderRadius: '8px', overflowWrap: 'anywhere' }}><strong>{pendingWhatsAppShare.fileName}</strong></p>
                   <ol style={{ margin: '1rem 0 1.25rem', paddingLeft: '1.25rem', color: 'var(--text-muted)', lineHeight: 1.7 }}>
                     <li>Abra o grupo <strong>Grupo OM - Romaneios</strong>.</li>
