@@ -13,6 +13,7 @@ import {
   History,
   Layers,
   MapPin,
+  MessageCircle,
   PackagePlus,
   Plus,
   Search,
@@ -472,6 +473,7 @@ const Operations: React.FC = () => {
   const [importInputKey, setImportInputKey] = useState(0);
   const [importFeedback, setImportFeedback] = useState<{ type: 'progress' | 'success' | 'error'; message: string } | null>(null);
   const [creatingPurchase, setCreatingPurchase] = useState(false);
+  const [sharingOrderId, setSharingOrderId] = useState<string | null>(null);
   const [activeModule, setActiveModule] = useState<OperationsModule | null>(null);
   const [deliverySortDirection, setDeliverySortDirection] = useState<'asc' | 'desc'>('desc');
   const [expandedOrderId, setExpandedOrderId] = useState<string | null>(null);
@@ -765,50 +767,6 @@ const Operations: React.FC = () => {
     persistSectors(sectors.map(sector => sector.id === editingSectorId ? { ...sector, name: displayText(sectorEditName) } : sector));
     setEditingSectorId(null);
     setSectorEditName('');
-  };
-
-  const deleteSector = (sector: Sector) => {
-    const relatedPoints = deliveryPoints.filter(point => point.sectorId === sector.id);
-    const relatedPointIds = new Set(relatedPoints.map(point => point.id));
-    const relatedDeliveries = orders.reduce(
-      (total, order) => total + order.deliveries.filter(delivery => relatedPointIds.has(delivery.deliveryPointId)).length,
-      0
-    );
-    const affectedOrders = orders.filter(order => order.deliveries.some(delivery => relatedPointIds.has(delivery.deliveryPointId)));
-    const ordersToDelete = affectedOrders.filter(order => order.deliveries.every(delivery => relatedPointIds.has(delivery.deliveryPointId)));
-    const confirmed = window.confirm(
-      `Excluir o setor "${sector.name}"?\n\n` +
-      `Também serão excluídos ${relatedPoints.length} local(is) de entrega e ${relatedDeliveries} romaneio(s) vinculado(s).` +
-      (ordersToDelete.length > 0 ? ` ${ordersToDelete.length} pedido(s) sem outros romaneios também serão excluídos.` : '') +
-      '\n\nEsta ação não pode ser desfeita.'
-    );
-    if (!confirmed) return;
-
-    const nextOrders = orders
-      .map(order => ({
-        ...order,
-        deliveries: order.deliveries.filter(delivery => !relatedPointIds.has(delivery.deliveryPointId)),
-      }))
-      .filter(order => order.deliveries.length > 0);
-
-    persistSectors(sectors.filter(item => item.id !== sector.id));
-    persistDeliveryPoints(deliveryPoints.filter(point => point.sectorId !== sector.id));
-    if (relatedDeliveries > 0) persistOrders(nextOrders);
-
-    if (editingSectorId === sector.id) {
-      setEditingSectorId(null);
-      setSectorEditName('');
-    }
-    if (editingPointId && relatedPointIds.has(editingPointId)) setEditingPointId(null);
-    if (newPoint.sectorId === sector.id) {
-      const nextSector = operationSectors.find(item => item.id !== sector.id);
-      setNewPoint(current => ({ ...current, sectorId: nextSector?.id || '' }));
-    }
-    if (orderForm.deliveryPointId && relatedPointIds.has(orderForm.deliveryPointId)) {
-      const nextPoint = operationPoints.find(point => !relatedPointIds.has(point.id));
-      setOrderForm(current => ({ ...current, deliveryPointId: nextPoint?.id || '' }));
-    }
-    setDraftDeliveries(current => current.filter(delivery => !relatedPointIds.has(delivery.deliveryPointId)));
   };
 
   const addDeliveryPoint = (event: React.FormEvent) => {
@@ -1678,11 +1636,10 @@ const Operations: React.FC = () => {
     await savePdf(doc, fileName, writer);
   };
 
-  const generateAllDeliveriesPdf = async (order: OperationOrder) => {
+  const createAllDeliveriesPdf = async (order: OperationOrder) => {
     const reportOperation = operationByOrder(order);
     if (!reportOperation || order.deliveries.length === 0) return;
     const fileName = getRomaneioFileName(reportOperation, order);
-    const writer = await preparePdfWriter(reportOperation, fileName);
     const doc = new jsPDF();
     doc.setFont(REPORT_FONT, 'normal');
     doc.setFontSize(REPORT_FONT_SIZE);
@@ -1756,7 +1713,64 @@ const Operations: React.FC = () => {
       addReceiptFields(doc, (doc as any).lastAutoTable?.finalY || 60);
     }
 
-    await savePdf(doc, fileName, writer);
+    return { doc, fileName, reportOperation };
+  };
+
+  const generateAllDeliveriesPdf = async (order: OperationOrder) => {
+    const result = await createAllDeliveriesPdf(order);
+    if (!result) return;
+    const writer = await preparePdfWriter(result.reportOperation, result.fileName);
+    await savePdf(result.doc, result.fileName, writer);
+  };
+
+  const shareAllDeliveriesPdf = async (order: OperationOrder) => {
+    if (sharingOrderId) return;
+
+    const message = [
+      'Romaneios Grupo OM',
+      `Entrega: ${formatDate(order.deliveryDate)}`,
+      `Categoria: ${order.category}`,
+      `Controle: ${getOrderControlNumber(order.importedAt)}`,
+    ].join('\n');
+    const supportsFileSharing = typeof navigator.share === 'function'
+      && typeof navigator.canShare === 'function';
+    const whatsappWindow = supportsFileSharing ? null : window.open('https://web.whatsapp.com/', '_blank', 'noopener,noreferrer');
+
+    setSharingOrderId(order.id);
+    try {
+      const result = await createAllDeliveriesPdf(order);
+      if (!result) return;
+      const file = new File([result.doc.output('blob')], result.fileName, { type: 'application/pdf' });
+
+      if (supportsFileSharing && navigator.canShare({ files: [file] })) {
+        try {
+          await navigator.share({
+            title: 'Romaneios Grupo OM',
+            text: message,
+            files: [file],
+          });
+          return;
+        } catch (error) {
+          if ((error as DOMException)?.name === 'AbortError') return;
+          console.warn('O compartilhamento nativo não foi concluído:', error);
+        }
+      }
+
+      result.doc.save(result.fileName);
+      try {
+        await navigator.clipboard.writeText(message);
+      } catch (error) {
+        console.warn('Não foi possível copiar a mensagem do WhatsApp:', error);
+      }
+
+      if (!whatsappWindow) window.open('https://web.whatsapp.com/', '_blank', 'noopener,noreferrer');
+      alert('PDF baixado e WhatsApp Web aberto. No grupo “Grupo OM - Romaneios”, anexe o PDF baixado e cole a mensagem.');
+    } catch (error) {
+      console.error('Falha ao preparar o PDF para WhatsApp:', error);
+      alert('Não foi possível preparar o PDF para envio. Tente novamente.');
+    } finally {
+      setSharingOrderId(null);
+    }
   };
 
   const generateSummaryPdf = async (order: OperationOrder, sectorId?: string) => {
@@ -3024,7 +3038,6 @@ const Operations: React.FC = () => {
                         <>
                           <span className="badge badge-blue" style={{ flex: 1, borderRadius: '0.5rem', padding: '0.65rem' }}>{sector.name}</span>
                           <button className="button button-outline" type="button" title="Editar setor" onClick={() => startEditSector(sector)} style={{ width: '38px', height: '38px', padding: 0 }}><Edit3 size={14} /></button>
-                          <button className="button button-outline" type="button" title="Excluir setor" aria-label={`Excluir setor ${sector.name}`} onClick={() => deleteSector(sector)} style={{ width: '38px', height: '38px', padding: 0, color: '#ef4444' }}><Trash2 size={14} /></button>
                         </>
                       )}
                     </div>
@@ -3322,6 +3335,17 @@ const Operations: React.FC = () => {
                             </button>
                             <button className="button button-outline" style={{ width: '42px', height: '36px', padding: 0 }} title="PDF único: romaneios + total da entrega" onClick={() => generateAllDeliveriesPdf(order)}>
                               <FileText size={16} />
+                            </button>
+                            <button
+                              className="button button-outline whatsapp-action"
+                              type="button"
+                              disabled={sharingOrderId === order.id}
+                              style={{ width: '42px', height: '36px', padding: 0 }}
+                              title="Enviar PDF único para Grupo OM - Romaneios pelo WhatsApp"
+                              aria-label="Enviar PDF único para Grupo OM - Romaneios pelo WhatsApp"
+                              onClick={() => shareAllDeliveriesPdf(order)}
+                            >
+                              <MessageCircle size={17} />
                             </button>
                             <button className="button button-outline excel-action" style={{ width: '42px', height: '36px', padding: 0 }} title="Excel único: romaneios + totais" onClick={() => generateAllDeliveriesExcel(order)}>
                               <FileSpreadsheet size={16} />
