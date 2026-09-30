@@ -474,6 +474,7 @@ const Operations: React.FC = () => {
   const [importFeedback, setImportFeedback] = useState<{ type: 'progress' | 'success' | 'error'; message: string } | null>(null);
   const [creatingPurchase, setCreatingPurchase] = useState(false);
   const [sharingOrderId, setSharingOrderId] = useState<string | null>(null);
+  const [pendingWhatsAppShare, setPendingWhatsAppShare] = useState<{ fileName: string; message: string } | null>(null);
   const [activeModule, setActiveModule] = useState<OperationsModule | null>(null);
   const [deliverySortDirection, setDeliverySortDirection] = useState<'asc' | 'desc'>('desc');
   const [expandedOrderId, setExpandedOrderId] = useState<string | null>(null);
@@ -1734,7 +1735,6 @@ const Operations: React.FC = () => {
     ].join('\n');
     const supportsFileSharing = typeof navigator.share === 'function'
       && typeof navigator.canShare === 'function';
-    const whatsappWindow = supportsFileSharing ? null : window.open('https://web.whatsapp.com/', '_blank', 'noopener,noreferrer');
 
     setSharingOrderId(order.id);
     try {
@@ -1744,11 +1744,9 @@ const Operations: React.FC = () => {
 
       if (supportsFileSharing && navigator.canShare({ files: [file] })) {
         try {
-          await navigator.share({
-            title: 'Romaneios Grupo OM',
-            text: message,
-            files: [file],
-          });
+          // Compartilhar somente o arquivo evita que alguns destinos priorizem o texto
+          // e descartem o PDF quando recebem os dois tipos no mesmo compartilhamento.
+          await navigator.share({ files: [file] });
           return;
         } catch (error) {
           if ((error as DOMException)?.name === 'AbortError') return;
@@ -1757,20 +1755,23 @@ const Operations: React.FC = () => {
       }
 
       result.doc.save(result.fileName);
-      try {
-        await navigator.clipboard.writeText(message);
-      } catch (error) {
-        console.warn('Não foi possível copiar a mensagem do WhatsApp:', error);
-      }
-
-      if (!whatsappWindow) window.open('https://web.whatsapp.com/', '_blank', 'noopener,noreferrer');
-      alert('PDF baixado e WhatsApp Web aberto. No grupo “Grupo OM - Romaneios”, anexe o PDF baixado e cole a mensagem.');
+      setPendingWhatsAppShare({ fileName: result.fileName, message });
     } catch (error) {
       console.error('Falha ao preparar o PDF para WhatsApp:', error);
       alert('Não foi possível preparar o PDF para envio. Tente novamente.');
     } finally {
       setSharingOrderId(null);
     }
+  };
+
+  const openWhatsAppForManualAttachment = async () => {
+    if (!pendingWhatsAppShare) return;
+    try {
+      await navigator.clipboard.writeText(pendingWhatsAppShare.message);
+    } catch (error) {
+      console.warn('Não foi possível copiar a mensagem do WhatsApp:', error);
+    }
+    window.open('https://web.whatsapp.com/', '_blank', 'noopener,noreferrer');
   };
 
   const generateSummaryPdf = async (order: OperationOrder, sectorId?: string) => {
@@ -3422,6 +3423,28 @@ const Operations: React.FC = () => {
                 </div>
               );
             })()}
+            {pendingWhatsAppShare && (
+              <div className="operations-delete-confirmation" role="dialog" aria-modal="true" aria-labelledby="whatsapp-share-title" style={{ position: 'fixed', inset: 0, zIndex: 10003, display: 'grid', placeItems: 'center', padding: '1rem' }}>
+                <button type="button" className="operations-modal-backdrop" aria-label="Fechar instruções de envio" onClick={() => setPendingWhatsAppShare(null)} />
+                <div className="card operations-delete-confirmation-card" style={{ position: 'relative', zIndex: 10004, width: 'min(100%, 520px)', padding: '1.5rem', boxShadow: '0 24px 60px rgba(0, 0, 0, 0.45)' }}>
+                  <h3 id="whatsapp-share-title" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}><MessageCircle size={20} color="#25d366" /> PDF pronto para anexar</h3>
+                  <p style={{ margin: '0.75rem 0', color: 'var(--text-muted)' }}>O Firefox no Linux não permite colar um PDF diretamente no WhatsApp. O arquivo já foi baixado:</p>
+                  <p style={{ padding: '0.75rem', border: '1px solid var(--border)', borderRadius: '8px', overflowWrap: 'anywhere' }}><strong>{pendingWhatsAppShare.fileName}</strong></p>
+                  <ol style={{ margin: '1rem 0 1.25rem', paddingLeft: '1.25rem', color: 'var(--text-muted)', lineHeight: 1.7 }}>
+                    <li>Abra o grupo <strong>Grupo OM - Romaneios</strong>.</li>
+                    <li>Clique no clipe e escolha <strong>Documento</strong>.</li>
+                    <li>Selecione o PDF na pasta <strong>Downloads</strong>.</li>
+                    <li>Cole a mensagem e envie.</li>
+                  </ol>
+                  <div className="operations-delete-confirmation-actions" style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.75rem', flexWrap: 'wrap' }}>
+                    <button type="button" className="button button-outline" style={{ width: 'auto' }} onClick={() => setPendingWhatsAppShare(null)}>Fechar</button>
+                    <button type="button" className="button" style={{ width: 'auto', backgroundColor: '#16a34a' }} onClick={() => void openWhatsAppForManualAttachment()}>
+                      <MessageCircle size={16} /> Abrir WhatsApp e copiar mensagem
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
 
           <div className="card operations-module-window module-history" style={{ maxWidth: 'none', padding: '1.5rem' }}>
