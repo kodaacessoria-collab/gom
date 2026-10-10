@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { CheckCircle2, FileDown, Plus, RefreshCw, Trash2, WalletCards } from 'lucide-react';
+import { CheckCircle2, Copy, FileDown, Plus, RefreshCw, Trash2, WalletCards } from 'lucide-react';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { supabase } from '../lib/supabase';
@@ -82,6 +82,27 @@ const AccountsPayable: React.FC = () => {
     await loadData();
   };
 
+  const copyReminder = async (account: AccountPayable) => {
+    const companyName = account.companies?.trade_name || account.companies?.legal_name || 'Grupo OM';
+    const notes = account.notes?.trim() ? `\nObservações: ${account.notes.trim()}` : '';
+    const message = [
+      'Olá! Passando para lembrar sobre a conta a pagar:',
+      `Empresa: ${companyName}`,
+      `Favorecido: ${account.beneficiary}`,
+      `Valor: ${currency.format(Number(account.amount))}`,
+      `Vencimento: ${formatDate(account.due_date)}${notes}`,
+      '',
+      'Por favor, confirme o recebimento deste lembrete.',
+    ].join('\n');
+
+    try {
+      await navigator.clipboard.writeText(message);
+      alert('Lembrete copiado. Agora é só colar no WhatsApp.');
+    } catch {
+      window.prompt('Copie o lembrete abaixo para enviar no WhatsApp:', message);
+    }
+  };
+
   const generatePdf = async () => {
     const doc = new jsPDF({ orientation: 'landscape' });
     const company = companies.find(item => item.id === companyFilter);
@@ -140,7 +161,7 @@ const AccountsPayable: React.FC = () => {
         <table className="data-table"><thead><tr><th>Empresa</th><th>Favorecido</th><th>Vencimento</th><th>Valor</th><th>Situação</th><th>Ações</th></tr></thead>
           <tbody>{loading ? <tr><td colSpan={6}>Carregando...</td></tr> : filtered.length === 0 ? <tr><td colSpan={6}>Nenhuma conta encontrada.</td></tr> : filtered.map(account => {
             const overdue = account.status === 'PENDENTE' && account.due_date < today();
-            return <tr key={account.id}><td><strong>{account.companies?.trade_name}</strong><small className="accounts-cnpj">{account.companies?.cnpj}</small></td><td>{account.beneficiary}</td><td>{formatDate(account.due_date)}</td><td><strong>{currency.format(Number(account.amount))}</strong></td><td><span className={`badge ${account.status === 'PAGO' ? 'badge-green' : overdue ? 'badge-red' : 'badge-yellow'}`}>{account.status === 'PAGO' ? `Pago em ${formatDate(account.paid_at)}` : overdue ? 'Vencida' : 'Pendente'}</span></td><td><div className="accounts-actions">{account.status === 'PENDENTE' && <button title="Dar baixa" className="accounts-action success" onClick={() => markAsPaid(account)}><CheckCircle2 size={18} /></button>}<button title="Excluir" className="accounts-action danger" onClick={() => deleteAccount(account)}><Trash2 size={18} /></button></div></td></tr>;
+            return <tr key={account.id}><td><strong>{account.companies?.trade_name}</strong><small className="accounts-cnpj">{account.companies?.cnpj}</small></td><td>{account.beneficiary}</td><td>{formatDate(account.due_date)}</td><td><strong>{currency.format(Number(account.amount))}</strong></td><td><span className={`badge ${account.status === 'PAGO' ? 'badge-green' : overdue ? 'badge-red' : 'badge-yellow'}`}>{account.status === 'PAGO' ? `Pago em ${formatDate(account.paid_at)}` : overdue ? 'Vencida' : 'Pendente'}</span></td><td><div className="accounts-actions">{account.status === 'PENDENTE' && <><button title="Copiar lembrete para WhatsApp" aria-label={`Copiar lembrete da conta de ${account.beneficiary}`} className="accounts-action whatsapp" onClick={() => copyReminder(account)}><Copy size={18} /></button><button title="Dar baixa" aria-label={`Dar baixa na conta de ${account.beneficiary}`} className="accounts-action success" onClick={() => markAsPaid(account)}><CheckCircle2 size={18} /></button></>}<button title="Excluir" aria-label={`Excluir conta de ${account.beneficiary}`} className="accounts-action danger" onClick={() => deleteAccount(account)}><Trash2 size={18} /></button></div></td></tr>;
           })}</tbody></table>
       </div>
     </div>

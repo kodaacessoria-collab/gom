@@ -1,5 +1,5 @@
 import React, { useEffect } from 'react';
-import { LayoutDashboard, Package, FileText, ShoppingCart, BarChart3, X, History, Users, LogOut, Lock, ClipboardCheck, Building2, WalletCards } from 'lucide-react';
+import { LayoutDashboard, Package, BarChart3, X, History, Users, LogOut, Lock, ClipboardCheck, Building2, WalletCards } from 'lucide-react';
 import type { Role } from '../types';
 
 interface SidebarProps {
@@ -16,9 +16,7 @@ const Sidebar: React.FC<SidebarProps> = ({ activeTab, setActiveTab, isOpen, togg
   const allMenuItems = [
     { id: 'dashboard', label: 'Painel', icon: LayoutDashboard },
     { id: 'inventory', label: 'Estoque', icon: Package },
-    { id: 'slips', label: 'Romaneios', icon: FileText },
     { id: 'operations', label: 'Operações', icon: Building2 },
-    { id: 'purchase-orders', label: 'Pedidos de Compra', icon: ShoppingCart },
     { id: 'accounts-payable', label: 'Contas a Pagar', icon: WalletCards },
     { id: 'reports', label: 'Relatórios', icon: BarChart3 },
     { id: 'audit', label: 'Auditoria', icon: ClipboardCheck, adminOnly: true },
@@ -27,8 +25,8 @@ const Sidebar: React.FC<SidebarProps> = ({ activeTab, setActiveTab, isOpen, togg
   ];
 
   const getMenuItems = () => {
-    let items = [...allMenuItems];
     const currentRole = userRole || 'admin'; // fallback for safety, matching App.tsx
+    let items: typeof allMenuItems;
     if (currentRole === 'om') {
       items = allMenuItems.filter(i => ['inventory', 'reports'].includes(i.id));
     } else if (currentRole === 'red') {

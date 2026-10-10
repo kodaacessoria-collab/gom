@@ -1,167 +1,114 @@
-import React, { useEffect, useState, useCallback } from 'react';
-import { Package, FileText, ShoppingCart, BarChart3, RefreshCw, AlertTriangle } from 'lucide-react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { AlertTriangle, CalendarDays, FileText, Package, RefreshCw, WalletCards } from 'lucide-react';
 import { supabase } from '../lib/supabase';
+import type { AccountPayable, Product } from '../types';
+
+interface DashboardOperation { id: string; name: string; city?: string; uf?: string; }
+interface DashboardRomaneio {
+  id: string;
+  operationId: string;
+  category: string;
+  deliveryDate: string;
+  importedAt: string;
+  deliveries?: unknown[];
+}
+
+const OPERATIONS_KEY = 'gom_delivery_operations';
+const ORDERS_KEY = 'gom_delivery_operation_orders';
+const currency = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' });
+const formatDate = (value?: string | null) => value
+  ? new Date(`${value.slice(0, 10)}T12:00:00`).toLocaleDateString('pt-BR')
+  : '-';
+
+const readLocalState = <T,>(key: string, fallback: T): T => {
+  try {
+    const value = localStorage.getItem(key);
+    return value ? JSON.parse(value) as T : fallback;
+  } catch {
+    return fallback;
+  }
+};
 
 const Dashboard: React.FC = () => {
-  const [stats, setStats] = useState({
-    totalProducts: 0,
-    totalSlips: 0,
-    activeOrders: 0,
-  });
+  const [cleaningStock, setCleaningStock] = useState<Product[]>([]);
+  const [accounts, setAccounts] = useState<AccountPayable[]>([]);
+  const [operations, setOperations] = useState<DashboardOperation[]>([]);
+  const [romaneios, setRomaneios] = useState<DashboardRomaneio[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  const fetchStats = useCallback(async () => {
+  const fetchDashboard = useCallback(async () => {
     setLoading(true);
     setError(null);
-    try {
-      // Usando Promise.all para buscar tudo em paralelo e ser mais rápido
-      const [productsRes, slipsRes, ordersRes] = await Promise.all([
-        supabase.from('products').select('*', { count: 'exact', head: true }),
-        supabase.from('slips').select('*', { count: 'exact', head: true }),
-        supabase.from('purchase_orders').select('*', { count: 'exact', head: true }).eq('status', 'PENDENTE')
-      ]);
+    const [productsResult, accountsResult, sharedStateResult] = await Promise.all([
+      supabase.from('products').select('*').eq('category', 'LIMPEZA').order('name'),
+      supabase.from('accounts_payable').select('*, companies(*)').eq('status', 'PENDENTE').order('due_date'),
+      supabase.from('app_shared_state').select('key,value').in('key', [OPERATIONS_KEY, ORDERS_KEY]),
+    ]);
 
-      if (productsRes.error) throw productsRes.error;
-      if (slipsRes.error) throw slipsRes.error;
-      if (ordersRes.error) throw ordersRes.error;
-
-      setStats({
-        totalProducts: productsRes.count || 0,
-        totalSlips: slipsRes.count || 0,
-        activeOrders: ordersRes.count || 0,
-      });
-      
-      console.log('Estatísticas atualizadas:', {
-        p: productsRes.count,
-        s: slipsRes.count,
-        o: ordersRes.count
-      });
-    } catch (err: any) {
-      console.error('Erro detalhado ao buscar estatísticas:', err);
-      setError(err.message || 'Erro ao carregar dados do banco de dados');
-    } finally {
-      setLoading(false);
+    if (productsResult.data) setCleaningStock(productsResult.data as Product[]);
+    if (accountsResult.data) setAccounts(accountsResult.data as AccountPayable[]);
+    if (sharedStateResult.data) {
+      const rows = new Map(sharedStateResult.data.map(row => [row.key, row.value]));
+      setOperations((rows.get(OPERATIONS_KEY) as DashboardOperation[] | undefined) || readLocalState(OPERATIONS_KEY, []));
+      setRomaneios((rows.get(ORDERS_KEY) as DashboardRomaneio[] | undefined) || readLocalState(ORDERS_KEY, []));
+    } else {
+      setOperations(readLocalState(OPERATIONS_KEY, []));
+      setRomaneios(readLocalState(ORDERS_KEY, []));
     }
+    if (productsResult.error || accountsResult.error || sharedStateResult.error) {
+      setError('Alguns dados não puderam ser atualizados. Exibindo as informações disponíveis.');
+    }
+    setLoading(false);
   }, []);
 
   useEffect(() => {
-    fetchStats();
-    
-    // Configurar um intervalo para atualizar a cada 5 minutos
-    const interval = setInterval(fetchStats, 5 * 60 * 1000);
-    return () => clearInterval(interval);
-  }, [fetchStats]);
+    // Initial remote synchronization is intentionally performed on mount.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    void fetchDashboard();
+    const interval = window.setInterval(fetchDashboard, 5 * 60 * 1000);
+    return () => window.clearInterval(interval);
+  }, [fetchDashboard]);
 
-  const cards = [
-    { title: 'Total de Itens', value: stats.totalProducts, icon: Package, color: 'blue' },
-    { title: 'Romaneios (Total)', value: stats.totalSlips, icon: FileText, color: 'green' },
-    { title: 'Pedidos Pendentes', value: stats.activeOrders, icon: ShoppingCart, color: 'yellow' },
-  ];
+  const accountsTotal = useMemo(() => accounts.reduce((sum, item) => sum + Number(item.amount), 0), [accounts]);
+  const cleaningUnits = useMemo(() => cleaningStock.reduce((sum, item) => sum + Number(item.quantity), 0), [cleaningStock]);
+  const latestByOperation = useMemo(() => operations.map(operation => ({
+    operation,
+    items: romaneios
+      .filter(item => item.operationId === operation.id)
+      .sort((a, b) => (b.deliveryDate || '').localeCompare(a.deliveryDate || '') || (b.importedAt || '').localeCompare(a.importedAt || ''))
+      .slice(0, 3),
+  })), [operations, romaneios]);
 
   return (
     <div className="dashboard-container">
       <div className="view-header">
-        <div className="view-title">
-          <h1>Painel de Controle</h1>
-          <p>Visão geral do sistema de estoque GOM.</p>
-        </div>
-        <button 
-          onClick={fetchStats} 
-          className="button-outline" 
-          disabled={loading}
-          style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', width: 'auto', padding: '0.5rem 1rem' }}
-        >
-          <RefreshCw size={16} className={loading ? 'animate-spin' : ''} />
-          {loading ? 'Atualizando...' : 'Atualizar'}
-        </button>
+        <div className="view-title"><h1>Painel de Controle</h1><p>Contas, estoque de limpeza e últimos romaneios das operações.</p></div>
+        <button onClick={fetchDashboard} className="button-outline dashboard-refresh" disabled={loading}><RefreshCw size={16} className={loading ? 'animate-spin' : ''} />{loading ? 'Atualizando...' : 'Atualizar'}</button>
       </div>
 
-      {error && (
-        <div style={{ 
-          backgroundColor: 'rgba(239, 68, 68, 0.1)', 
-          border: '1px solid #ef4444', 
-          color: '#f87171', 
-          padding: '1rem', 
-          borderRadius: '0.5rem', 
-          marginBottom: '1.5rem',
-          display: 'flex',
-          alignItems: 'center',
-          gap: '0.75rem'
-        }}>
-          <AlertTriangle size={20} />
-          <span>{error}. Verifique sua conexão ou credenciais.</span>
-        </div>
-      )}
+      {error && <div className="dashboard-warning"><AlertTriangle size={20} /><span>{error}</span></div>}
 
-      <div className="stats-grid" style={{ 
-        display: 'grid', 
-        gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', 
-        gap: '1.5rem', 
-        marginBottom: '2.5rem' 
-      }}>
-        {cards.map((card) => (
-          <div key={card.title} className="card" style={{ padding: '1.5rem', marginBottom: 0 }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-              <div>
-                <p style={{ margin: 0, fontSize: '0.875rem', fontWeight: 600, color: 'var(--text-muted)' }}>{card.title}</p>
-                <h2 style={{ fontSize: '2rem', marginTop: '0.5rem', marginBottom: 0, fontWeight: 800 }}>
-                  {loading && stats.totalProducts === 0 ? '...' : card.value}
-                </h2>
-              </div>
-              <div style={{ 
-                padding: '0.75rem', 
-                borderRadius: '1rem', 
-                backgroundColor: `rgba(var(--${card.color}-rgb, 99, 102, 241), 0.1)`,
-                color: `var(--${card.color}, #6366f1)`,
-                boxShadow: `0 0 20px rgba(var(--${card.color}-rgb, 99, 102, 241), 0.1)`
-              }}>
-                <card.icon size={24} />
-              </div>
-            </div>
-          </div>
-        ))}
+      <div className="dashboard-summary-grid">
+        <div className="dashboard-summary-card"><WalletCards /><div><span>Contas a pagar</span><strong>{loading && !accounts.length ? '...' : currency.format(accountsTotal)}</strong><small>{accounts.length} conta(s) pendente(s)</small></div></div>
+        <div className="dashboard-summary-card"><Package /><div><span>Estoque de limpeza</span><strong>{loading && !cleaningStock.length ? '...' : cleaningUnits.toLocaleString('pt-BR')}</strong><small>{cleaningStock.length} produto(s) cadastrado(s)</small></div></div>
+        <div className="dashboard-summary-card"><FileText /><div><span>Romaneios das operações</span><strong>{loading && !romaneios.length ? '...' : romaneios.length}</strong><small>{operations.length} operação(ões)</small></div></div>
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(400px, 1fr))', gap: '1.5rem' }}>
-        <div className="card" style={{ padding: '1.5rem' }}>
-          <h3 style={{ marginBottom: '0.5rem', fontSize: '1.25rem' }}>Movimentação Recente</h3>
-          <p style={{ fontSize: '0.875rem', marginBottom: '1.5rem' }}>Últimas entradas e saídas de estoque.</p>
-          <div style={{ 
-            height: '240px', 
-            display: 'flex', 
-            flexDirection: 'column',
-            alignItems: 'center', 
-            justifyContent: 'center', 
-            opacity: 0.6,
-            backgroundColor: 'rgba(255, 255, 255, 0.02)',
-            borderRadius: '0.75rem',
-            border: '1px dashed var(--border)'
-          }}>
-            <BarChart3 size={48} style={{ marginBottom: '1rem', opacity: 0.5 }} />
-            <p style={{ margin: 0 }}>Gráfico em desenvolvimento...</p>
-          </div>
-        </div>
-        
-        <div className="card" style={{ padding: '1.5rem' }}>
-          <h3 style={{ marginBottom: '0.5rem', fontSize: '1.25rem' }}>Alertas de Validade</h3>
-          <p style={{ fontSize: '0.875rem', marginBottom: '1.5rem' }}>Produtos próximos ao vencimento.</p>
-          <div style={{ 
-            height: '240px', 
-            display: 'flex', 
-            flexDirection: 'column',
-            alignItems: 'center', 
-            justifyContent: 'center', 
-            opacity: 0.6,
-            backgroundColor: 'rgba(255, 255, 255, 0.02)',
-            borderRadius: '0.75rem',
-            border: '1px dashed var(--border)'
-          }}>
-            <Package size={48} style={{ marginBottom: '1rem', opacity: 0.5 }} />
-            <p style={{ margin: 0 }}>Nenhum alerta crítico hoje.</p>
-          </div>
-        </div>
-      </div>
+      <section className="dashboard-section">
+        <div className="dashboard-section-heading"><WalletCards size={21} /><div><h2>Contas a pagar</h2><p>Próximos vencimentos em aberto.</p></div></div>
+        <div className="dashboard-table-wrap"><table className="data-table"><thead><tr><th>Vencimento</th><th>Empresa</th><th>Favorecido</th><th>Valor</th></tr></thead><tbody>{accounts.length === 0 ? <tr><td colSpan={4}>{loading ? 'Carregando...' : 'Nenhuma conta pendente.'}</td></tr> : accounts.slice(0, 5).map(account => <tr key={account.id}><td>{formatDate(account.due_date)}</td><td>{account.companies?.trade_name || account.companies?.legal_name || '-'}</td><td>{account.beneficiary}</td><td><strong>{currency.format(Number(account.amount))}</strong></td></tr>)}</tbody></table></div>
+      </section>
+
+      <section className="dashboard-section">
+        <div className="dashboard-section-heading"><Package size={21} /><div><h2>Estoque de limpeza</h2><p>Saldo atual dos produtos da categoria Limpeza.</p></div></div>
+        <div className="dashboard-stock-grid">{cleaningStock.length === 0 ? <p className="dashboard-empty">{loading ? 'Carregando...' : 'Nenhum produto de limpeza cadastrado.'}</p> : cleaningStock.map(product => <div className="dashboard-stock-item" key={product.id}><div><strong>{product.name}</strong><small>{product.deposit || 'Depósito não informado'}</small></div><span className={Number(product.quantity) <= Number(product.min_stock) ? 'low' : ''}>{Number(product.quantity).toLocaleString('pt-BR')} {product.unit}</span></div>)}</div>
+      </section>
+
+      <section className="dashboard-section">
+        <div className="dashboard-section-heading"><FileText size={21} /><div><h2>Últimos romaneios por operação</h2><p>Os três romaneios mais recentes de cada operação.</p></div></div>
+        <div className="dashboard-operations-grid">{latestByOperation.length === 0 ? <p className="dashboard-empty">{loading ? 'Carregando...' : 'Nenhuma operação cadastrada.'}</p> : latestByOperation.map(({ operation, items }) => <article className="dashboard-operation-card" key={operation.id}><header><h3>{operation.name}</h3><small>{[operation.city, operation.uf].filter(Boolean).join(' / ')}</small></header>{items.length === 0 ? <p className="dashboard-empty">Nenhum romaneio nesta operação.</p> : <ol>{items.map(item => <li key={item.id}><CalendarDays size={17} /><div><strong>{item.category}</strong><small>{formatDate(item.deliveryDate)} · {item.deliveries?.length || 0} ponto(s) de entrega</small></div></li>)}</ol>}</article>)}</div>
+      </section>
     </div>
   );
 };
