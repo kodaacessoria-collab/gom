@@ -65,7 +65,9 @@ const Reports: React.FC<ReportsProps> = ({ userRole }) => {
       if (error) throw error;
       if (data) {
         const uniqueCats = Array.from(new Set(data.map(item => item.category).filter(Boolean)));
-        setCategories(uniqueCats.sort() as string[]);
+        const sortedCategories = uniqueCats.sort() as string[];
+        setCategories(sortedCategories);
+        setSelectedCategory(current => current === 'TODAS' ? (sortedCategories[0] || 'TODAS') : current);
       }
     } catch (err) {
       console.error('Erro ao buscar categorias:', err);
@@ -465,7 +467,7 @@ const Reports: React.FC<ReportsProps> = ({ userRole }) => {
         { wch: 36 }, { wch: 24 }, { wch: 18 }, { wch: 10 },
         { wch: 22 }, { wch: 16 }, { wch: 14 }, { wch: 12 },
       ];
-      worksheet['!autofilter'] = { ref: `A1:H${rows.length}` };
+      worksheet['!autofilter'] = { ref: `A1:H${rows.length + 1}` };
       const workbook = XLSX.utils.book_new();
       XLSX.utils.book_append_sheet(workbook, worksheet, sanitizeFileNamePart(selectedCategory).slice(0, 31));
 
@@ -478,7 +480,16 @@ const Reports: React.FC<ReportsProps> = ({ userRole }) => {
         formatReportDateTime(new Date()),
         '.xlsx',
       ].join('');
-      XLSX.writeFile(workbook, fileName);
+      const excelData = XLSX.write(workbook, { bookType: 'xlsx', type: 'array' });
+      const blob = new Blob([excelData], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+      const downloadUrl = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = downloadUrl;
+      link.download = fileName;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.setTimeout(() => URL.revokeObjectURL(downloadUrl), 1000);
     } catch (err) {
       console.error('Erro ao gerar relatório Excel:', err);
       alert(`Erro ao gerar relatório Excel: ${(err as Error).message || 'Erro desconhecido'}`);
