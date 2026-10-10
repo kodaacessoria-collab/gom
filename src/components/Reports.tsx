@@ -1,9 +1,10 @@
 import React, { useState, useEffect } from 'react';
-import { Filter, Calendar, Package, AlertTriangle, ChevronRight } from 'lucide-react';
+import { Filter, Calendar, Package, AlertTriangle, ChevronRight, FileSpreadsheet } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import type { Deposit, Role } from '../types';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
+import * as XLSX from 'xlsx';
 import { addPdfHeader } from '../lib/pdfBranding';
 
 interface ReportsProps {
@@ -415,6 +416,77 @@ const Reports: React.FC<ReportsProps> = ({ userRole }) => {
     }
   };
 
+  const generateCategoryExcel = async () => {
+    if (selectedCategory === 'TODAS') {
+      alert('Por favor, selecione uma categoria específica.');
+      return;
+    }
+    setLoading(true);
+    try {
+      const depositToQuery = userRole === 'red' ? 'Depósito-RED' : selectedDeposit;
+      let query = supabase
+        .from('products')
+        .select('*')
+        .eq('category', selectedCategory)
+        .gt('quantity', 0)
+        .order('name');
+      if (depositToQuery !== 'TODOS') query = query.eq('deposit', depositToQuery);
+
+      const { data: products, error } = await query;
+      if (error) throw error;
+      if (!products?.length) {
+        alert('Nenhum produto com saldo encontrado nesta categoria.');
+        return;
+      }
+
+      const rows = products.map(product => ({
+        PRODUTO: product.name,
+        DEPÓSITO: product.deposit || '-',
+        CATEGORIA: product.category,
+        UND: product.unit,
+        MARCA: product.brand || '-',
+        LOTE: product.batch || '-',
+        VENCIMENTO: product.expiry_date ? product.expiry_date.split('-').reverse().join('/') : '-',
+        SALDO: Number(product.quantity),
+      }));
+      rows.push({
+        PRODUTO: 'TOTAL',
+        DEPÓSITO: '',
+        CATEGORIA: selectedCategory,
+        UND: '',
+        MARCA: '',
+        LOTE: '',
+        VENCIMENTO: '',
+        SALDO: products.reduce((sum, product) => sum + Number(product.quantity), 0),
+      });
+
+      const worksheet = XLSX.utils.json_to_sheet(rows);
+      worksheet['!cols'] = [
+        { wch: 36 }, { wch: 24 }, { wch: 18 }, { wch: 10 },
+        { wch: 22 }, { wch: 16 }, { wch: 14 }, { wch: 12 },
+      ];
+      worksheet['!autofilter'] = { ref: `A1:H${rows.length}` };
+      const workbook = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(workbook, worksheet, sanitizeFileNamePart(selectedCategory).slice(0, 31));
+
+      const fileName = [
+        'Relatório de Estoque por Categoria_',
+        sanitizeFileNamePart(depositToQuery === 'TODOS' ? 'Todos os Depósitos' : depositToQuery),
+        '-',
+        sanitizeFileNamePart(selectedCategory),
+        ' - ',
+        formatReportDateTime(new Date()),
+        '.xlsx',
+      ].join('');
+      XLSX.writeFile(workbook, fileName);
+    } catch (err) {
+      console.error('Erro ao gerar relatório Excel:', err);
+      alert(`Erro ao gerar relatório Excel: ${(err as Error).message || 'Erro desconhecido'}`);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   return (
     <div className="reports-container">
       <div className="view-header" style={{ flexWrap: 'wrap' }}>
@@ -487,6 +559,14 @@ const Reports: React.FC<ReportsProps> = ({ userRole }) => {
                 onClick={() => generatePDF('estoque_categoria')}
               >
                 <ChevronRight size={16} /> Gerar Relatório
+              </button>
+              <button
+                className="button button-outline excel-action"
+                style={{ marginTop: '0.5rem' }}
+                disabled={loading || selectedCategory === 'TODAS'}
+                onClick={() => void generateCategoryExcel()}
+              >
+                <FileSpreadsheet size={16} /> Exportar Excel
               </button>
             </div>
           </div>
