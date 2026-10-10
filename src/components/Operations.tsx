@@ -650,6 +650,69 @@ const Operations: React.FC = () => {
     void saveSharedState(ORDERS_KEY, next).catch(reportSharedStateError);
   };
 
+  const stockMovementPrefix = (orderId: string) => `OPERATION_STOCK:${orderId}:`;
+
+  const applyOrderStock = async (order: OperationOrder) => {
+    const { data, error } = await supabase.from('products').select('*').order('expiry_date', { ascending: true });
+    if (error) throw error;
+    const available = new Map((data || []).map(product => [product.id, Number(product.quantity)]));
+    const slips: Array<Record<string, unknown>> = [];
+
+    for (const delivery of order.deliveries) {
+      for (const item of delivery.items) {
+        let remaining = Number(item.quantity);
+        const matches = (data || []).filter(product =>
+          normalizeKey(product.name) === normalizeKey(item.product) &&
+          (!item.unit || normalizeKey(product.unit) === normalizeKey(item.unit))
+        );
+        if (matches.length === 0) throw new Error(`Produto não encontrado no estoque: ${item.product} (${item.unit}).`);
+
+        for (const product of matches) {
+          const balance = available.get(product.id) || 0;
+          const quantity = Math.min(balance, remaining);
+          if (quantity <= 0) continue;
+          slips.push({
+            product_id: product.id,
+            quantity,
+            type: 'SAIDA',
+            date: order.deliveryDate,
+            category: product.category,
+            unit: product.unit,
+            destination: `${stockMovementPrefix(order.id)}${delivery.id}`,
+          });
+          available.set(product.id, balance - quantity);
+          remaining -= quantity;
+          if (remaining <= 0) break;
+        }
+        if (remaining > 0) throw new Error(`Estoque insuficiente para ${item.product}. Faltam ${remaining} ${item.unit}.`);
+      }
+    }
+
+    if (slips.length > 0) {
+      const { error: insertError } = await supabase.from('slips').insert(slips);
+      if (insertError) throw insertError;
+    }
+    await fetchProducts();
+  };
+
+  const reverseOrderStock = async (orderId: string, deliveryId?: string) => {
+    const destination = deliveryId ? `${stockMovementPrefix(orderId)}${deliveryId}` : `${stockMovementPrefix(orderId)}%`;
+    const query = supabase.from('slips').delete();
+    const { error } = deliveryId ? await query.eq('destination', destination) : await query.like('destination', destination);
+    if (error) throw error;
+    await fetchProducts();
+  };
+
+  const replaceOrderStock = async (previous: OperationOrder, next: OperationOrder) => {
+    await reverseOrderStock(previous.id);
+    try {
+      await applyOrderStock(next);
+    } catch (error) {
+      await applyOrderStock(previous);
+      throw error;
+    }
+  };
+
   const persistProductPrice = (key: string, field: keyof ProductPrice, value: string) => {
     const parsedValue = Number(value);
     const nextValue = Number.isFinite(parsedValue) ? Math.max(0, parsedValue) : 0;
@@ -960,6 +1023,7 @@ const Operations: React.FC = () => {
 
     try {
       await saveSharedState(ORDERS_KEY, nextOrders);
+      await reverseOrderStock(orderId);
       setSharedStateError('');
       setPendingDeleteOrderId(null);
     } catch (error) {
@@ -970,7 +1034,7 @@ const Operations: React.FC = () => {
     }
   };
 
-  const deleteDelivery = (orderId: string, deliveryId: string) => {
+  const deleteDelivery = async (orderId: string, deliveryId: string) => {
     const order = orders.find(item => item.id === orderId);
     const delivery = order?.deliveries.find(item => item.id === deliveryId);
     if (!order || !delivery) return;
@@ -985,13 +1049,19 @@ const Operations: React.FC = () => {
     if (!confirmed) return;
 
     if (isLastDelivery) {
-      persistOrders(orders.filter(item => item.id !== orderId));
+      await deleteOrder(orderId);
       return;
     }
-
-    persistOrders(orders.map(item => item.id === orderId
-      ? { ...item, deliveries: item.deliveries.filter(candidate => candidate.id !== deliveryId) }
-      : item));
+    const updatedOrder = { ...order, deliveries: order.deliveries.filter(candidate => candidate.id !== deliveryId) };
+    try {
+      await saveSharedState(ORDERS_KEY, orders.map(item => item.id === orderId ? updatedOrder : item));
+      await reverseOrderStock(orderId, deliveryId);
+      setOrders(current => current.map(item => item.id === orderId ? updatedOrder : item));
+      saveStorage(ORDERS_KEY, orders.map(item => item.id === orderId ? updatedOrder : item));
+    } catch (error) {
+      reportSharedStateError(error);
+      window.alert('Não foi possível excluir o romaneio nem estornar o estoque. Tente novamente.');
+    }
   };
 
   const addDraftItem = (event: React.FormEvent) => {
@@ -1058,9 +1128,25 @@ const Operations: React.FC = () => {
     }
   };
 
-  const saveManualOrder = () => {
+  const saveManualOrder = async () => {
     if (!activeOperation || draftDeliveries.length === 0) return;
     if (editingOrderId) {
+      const previousOrder = orders.find(order => order.id === editingOrderId);
+      if (!previousOrder) return;
+      const updatedOrder = {
+        ...previousOrder,
+        category: orderForm.category,
+        deliveryDate: orderForm.deliveryDate,
+        consumptionPeriod: displayText(orderForm.consumptionPeriod),
+        generalNotes: displayText(orderForm.generalNotes),
+        deliveries: normalizeOrderDeliveries(draftDeliveries),
+      };
+      try {
+        await replaceOrderStock(previousOrder, updatedOrder);
+      } catch (error) {
+        window.alert(`Não foi possível atualizar o estoque: ${(error as Error).message}`);
+        return;
+      }
       persistOrders(orders.map(order => order.id === editingOrderId ? {
         ...order,
         category: orderForm.category,
@@ -1089,6 +1175,12 @@ const Operations: React.FC = () => {
       importedAt: new Date().toISOString(),
       deliveries: normalizeOrderDeliveries(draftDeliveries),
     };
+    try {
+      await applyOrderStock(order);
+    } catch (error) {
+      window.alert(`Romaneio não salvo: ${(error as Error).message}`);
+      return;
+    }
     persistOrders([order, ...orders]);
     setEditingDraftItem(null);
     setDraftDeliveries([]);
@@ -1272,6 +1364,7 @@ const Operations: React.FC = () => {
     if (!file || !activeOperation) return;
     setImporting(true);
     setImportFeedback({ type: 'progress', message: `Lendo ${file.name}...` });
+    let stockAppliedOrderId: string | null = null;
     try {
       const extension = file.name.split('.').pop()?.toLowerCase();
       if (!extension || !['xlsx', 'xls', 'pdf'].includes(extension)) {
@@ -1280,6 +1373,8 @@ const Operations: React.FC = () => {
       const order = extension === 'pdf' ? await parsePdfOrder(file) : await parseExcelOrder(file);
       const nextOrders = [order, ...orders];
       setImportFeedback({ type: 'progress', message: `Salvando ${order.deliveries.length} local(is) de entrega...` });
+      await applyOrderStock(order);
+      stockAppliedOrderId = order.id;
       await saveSharedState(ORDERS_KEY, nextOrders);
       setOrders(nextOrders);
       saveStorage(ORDERS_KEY, nextOrders);
@@ -1291,6 +1386,9 @@ const Operations: React.FC = () => {
         message: `Pedido importado: ${order.category} | Entrega ${formatDate(order.deliveryDate)} | ${order.deliveries.length} local(is) e ${buildSummary(order.deliveries).length} produto(s).`,
       });
     } catch (error: unknown) {
+      if (stockAppliedOrderId) {
+        try { await reverseOrderStock(stockAppliedOrderId); } catch (rollbackError) { console.error('Falha ao estornar baixa após erro de importação:', rollbackError); }
+      }
       const message = error instanceof Error ? error.message : 'Não foi possível importar o pedido.';
       console.error('Falha ao importar pedido:', error);
       setImportFeedback({ type: 'error', message });

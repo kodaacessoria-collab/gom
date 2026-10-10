@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Plus, Search, X, Trash2, Edit3, Save, Layers, ArrowRight, ArrowDownCircle, AlertTriangle, PlusCircle, MinusCircle, FileInput, Upload, Link2 } from 'lucide-react';
+import { Plus, Search, X, Trash2, Edit3, Save, ArrowRight, ArrowDownCircle, AlertTriangle, PlusCircle, MinusCircle, FileInput, Upload, Link2, FileSpreadsheet, ClipboardCheck } from 'lucide-react';
+import * as XLSX from 'xlsx';
 import { supabase } from '../lib/supabase';
 import { saveLog } from '../lib/logger';
 import type { Product, Category, Deposit, Role } from '../types';
@@ -71,12 +72,14 @@ const Inventory: React.FC<InventoryProps> = ({ userRole }) => {
     newBrand: string;
   }
   const [nfeItems, setNfeItems] = useState<NFeItem[]>([]);
-  const [nfeType, setNfeType] = useState<'ENTRADA' | 'SAIDA'>('ENTRADA');
+  const [nfeType] = useState<'ENTRADA' | 'SAIDA'>('ENTRADA');
   const [nfeInfo, setNfeInfo] = useState<{ nNF: string; dhEmi: string; xNome: string } | null>(null);
   const [nfeDeposit, setNfeDeposit] = useState<Deposit>('Depósito-Grupo OM');
   const [nfeDate, setNfeDate] = useState(new Date().toISOString().split('T')[0]);
   const [nfeSaving, setNfeSaving] = useState(false);
   const nfeFileRef = useRef<HTMLInputElement>(null);
+  const entryExcelRef = useRef<HTMLInputElement>(null);
+  const stockCheckExcelRef = useRef<HTMLInputElement>(null);
 
   const [formData, setFormData] = useState<Partial<Product>>({
     name: '',
@@ -582,6 +585,140 @@ const Inventory: React.FC<InventoryProps> = ({ userRole }) => {
     }
   };
 
+  const normalizeHeader = (value: unknown) => String(value ?? '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .trim()
+    .toUpperCase()
+    .replace(/\s+/g, '_');
+
+  const normalizeProductName = (value: unknown) => String(value ?? '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .trim()
+    .toUpperCase()
+    .replace(/\s+/g, ' ');
+
+  const readExcelRows = async (file: File) => {
+    const workbook = XLSX.read(await file.arrayBuffer(), { type: 'array', cellDates: true });
+    const firstSheet = workbook.Sheets[workbook.SheetNames[0]];
+    if (!firstSheet) throw new Error('A planilha não possui nenhuma aba.');
+    const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(firstSheet, { defval: '' });
+    return rows.map(row => Object.fromEntries(Object.entries(row).map(([key, value]) => [normalizeHeader(key), value])));
+  };
+
+  const parseExcelDate = (value: unknown) => {
+    if (value instanceof Date && !Number.isNaN(value.getTime())) return value.toISOString().slice(0, 10);
+    const text = String(value ?? '').trim();
+    if (!text) return new Date().toISOString().slice(0, 10);
+    if (/^\d{4}-\d{2}-\d{2}$/.test(text)) return text;
+    const match = text.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{4})$/);
+    return match ? `${match[3]}-${match[2].padStart(2, '0')}-${match[1].padStart(2, '0')}` : new Date().toISOString().slice(0, 10);
+  };
+
+  const importEntriesFromExcel = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.currentTarget.files?.[0];
+    event.currentTarget.value = '';
+    if (!file) return;
+    setLoading(true);
+    try {
+      const rows = await readExcelRows(file);
+      let imported = 0;
+      for (const row of rows) {
+        const name = String(row.PRODUTO ?? row.NOME ?? '').trim();
+        const quantity = Number(row.QUANTIDADE ?? row.QTD ?? 0);
+        if (!name || !Number.isFinite(quantity) || quantity <= 0) continue;
+        const deposit = String(row.DEPOSITO || selectedDeposit || 'Depósito-Grupo OM') as Deposit;
+        const batch = String(row.LOTE ?? '').trim();
+        const unit = String(row.UND ?? row.UNIDADE ?? 'UN').trim() || 'UN';
+        const category = (String(row.CATEGORIA || 'Estocáveis').trim() || 'Estocáveis') as Category;
+        const candidates = products.filter(product =>
+          normalizeProductName(product.name) === normalizeProductName(name) &&
+          (product.deposit || 'Depósito-Grupo OM') === deposit &&
+          (!batch || normalizeProductName(product.batch) === normalizeProductName(batch))
+        );
+        let product = candidates[0];
+        if (!product) {
+          const { data, error } = await supabase.from('products').insert({
+            name,
+            category,
+            unit,
+            brand: String(row.MARCA ?? '').trim() || null,
+            batch: batch || null,
+            expiry_date: row.VALIDADE ? parseExcelDate(row.VALIDADE) : null,
+            quantity: 0,
+            min_stock: Number(row.ESTOQUE_MINIMO ?? row.MINIMO ?? 0) || 0,
+            deposit,
+          }).select().single();
+          if (error) throw error;
+          product = data as Product;
+        }
+        const { error } = await supabase.from('slips').insert({
+          product_id: product.id,
+          quantity,
+          type: 'ENTRADA',
+          date: parseExcelDate(row.DATA),
+          category: product.category || category,
+          unit: product.unit || unit,
+          destination: `Entrada por Excel - ${file.name}`,
+        });
+        if (error) throw error;
+        imported += 1;
+      }
+      await fetchProducts();
+      saveLog('IMPORTAR_XLSX', 'ESTOQUE', `${imported} entrada(s) importada(s) de ${file.name}`);
+      alert(`${imported} entrada(s) importada(s) com sucesso.`);
+    } catch (error) {
+      alert(`Erro ao importar entradas: ${(error as Error).message}`);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const importStockCheckFromExcel = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.currentTarget.files?.[0];
+    event.currentTarget.value = '';
+    if (!file) return;
+    setLoading(true);
+    try {
+      const rows = await readExcelRows(file);
+      const adjustments = [];
+      for (const row of rows) {
+        const counted = Number(row.CONTAGEM ?? row.QUANTIDADE_REAL ?? row.SALDO_REAL ?? '');
+        if (!Number.isFinite(counted) || counted < 0) continue;
+        const product = products.find(item =>
+          (row.ID && item.id === String(row.ID)) ||
+          (normalizeProductName(item.name) === normalizeProductName(row.PRODUTO ?? row.NOME) &&
+            (!row.LOTE || normalizeProductName(item.batch) === normalizeProductName(row.LOTE)) &&
+            (!row.DEPOSITO || item.deposit === String(row.DEPOSITO)))
+        );
+        if (!product) continue;
+        const difference = counted - Number(product.quantity);
+        if (difference === 0) continue;
+        adjustments.push({
+          product_id: product.id,
+          quantity: Math.abs(difference),
+          type: difference > 0 ? 'ENTRADA' : 'SAIDA',
+          date: new Date().toISOString().slice(0, 10),
+          category: product.category,
+          unit: product.unit,
+          destination: `Conferência de estoque por Excel - ${file.name}`,
+        });
+      }
+      if (adjustments.length > 0) {
+        const { error } = await supabase.from('slips').insert(adjustments);
+        if (error) throw error;
+      }
+      await fetchProducts();
+      saveLog('CONFERIR_XLSX', 'ESTOQUE', `${adjustments.length} ajuste(s) de conferência via ${file.name}`);
+      alert(`Conferência concluída. ${adjustments.length} produto(s) ajustado(s).`);
+    } catch (error) {
+      alert(`Erro na conferência de estoque: ${(error as Error).message}`);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const filteredProducts = products.filter(p => {
     if (selectedDeposit === 'SELECIONE') return false;
     const matchSearch = p.name.toLowerCase().includes(search.toLowerCase()) || p.category.toLowerCase().includes(search.toLowerCase());
@@ -598,25 +735,13 @@ const Inventory: React.FC<InventoryProps> = ({ userRole }) => {
           <p>Gerencie seus produtos, marcas e quantidades.</p>
         </div>
         <div style={{ display: 'flex', gap: '1rem', flexWrap: 'wrap' }}>
-          <button
-            className="button"
-            style={{ backgroundColor: '#0e7490', border: 'none' }}
-            onClick={() => { setNfeType('ENTRADA'); setIsNFeOpen(true); setNfeItems([]); setNfeInfo(null); }}
-          >
-            <FileInput size={18} style={{ marginRight: '0.5rem' }} />
-            Entrada NFe (XML)
+          <input ref={entryExcelRef} type="file" accept=".xlsx,.xls" hidden onChange={importEntriesFromExcel} />
+          <input ref={stockCheckExcelRef} type="file" accept=".xlsx,.xls" hidden onChange={importStockCheckFromExcel} />
+          <button className="button" style={{ backgroundColor: '#0e7490', border: 'none' }} onClick={() => entryExcelRef.current?.click()}>
+            <FileSpreadsheet size={18} style={{ marginRight: '0.5rem' }} /> Entrada por Excel
           </button>
-          <button
-            className="button"
-            style={{ backgroundColor: '#b91c1c', border: 'none' }}
-            onClick={() => { setNfeType('SAIDA'); setIsNFeOpen(true); setNfeItems([]); setNfeInfo(null); }}
-          >
-            <FileInput size={18} style={{ marginRight: '0.5rem' }} />
-            Baixa NFe (XML)
-          </button>
-          <button className="button" style={{ backgroundColor: '#4f46e5', border: 'none' }} onClick={() => setIsBulkOpen(true)}>
-            <Layers size={18} style={{ marginRight: '0.5rem' }} />
-            Lançar em Massa
+          <button className="button" style={{ backgroundColor: '#4f46e5', border: 'none' }} onClick={() => stockCheckExcelRef.current?.click()}>
+            <ClipboardCheck size={18} style={{ marginRight: '0.5rem' }} /> Conferência por Excel
           </button>
           <button className="button" onClick={() => { setFormData({ category: 'Estocáveis', unit: 'UN', quantity: 0, min_stock: 10, deposit: 'Depósito-Grupo OM' }); setIsEditing(false); setIsModalOpen(true); }}>
             <Plus size={18} style={{ marginRight: '0.5rem' }} />
