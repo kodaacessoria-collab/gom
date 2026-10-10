@@ -1,0 +1,18 @@
+name: Lembretes de contas a pagar
+
+on:
+  schedule:
+    - cron: '0 11 * * *'
+  workflow_dispatch:
+
+jobs:
+  send-reminders:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Enviar lembretes pelo WhatsApp
+        run: |
+          curl --fail-with-body --request POST \
+            "${{ secrets.SUPABASE_URL }}/functions/v1/accounts-payable-reminders" \
+            --header "Authorization: Bearer ${{ secrets.SUPABASE_ANON_KEY }}" \
+            --header "Content-Type: application/json" \
+            --data '{}'

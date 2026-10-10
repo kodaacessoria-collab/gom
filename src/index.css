@@ -364,6 +364,37 @@ body.menu-open {
 .badge-yellow { background: rgba(234, 179, 8, 0.1); color: #facc15; }
 .badge-red { background: rgba(239, 68, 68, 0.1); color: #f87171; }
 
+.accounts-payable-page { max-width: 1400px; margin: 0 auto; }
+.accounts-icon-button { width: auto; gap: .5rem; }
+.accounts-summary-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1rem; margin-bottom: 1.5rem; }
+.accounts-summary-card { padding: 1.25rem; border: 1px solid var(--border); border-radius: .85rem; background: var(--card-bg); display: grid; gap: .45rem; }
+.accounts-summary-card span { color: var(--text-muted); font-size: .78rem; font-weight: 700; text-transform: uppercase; }
+.accounts-summary-card strong { color: #facc15; font-size: 1.45rem; }
+.accounts-summary-card.danger strong { color: #f87171; }
+.accounts-summary-card.success strong { color: #4ade80; }
+.accounts-form { max-width: none; padding: 1.4rem; margin-bottom: 1.5rem; }
+.accounts-section-title { display: flex; align-items: center; gap: .6rem; margin-bottom: 1rem; }
+.accounts-section-title h2 { font-size: 1.1rem; }
+.accounts-form-grid { display: grid; grid-template-columns: 1.35fr 1.35fr .7fr .8fr; gap: .9rem; align-items: end; }
+.accounts-notes { grid-column: span 3; }
+.accounts-toolbar { display: grid; grid-template-columns: 1fr 1fr auto; gap: .75rem; align-items: end; margin-bottom: 1rem; }
+.accounts-toolbar .input-field { margin: 0; }
+.accounts-toolbar .button { gap: .5rem; white-space: nowrap; }
+.accounts-reminder-note { display: flex; align-items: center; gap: .7rem; padding: .9rem 1rem; margin-bottom: 1rem; border: 1px solid rgba(37, 211, 102, .4); border-radius: .7rem; background: rgba(37, 211, 102, .08); color: #86efac; font-size: .88rem; }
+.accounts-table-wrap { overflow-x: auto; }
+.accounts-cnpj { display: block; color: var(--text-muted); margin-top: .2rem; }
+.accounts-actions { display: flex; gap: .45rem; }
+.accounts-action { display: inline-flex; padding: .45rem; border: 1px solid var(--border); border-radius: .45rem; background: transparent; cursor: pointer; }
+.accounts-action.success { color: #4ade80; }
+.accounts-action.danger { color: #f87171; }
+@media (max-width: 900px) {
+  .accounts-summary-grid { grid-template-columns: 1fr; }
+  .accounts-form-grid, .accounts-toolbar { grid-template-columns: 1fr; }
+  .accounts-notes { grid-column: auto; }
+  .accounts-icon-button { width: 100%; margin-top: 1rem; }
+  .accounts-payable-page .view-header { display: block; }
+}
+
 /* Forms */
 .input-field {
   width: 100%;

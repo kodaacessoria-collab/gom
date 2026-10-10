@@ -60,3 +60,25 @@ export interface PurchaseOrder {
   }[];
   created_at: string;
 }
+
+export interface Company {
+  id: string;
+  legal_name: string;
+  trade_name: string;
+  cnpj: string;
+}
+
+export type AccountPayableStatus = 'PENDENTE' | 'PAGO';
+
+export interface AccountPayable {
+  id: string;
+  company_id: string;
+  beneficiary: string;
+  amount: number;
+  due_date: string;
+  status: AccountPayableStatus;
+  paid_at?: string | null;
+  notes?: string | null;
+  created_at: string;
+  companies?: Company;
+}
