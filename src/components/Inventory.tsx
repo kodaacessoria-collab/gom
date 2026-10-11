@@ -683,8 +683,11 @@ const Inventory: React.FC<InventoryProps> = ({ userRole }) => {
     try {
       const rows = await readExcelRows(file);
       const adjustments = [];
+      let recognizedRows = 0;
       for (const row of rows) {
-        const counted = Number(row.CONTAGEM ?? row.QUANTIDADE_REAL ?? row.SALDO_REAL ?? '');
+        const rawCount = row.CONTAGEM ?? row.QUANTIDADE_REAL ?? row.SALDO_REAL ?? row.SALDO ?? row.QTD ?? row.QUANTIDADE;
+        if (rawCount === undefined || rawCount === null || String(rawCount).trim() === '') continue;
+        const counted = Number(String(rawCount).replace(',', '.'));
         if (!Number.isFinite(counted) || counted < 0) continue;
         const product = products.find(item =>
           (row.ID && item.id === String(row.ID)) ||
@@ -693,6 +696,7 @@ const Inventory: React.FC<InventoryProps> = ({ userRole }) => {
             (!row.DEPOSITO || item.deposit === String(row.DEPOSITO)))
         );
         if (!product) continue;
+        recognizedRows += 1;
         const difference = counted - Number(product.quantity);
         if (difference === 0) continue;
         adjustments.push({
@@ -705,13 +709,16 @@ const Inventory: React.FC<InventoryProps> = ({ userRole }) => {
           destination: `Conferência de estoque por Excel - ${file.name}`,
         });
       }
+      if (recognizedRows === 0) {
+        throw new Error('Nenhuma linha válida foi reconhecida. Use uma coluna CONTAGEM, QUANTIDADE REAL, SALDO, QTD ou QUANTIDADE e mantenha as colunas PRODUTO, LOTE e DEPÓSITO para identificar os itens.');
+      }
       if (adjustments.length > 0) {
         const { error } = await supabase.from('slips').insert(adjustments);
         if (error) throw error;
       }
       await fetchProducts();
       saveLog('CONFERIR_XLSX', 'ESTOQUE', `${adjustments.length} ajuste(s) de conferência via ${file.name}`);
-      alert(`Conferência concluída. ${adjustments.length} produto(s) ajustado(s).`);
+      alert(`Conferência concluída. ${recognizedRows} produto(s) reconhecido(s) e ${adjustments.length} ajustado(s).`);
     } catch (error) {
       alert(`Erro na conferência de estoque: ${(error as Error).message}`);
     } finally {
