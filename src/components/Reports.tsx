@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Filter, Calendar, Package, AlertTriangle, ChevronRight, FileSpreadsheet } from 'lucide-react';
+import { Filter, Calendar, Package, AlertTriangle, ChevronRight, FileSpreadsheet, ClipboardCheck } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import type { Deposit, Role } from '../types';
 import jsPDF from 'jspdf';
@@ -45,6 +45,7 @@ const Reports: React.FC<ReportsProps> = ({ userRole }) => {
   const [dateEnd, setDateEnd] = useState('');
   const [selectedCategory, setSelectedCategory] = useState('TODAS');
   const [validityCategory, setValidityCategory] = useState('TODAS');
+  const [conferenceCategory, setConferenceCategory] = useState('TODAS');
   const [selectedDeposit, setSelectedDeposit] = useState<Deposit | 'TODOS'>('TODOS');
   const [categories, setCategories] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
@@ -498,6 +499,80 @@ const Reports: React.FC<ReportsProps> = ({ userRole }) => {
     }
   };
 
+  const generateStockCheckPDF = async () => {
+    setLoading(true);
+    try {
+      const depositToQuery = userRole === 'red' ? 'Depósito-RED' : selectedDeposit;
+      let query = supabase.from('products').select('*').order('name');
+      if (depositToQuery !== 'TODOS') query = query.eq('deposit', depositToQuery);
+      if (conferenceCategory !== 'TODAS') query = query.eq('category', conferenceCategory);
+
+      const { data: products, error } = await query;
+      if (error) throw error;
+      if (!products?.length) {
+        alert('Nenhum produto encontrado para a conferência.');
+        return;
+      }
+
+      const doc = new jsPDF({ orientation: 'landscape' });
+      await addPdfHeader(doc, {
+        title: 'RELATÓRIO DE CONFERÊNCIA DE ESTOQUE',
+        subtitle: `Categoria: ${conferenceCategory === 'TODAS' ? 'Todas as Categorias' : conferenceCategory}`,
+        footer: `Depósito: ${depositToQuery === 'TODOS' ? 'Todos os Depósitos' : depositToQuery} | Emissão: ${new Date().toLocaleString('pt-BR')}`,
+      });
+
+      autoTable(doc, {
+        ...reportTableOptions,
+        startY: 39,
+        head: [['Produto', 'Depósito', 'Categoria', 'UND', 'Marca', 'Lote', 'Validade', 'Saldo Sistema', 'Contagem Física', 'Divergência']],
+        body: products.map(product => [
+          product.name,
+          product.deposit || '-',
+          product.category,
+          product.unit,
+          product.brand || '-',
+          product.batch || '-',
+          product.expiry_date ? product.expiry_date.split('-').reverse().join('/') : '-',
+          Number(product.quantity),
+          '',
+          '',
+        ]),
+        headStyles: { ...reportTableOptions.headStyles, fillColor: [79, 70, 229] },
+        styles: { ...reportTableOptions.styles, fontSize: 8, minCellHeight: 8 },
+        columnStyles: {
+          0: { cellWidth: 48 },
+          1: { cellWidth: 31 },
+          8: { cellWidth: 25 },
+          9: { cellWidth: 22 },
+        },
+        theme: 'grid',
+        didDrawPage: () => {
+          const pageHeight = doc.internal.pageSize.getHeight();
+          doc.setFont('helvetica', 'normal');
+          doc.setFontSize(8);
+          doc.text('Conferente: ____________________________________  Data: ____/____/________  Assinatura: ____________________________________', 14, pageHeight - 7);
+        },
+        margin: { bottom: 15 },
+      });
+
+      const fileName = [
+        'Relatório de Conferência de Estoque_',
+        sanitizeFileNamePart(depositToQuery === 'TODOS' ? 'Todos os Depósitos' : depositToQuery),
+        '-',
+        sanitizeFileNamePart(conferenceCategory === 'TODAS' ? 'Todas as Categorias' : conferenceCategory),
+        ' - ',
+        formatReportDateTime(new Date()),
+        '.pdf',
+      ].join('');
+      doc.save(fileName);
+    } catch (err) {
+      console.error('Erro ao gerar relatório de conferência:', err);
+      alert(`Erro ao gerar relatório de conferência: ${(err as Error).message || 'Erro desconhecido'}`);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   return (
     <div className="reports-container">
       <div className="view-header" style={{ flexWrap: 'wrap' }}>
@@ -578,6 +653,27 @@ const Reports: React.FC<ReportsProps> = ({ userRole }) => {
                 onClick={() => void generateCategoryExcel()}
               >
                 <FileSpreadsheet size={16} /> Exportar Excel
+              </button>
+            </div>
+          </div>
+        </div>
+
+        {/* Conferência de Estoque */}
+        <div className="card report-card">
+          <div className="report-icon bg-indigo">
+            <ClipboardCheck size={24} />
+          </div>
+          <div className="report-info">
+            <h3>Conferência de Estoque</h3>
+            <p className="report-description">Folha para contagem física, comparação com o sistema e anotação de divergências.</p>
+            <div className="report-filter">
+              <label>Filtrar por Categoria:</label>
+              <select className="input-field" value={conferenceCategory} onChange={event => setConferenceCategory(event.target.value)}>
+                <option value="TODAS">Todas as Categorias</option>
+                {categories.map(category => <option key={category} value={category}>{category}</option>)}
+              </select>
+              <button className="button" style={{ marginTop: '0.5rem' }} disabled={loading} onClick={() => void generateStockCheckPDF()}>
+                <ClipboardCheck size={16} /> Gerar Conferência em PDF
               </button>
             </div>
           </div>
