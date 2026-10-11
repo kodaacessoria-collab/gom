@@ -655,17 +655,35 @@ const Operations: React.FC = () => {
   const applyOrderStock = async (order: OperationOrder) => {
     const { data, error } = await supabase.from('products').select('*').order('expiry_date', { ascending: true });
     if (error) throw error;
-    const available = new Map((data || []).map(product => [product.id, Number(product.quantity)]));
+    const inventoryProducts = [...(data || [])];
+    const available = new Map(inventoryProducts.map(product => [product.id, Number(product.quantity)]));
     const slips: Array<Record<string, unknown>> = [];
 
     for (const delivery of order.deliveries) {
       for (const item of delivery.items) {
         let remaining = Number(item.quantity);
-        const matches = (data || []).filter(product =>
+        let matches = inventoryProducts.filter(product =>
           normalizeKey(product.name) === normalizeKey(item.product) &&
           (!item.unit || normalizeKey(product.unit) === normalizeKey(item.unit))
         );
-        if (matches.length === 0) throw new Error(`Produto não encontrado no estoque: ${item.product} (${item.unit}).`);
+        if (matches.length === 0) {
+          const { data: createdProduct, error: createError } = await supabase
+            .from('products')
+            .insert({
+              name: item.product,
+              category: categoryToInventoryCategory(order.category),
+              unit: item.unit || 'UN',
+              quantity: 0,
+              min_stock: 0,
+              deposit: 'Depósito-Grupo OM',
+            })
+            .select()
+            .single();
+          if (createError) throw createError;
+          inventoryProducts.push(createdProduct);
+          available.set(createdProduct.id, 0);
+          matches = [createdProduct];
+        }
 
         for (const product of matches) {
           const balance = available.get(product.id) || 0;
@@ -684,7 +702,20 @@ const Operations: React.FC = () => {
           remaining -= quantity;
           if (remaining <= 0) break;
         }
-        if (remaining > 0) throw new Error(`Estoque insuficiente para ${item.product}. Faltam ${remaining} ${item.unit}.`);
+        if (remaining > 0) {
+          const product = matches[0];
+          const balance = available.get(product.id) || 0;
+          slips.push({
+            product_id: product.id,
+            quantity: remaining,
+            type: 'SAIDA',
+            date: order.deliveryDate,
+            category: product.category,
+            unit: product.unit,
+            destination: `${stockMovementPrefix(order.id)}${delivery.id}`,
+          });
+          available.set(product.id, balance - remaining);
+        }
       }
     }
 
