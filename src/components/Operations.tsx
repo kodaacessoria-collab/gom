@@ -273,6 +273,32 @@ interface ExcelOrderMetadata {
   generalNotes: string;
 }
 
+interface ParsedExcelSheet {
+  name: string;
+  rows: unknown[][];
+}
+
+const parseExcelInWorker = async (file: File): Promise<ParsedExcelSheet[]> => {
+  const buffer = await file.arrayBuffer();
+  const worker = new Worker(new URL('../workers/excelOrderParser.worker.ts', import.meta.url), { type: 'module' });
+
+  return new Promise((resolve, reject) => {
+    worker.onmessage = (event: MessageEvent<{ sheets?: ParsedExcelSheet[]; error?: string }>) => {
+      worker.terminate();
+      if (event.data.error) {
+        reject(new Error(event.data.error));
+        return;
+      }
+      resolve(event.data.sheets || []);
+    };
+    worker.onerror = event => {
+      worker.terminate();
+      reject(new Error(event.message || 'Não foi possível processar a planilha.'));
+    };
+    worker.postMessage({ buffer }, [buffer]);
+  });
+};
+
 const extractExcelOrderMetadata = (rows: unknown[][]): ExcelOrderMetadata => {
   const metadata: ExcelOrderMetadata = {
     deliveryDate: '',
@@ -1293,13 +1319,11 @@ const Operations: React.FC = () => {
 
   const parseExcelOrder = async (file: File): Promise<OperationOrder> => {
     if (!activeOperation || operationPoints.length === 0) throw new Error('Cadastre ao menos um local de entrega antes de importar.');
-    const data = await file.arrayBuffer();
-    const workbook = XLSX.read(data, { type: 'array', cellDates: true });
+    const sheets = await parseExcelInWorker(file);
     let metadata: ExcelOrderMetadata = { deliveryDate: '', consumptionPeriod: '', categoryText: '', generalNotes: '' };
     const deliveries: OrderDelivery[] = [];
 
-    workbook.SheetNames.forEach(sheetName => {
-      const rows = XLSX.utils.sheet_to_json(workbook.Sheets[sheetName], { header: 1, defval: '' }) as unknown[][];
+    sheets.forEach(({ name: sheetName, rows }) => {
       if (!rows.length) return;
       const sheetMetadata = extractExcelOrderMetadata(rows);
       metadata = {
@@ -1394,7 +1418,7 @@ const Operations: React.FC = () => {
     const file = selectedImportFile;
     if (!file || !activeOperation) return;
     setImporting(true);
-    setImportFeedback({ type: 'progress', message: `Lendo ${file.name}...` });
+    setImportFeedback({ type: 'progress', message: `Lendo ${file.name} em segundo plano...` });
     let stockAppliedOrderId: string | null = null;
     try {
       const extension = file.name.split('.').pop()?.toLowerCase();
