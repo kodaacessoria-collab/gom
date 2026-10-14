@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ArrowDown,
   ArrowUp,
@@ -191,13 +191,6 @@ const normalizeText = (value: unknown) =>
 
 const displayText = (value: unknown) => String(value ?? '').replace(/\s+/g, ' ').trim();
 const normalizeKey = (value: unknown) => normalizeText(value).toUpperCase();
-const normalizeDeliveryLabel = (value: unknown) =>
-  normalizeKey(value)
-    .replace(/\([^)]*\)/g, ' ')
-    .replace(/[^A-Z0-9]+/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
-
 const toNumber = (value: unknown) => {
   if (typeof value === 'number') return Number.isFinite(value) ? value : 0;
   const parsed = Number(String(value ?? '').replace(/\./g, '').replace(',', '.').trim());
@@ -216,53 +209,10 @@ const formatCurrency = (value: number) => value.toLocaleString('pt-BR', { style:
 
 const stockKey = (product: string, unit: string) => `${normalizeKey(product)}|${normalizeKey(unit || 'UN')}`;
 
-const ignoredDeliveryHeaders = new Set([
-  'TOTAL',
-  'COLUNAS1',
-  'COLUNAS2',
-  'COLUNAS3',
-  'VERDURAS',
-  'LEGUMES',
-  'HORTIFRUTI',
-  'HORTIFRUTIGRANJEIRO',
-  ...DELIVERY_CATEGORIES.map(normalizeKey),
-]);
-
 const categoryToInventoryCategory = (category: DeliveryCategory) => {
   if (category === 'Limpeza') return 'LIMPEZA';
   if (category === 'Dietas e Fórmulas') return 'DIETA';
   return 'Estocáveis';
-};
-
-const findHeaderRow = (rows: unknown[][]) =>
-  rows.findIndex(row => row.some(cell => normalizeKey(cell) === 'PRODUTO') && row.some(cell => ['QTD', 'QTDE', 'QUANTIDADE'].includes(normalizeKey(cell))));
-
-const extractDeliveryLabelFromRows = (rows: unknown[][]) => {
-  for (const row of rows.slice(0, 15)) {
-    const labelIndex = row.findIndex(cell => ['NOME DA ESCOLA', 'LOCAL DE ENTREGA', 'UNIDADE ESCOLAR'].includes(normalizeKey(cell)));
-    if (labelIndex < 0) continue;
-    const label = row.slice(labelIndex + 1).map(displayText).find(Boolean);
-    if (label) return label;
-  }
-  return '';
-};
-
-const parseExcelDateValue = (value: unknown) => {
-  if (value instanceof Date && !Number.isNaN(value.getTime())) {
-    const year = value.getFullYear();
-    const month = String(value.getMonth() + 1).padStart(2, '0');
-    const day = String(value.getDate()).padStart(2, '0');
-    return `${year}-${month}-${day}`;
-  }
-  if (typeof value === 'number') {
-    const parsed = XLSX.SSF.parse_date_code(value);
-    if (parsed) return `${parsed.y}-${String(parsed.m).padStart(2, '0')}-${String(parsed.d).padStart(2, '0')}`;
-  }
-  const text = displayText(value);
-  if (/^\d{4}-\d{2}-\d{2}/.test(text)) return text.slice(0, 10);
-  const brazilianDate = text.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{4})$/);
-  if (brazilianDate) return `${brazilianDate[3]}-${brazilianDate[2].padStart(2, '0')}-${brazilianDate[1].padStart(2, '0')}`;
-  return '';
 };
 
 interface ExcelOrderMetadata {
@@ -273,62 +223,29 @@ interface ExcelOrderMetadata {
   generalNotes: string;
 }
 
-interface ParsedExcelSheet {
-  name: string;
-  rows: unknown[][];
-}
-
-const parseExcelInWorker = async (file: File): Promise<ParsedExcelSheet[]> => {
+const parseExcelInWorker = async (file: File, deliveryPoints: DeliveryPoint[]): Promise<{ metadata: ExcelOrderMetadata; deliveries: OrderDelivery[] }> => {
   const buffer = await file.arrayBuffer();
   const worker = new Worker(new URL('../workers/excelOrderParser.worker.ts', import.meta.url), { type: 'module' });
 
   return new Promise((resolve, reject) => {
-    worker.onmessage = (event: MessageEvent<{ sheets?: ParsedExcelSheet[]; error?: string }>) => {
+    worker.onmessage = (event: MessageEvent<{ result?: { metadata: ExcelOrderMetadata; deliveries: OrderDelivery[] }; error?: string }>) => {
       worker.terminate();
       if (event.data.error) {
         reject(new Error(event.data.error));
         return;
       }
-      resolve(event.data.sheets || []);
+      if (!event.data.result) {
+        reject(new Error('A planilha não retornou dados para importação.'));
+        return;
+      }
+      resolve(event.data.result);
     };
     worker.onerror = event => {
       worker.terminate();
       reject(new Error(event.message || 'Não foi possível processar a planilha.'));
     };
-    worker.postMessage({ buffer }, [buffer]);
+    worker.postMessage({ buffer, deliveryPoints: deliveryPoints.map(({ id, code, name }) => ({ id, code, name })) }, [buffer]);
   });
-};
-
-const extractExcelOrderMetadata = (rows: unknown[][]): ExcelOrderMetadata => {
-  const metadata: ExcelOrderMetadata = {
-    deliveryDate: '',
-    consumptionPeriod: '',
-    categoryText: '',
-    generalNotes: '',
-  };
-
-  rows.slice(0, 20).forEach(row => {
-    row.forEach((cell, index) => {
-      const label = normalizeKey(cell).replace(/\s*:\s*$/, '');
-      const inlineValue = displayText(cell).includes(':') ? displayText(cell).split(':').slice(1).join(':').trim() : '';
-      const adjacentValue = row.slice(index + 1).find(value => displayText(value));
-      const value = inlineValue || adjacentValue;
-
-      if (label === 'DATA DE ENTREGA' && !metadata.deliveryDate) {
-        metadata.deliveryDate = parseExcelDateValue(value);
-      } else if (label === 'PERIODO DE CONSUMO' && !metadata.consumptionPeriod) {
-        metadata.consumptionPeriod = displayText(value);
-      } else if (label === 'CATEGORIA' && !metadata.categoryText) {
-        metadata.categoryText = displayText(value);
-        const normalizedCategory = normalizeKey(value);
-        metadata.category = DELIVERY_CATEGORIES.find(category => normalizeKey(category) === normalizedCategory);
-      } else if ((label === 'OBSERVACAO' || label === 'OBSERVACOES') && !metadata.generalNotes) {
-        metadata.generalNotes = displayText(value);
-      }
-    });
-  });
-
-  return metadata;
 };
 
 const buildSummary = (deliveries: OrderDelivery[]) => {
@@ -494,6 +411,8 @@ const Operations: React.FC = () => {
   });
   const [draftDeliveries, setDraftDeliveries] = useState<OrderDelivery[]>([]);
   const [editingDraftItem, setEditingDraftItem] = useState<{ deliveryPointId: string; itemIndex: number } | null>(null);
+  const draftItemFormRef = useRef<HTMLFormElement>(null);
+  const draftProductInputRef = useRef<HTMLInputElement>(null);
   const [importing, setImporting] = useState(false);
   const [selectedImportFile, setSelectedImportFile] = useState<File | null>(null);
   const [importInputKey, setImportInputKey] = useState(0);
@@ -890,6 +809,50 @@ const Operations: React.FC = () => {
     setSectorEditName('');
   };
 
+  const deleteSector = (sector: Sector) => {
+    const relatedPoints = deliveryPoints.filter(point => point.sectorId === sector.id);
+    const relatedPointIds = new Set(relatedPoints.map(point => point.id));
+    const relatedDeliveries = orders.reduce(
+      (total, order) => total + order.deliveries.filter(delivery => relatedPointIds.has(delivery.deliveryPointId)).length,
+      0
+    );
+    const affectedOrders = orders.filter(order => order.deliveries.some(delivery => relatedPointIds.has(delivery.deliveryPointId)));
+    const ordersToDelete = affectedOrders.filter(order => order.deliveries.every(delivery => relatedPointIds.has(delivery.deliveryPointId)));
+    const confirmed = window.confirm(
+      `Excluir o setor "${sector.name}"?\n\n` +
+      `Também serão excluídos ${relatedPoints.length} local(is) de entrega e ${relatedDeliveries} romaneio(s) vinculado(s).` +
+      (ordersToDelete.length > 0 ? ` ${ordersToDelete.length} pedido(s) sem outros romaneios também serão excluídos.` : '') +
+      '\n\nEsta ação não pode ser desfeita.'
+    );
+    if (!confirmed) return;
+
+    const nextOrders = orders
+      .map(order => ({
+        ...order,
+        deliveries: order.deliveries.filter(delivery => !relatedPointIds.has(delivery.deliveryPointId)),
+      }))
+      .filter(order => order.deliveries.length > 0);
+
+    persistSectors(sectors.filter(item => item.id !== sector.id));
+    persistDeliveryPoints(deliveryPoints.filter(point => point.sectorId !== sector.id));
+    if (relatedDeliveries > 0) persistOrders(nextOrders);
+
+    if (editingSectorId === sector.id) {
+      setEditingSectorId(null);
+      setSectorEditName('');
+    }
+    if (editingPointId && relatedPointIds.has(editingPointId)) setEditingPointId(null);
+    if (newPoint.sectorId === sector.id) {
+      const nextSector = operationSectors.find(item => item.id !== sector.id);
+      setNewPoint(current => ({ ...current, sectorId: nextSector?.id || '' }));
+    }
+    if (orderForm.deliveryPointId && relatedPointIds.has(orderForm.deliveryPointId)) {
+      const nextPoint = operationPoints.find(point => !relatedPointIds.has(point.id));
+      setOrderForm(current => ({ ...current, deliveryPointId: nextPoint?.id || '' }));
+    }
+    setDraftDeliveries(current => current.filter(delivery => !relatedPointIds.has(delivery.deliveryPointId)));
+  };
+
   const addDeliveryPoint = (event: React.FormEvent) => {
     event.preventDefault();
     if (!activeOperation || !displayText(newPoint.name) || !newPoint.sectorId) return;
@@ -1169,6 +1132,11 @@ const Operations: React.FC = () => {
       quantity: item.quantity,
       notes: item.notes || '',
     }));
+    requestAnimationFrame(() => {
+      draftItemFormRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      draftProductInputRef.current?.focus({ preventScroll: true });
+      draftProductInputRef.current?.select();
+    });
   };
 
   const cancelDraftItemEdit = () => {
@@ -1260,85 +1228,9 @@ const Operations: React.FC = () => {
     }));
   };
 
-  const parseUnitSheet = (sheetName: string, rows: unknown[][]): OrderDelivery | null => {
-    const headerRow = findHeaderRow(rows);
-    if (headerRow < 0) return null;
-    const headers = rows[headerRow].map(normalizeKey);
-    const productIndex = headers.findIndex(header => header === 'PRODUTO');
-    const unitIndex = headers.findIndex(header => ['UND', 'UNIDADE', 'EMBALAGEM'].includes(header));
-    const quantityIndex = headers.findIndex(header => ['QTD', 'QTDE', 'QUANTIDADE'].includes(header));
-    const notesIndex = headers.findIndex(header => header === 'OBS' || header === 'OBS.');
-    if (productIndex < 0 || quantityIndex < 0) return null;
-
-    const items = rows.slice(headerRow + 1).map(row => ({
-      product: displayText(row[productIndex]),
-      unit: displayText(unitIndex >= 0 ? row[unitIndex] : 'UN') || 'UN',
-      quantity: toNumber(row[quantityIndex]),
-      notes: displayText(notesIndex >= 0 ? row[notesIndex] : ''),
-    })).filter(item => item.product && item.quantity > 0);
-
-    if (items.length === 0) return null;
-    const deliveryLabel = extractDeliveryLabelFromRows(rows);
-    const sheetKey = normalizeKey(sheetName);
-    const matchedPoint = (deliveryLabel ? findDeliveryPointByLabel(deliveryLabel) : undefined) ||
-      findDeliveryPointByLabel(sheetName) ||
-      operationPoints.find(point => sheetKey.includes(normalizeKey(point.code)));
-    if (!matchedPoint && (operationPoints.length !== 1 || ignoredDeliveryHeaders.has(sheetKey))) return null;
-    return { id: makeId('delivery'), deliveryPointId: matchedPoint?.id || operationPoints[0].id, items: aggregateDeliveryItems(items) };
-  };
-
-  const parseMatrixSheet = (rows: unknown[][]): OrderDelivery[] => {
-    const headerRow = rows.findIndex(row =>
-      row.some(cell => normalizeKey(cell) === 'PRODUTO') &&
-      row.some(cell => ['EMBALAGEM', 'UND', 'UNIDADE'].includes(normalizeKey(cell)))
-    );
-    if (headerRow < 0) return [];
-    const headers = rows[headerRow];
-    const normalizedHeaders = headers.map(normalizeKey);
-    const productIndex = normalizedHeaders.findIndex(header => header === 'PRODUTO');
-    const unitIndex = normalizedHeaders.findIndex(header => ['EMBALAGEM', 'UND', 'UNIDADE'].includes(header));
-    if (productIndex < 0 || unitIndex < 0) return [];
-    return headers.map((header, index) => ({ header: displayText(header), index }))
-      .filter(col => {
-        if (col.index === productIndex || col.index === unitIndex || !col.header) return false;
-        if (findDeliveryPointByLabel(col.header)) return true;
-        return !ignoredDeliveryHeaders.has(normalizeKey(col.header));
-      })
-      .map(col => {
-        const matchedPoint = findDeliveryPointByLabel(col.header);
-        if (!matchedPoint) return null;
-        const items = rows.slice(headerRow + 1).map(row => ({
-          product: displayText(row[productIndex]),
-          unit: displayText(row[unitIndex]) || 'UN',
-          quantity: toNumber(row[col.index]),
-        })).filter(item => item.product && item.quantity > 0);
-        return items.length > 0 ? { id: makeId('delivery'), deliveryPointId: matchedPoint.id, items: aggregateDeliveryItems(items) } : null;
-      })
-      .filter((delivery): delivery is OrderDelivery => Boolean(delivery));
-  };
-
   const parseExcelOrder = async (file: File): Promise<OperationOrder> => {
     if (!activeOperation || operationPoints.length === 0) throw new Error('Cadastre ao menos um local de entrega antes de importar.');
-    const sheets = await parseExcelInWorker(file);
-    let metadata: ExcelOrderMetadata = { deliveryDate: '', consumptionPeriod: '', categoryText: '', generalNotes: '' };
-    const deliveries: OrderDelivery[] = [];
-
-    sheets.forEach(({ name: sheetName, rows }) => {
-      if (!rows.length) return;
-      const sheetMetadata = extractExcelOrderMetadata(rows);
-      metadata = {
-        deliveryDate: metadata.deliveryDate || sheetMetadata.deliveryDate,
-        consumptionPeriod: metadata.consumptionPeriod || sheetMetadata.consumptionPeriod,
-        category: metadata.category || sheetMetadata.category,
-        categoryText: metadata.categoryText || sheetMetadata.categoryText,
-        generalNotes: metadata.generalNotes || sheetMetadata.generalNotes,
-      };
-      const parsedUnit = parseUnitSheet(sheetName, rows);
-      if (parsedUnit) deliveries.push(parsedUnit);
-      if (!parsedUnit) deliveries.push(...parseMatrixSheet(rows));
-    });
-
-    const normalizedDeliveries = normalizeOrderDeliveries(deliveries);
+    const { metadata, deliveries: normalizedDeliveries } = await parseExcelInWorker(file, operationPoints);
     if (normalizedDeliveries.length === 0) {
       throw new Error('Não encontrei locais de entrega compatíveis com os locais cadastrados. Confira se as abas/colunas do Excel usam o mesmo nome ou código dos locais.');
     }
@@ -1670,25 +1562,6 @@ const Operations: React.FC = () => {
         });
       },
     } as any;
-  };
-
-  const findDeliveryPointByLabel = (label: string) => {
-    const labelKey = normalizeKey(label);
-    const simpleLabel = normalizeDeliveryLabel(label);
-    const exactMatch = operationPoints.find(point =>
-      normalizeKey(point.code) === labelKey ||
-      normalizeKey(point.name) === labelKey ||
-      normalizeDeliveryLabel(point.code) === simpleLabel ||
-      normalizeDeliveryLabel(point.name) === simpleLabel
-    );
-    if (exactMatch) return exactMatch;
-
-    return [...operationPoints]
-      .sort((a, b) => Math.max(normalizeDeliveryLabel(b.code).length, normalizeDeliveryLabel(b.name).length) - Math.max(normalizeDeliveryLabel(a.code).length, normalizeDeliveryLabel(a.name).length))
-      .find(point => {
-        const aliases = [normalizeDeliveryLabel(point.code), normalizeDeliveryLabel(point.name)].filter(alias => alias.length >= 5);
-        return aliases.some(alias => simpleLabel.includes(alias) || alias.includes(simpleLabel));
-      });
   };
 
   const getStockMap = () => {
@@ -3192,6 +3065,7 @@ const Operations: React.FC = () => {
                         <>
                           <span className="badge badge-blue" style={{ flex: 1, borderRadius: '0.5rem', padding: '0.65rem' }}>{sector.name}</span>
                           <button className="button button-outline" type="button" title="Editar setor" onClick={() => startEditSector(sector)} style={{ width: '38px', height: '38px', padding: 0 }}><Edit3 size={14} /></button>
+                          <button className="button button-outline" type="button" title="Excluir setor" aria-label={`Excluir setor ${sector.name}`} onClick={() => deleteSector(sector)} style={{ width: '38px', height: '38px', padding: 0, color: '#ef4444' }}><Trash2 size={14} /></button>
                         </>
                       )}
                     </div>
@@ -3336,7 +3210,7 @@ const Operations: React.FC = () => {
                 <input className="input-field" placeholder="Observação que será exibida em todos os PDFs deste pedido" value={orderForm.generalNotes} onChange={event => setOrderForm({ ...orderForm, generalNotes: event.target.value })} />
               </div>
             </div>
-            <form onSubmit={addDraftItem} style={{ display: 'grid', gridTemplateColumns: '1.2fr 1.5fr 0.5fr 0.5fr 1fr auto', gap: '0.75rem', alignItems: 'end' }}>
+            <form ref={draftItemFormRef} onSubmit={addDraftItem} style={{ display: 'grid', gridTemplateColumns: '1.2fr 1.5fr 0.5fr 0.5fr 1fr auto', gap: '0.75rem', alignItems: 'end' }}>
               <div>
                 <label>Local de entrega</label>
                 <select className="input-field" value={orderForm.deliveryPointId} onChange={event => setOrderForm({ ...orderForm, deliveryPointId: event.target.value })}>
@@ -3347,7 +3221,7 @@ const Operations: React.FC = () => {
                 <label>Produto</label>
                 <div style={{ position: 'relative' }}>
                   <Search size={14} style={{ position: 'absolute', left: '0.7rem', top: '1rem', color: 'var(--text-muted)' }} />
-                  <input className="input-field" list="operation-products" placeholder="Buscar ou cadastrar novo" style={{ paddingLeft: '2rem' }} value={orderForm.product} onChange={event => setOrderForm({ ...orderForm, product: event.target.value })} />
+                  <input ref={draftProductInputRef} className="input-field" list="operation-products" placeholder="Buscar ou cadastrar novo" style={{ paddingLeft: '2rem' }} value={orderForm.product} onChange={event => setOrderForm({ ...orderForm, product: event.target.value })} />
                   <datalist id="operation-products">
                     {products.map(product => <option key={product.id} value={product.name}>{product.unit}</option>)}
                   </datalist>
@@ -3366,8 +3240,8 @@ const Operations: React.FC = () => {
                 <input className="input-field" value={orderForm.notes} onChange={event => setOrderForm({ ...orderForm, notes: event.target.value })} />
               </div>
               <div style={{ display: 'flex', gap: '0.4rem' }}>
-                <button className="button" type="submit" style={{ width: '44px', height: '42px', padding: 0 }} title={editingDraftItem ? 'Salvar item' : 'Adicionar item'}>
-                  {editingDraftItem ? <Save size={18} /> : <Plus size={18} />}
+                <button className="button" type="submit" style={{ width: editingDraftItem ? 'auto' : '44px', minWidth: '44px', height: '42px', padding: editingDraftItem ? '0 0.85rem' : 0 }} title={editingDraftItem ? 'Salvar item' : 'Adicionar item'}>
+                  {editingDraftItem ? <><Save size={18} style={{ marginRight: '0.35rem' }} /> Salvar</> : <Plus size={18} />}
                 </button>
                 {editingDraftItem && (
                   <button className="button button-outline" type="button" style={{ width: '44px', height: '42px', padding: 0 }} title="Cancelar edição do item" onClick={cancelDraftItemEdit}>
