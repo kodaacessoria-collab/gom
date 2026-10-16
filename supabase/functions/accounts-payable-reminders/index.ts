@@ -2,7 +2,7 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 
 const TIME_ZONE = 'America/Sao_Paulo';
 const DEFAULT_DESTINATION = '5514998688551';
-const EXPECTED_SENDER = '5514988349792';
+const EXPECTED_SENDER = '5514988359798';
 const REMINDER_DAYS = [0, 1, 2] as const;
 
 const normalizePhone = (value: string) => value.replace(/\D/g, '');
