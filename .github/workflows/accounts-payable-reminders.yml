@@ -2,6 +2,7 @@ name: Lembretes de contas a pagar
 
 on:
   schedule:
+    # 08:00 em Brasilia (GitHub Actions usa UTC).
     - cron: '0 11 * * *'
   workflow_dispatch:
 
@@ -11,8 +12,9 @@ jobs:
     steps:
       - name: Enviar lembretes pelo WhatsApp
         run: |
-          curl --fail-with-body --request POST \
+          curl --fail-with-body --retry 3 --retry-all-errors --request POST \
             "${{ secrets.SUPABASE_URL }}/functions/v1/accounts-payable-reminders" \
             --header "Authorization: Bearer ${{ secrets.SUPABASE_ANON_KEY }}" \
+            --header "apikey: ${{ secrets.SUPABASE_ANON_KEY }}" \
             --header "Content-Type: application/json" \
             --data '{}'
