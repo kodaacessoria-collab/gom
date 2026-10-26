@@ -1,3 +1,4 @@
+import { deliveryDateInRange, isDeliveryMonth } from '../lib/deliveryDate';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ArrowDown,
@@ -405,6 +406,7 @@ const Operations: React.FC = () => {
   const [editingPointId, setEditingPointId] = useState<string | null>(null);
   const [pointEditForm, setPointEditForm] = useState({ sectorId: '', code: '', name: '', address: '', neighborhood: '' });
   const [editingOrderId, setEditingOrderId] = useState<string | null>(null);
+  const [monthlyDelivery, setMonthlyDelivery] = useState(false);
   const [orderForm, setOrderForm] = useState({
     category: 'Estocáveis' as DeliveryCategory,
     deliveryDate: todayIso(),
@@ -569,8 +571,7 @@ const Operations: React.FC = () => {
 
   const matchesBasketReportFilters = (order: OperationOrder) =>
     (reportCategory === 'Todas' || order.category === reportCategory) &&
-    (!reportStartDate || order.deliveryDate >= reportStartDate) &&
-    (!reportEndDate || order.deliveryDate <= reportEndDate);
+    deliveryDateInRange(order.deliveryDate, reportStartDate, reportEndDate);
 
   const appendBasketReportComposition = (doc: jsPDF, reportOrders: OperationOrder[]) => {
     if (!reportOrders.some(order => isMaceioBasicBasket(operations.find(operation => operation.id === order.operationId), order))) return;
@@ -657,7 +658,7 @@ const Operations: React.FC = () => {
             product_id: product.id,
             quantity,
             type: 'SAIDA',
-            date: order.deliveryDate,
+            date: isDeliveryMonth(order.deliveryDate) ? todayIso() : order.deliveryDate,
             category: product.category,
             unit: product.unit,
             destination: `${stockMovementPrefix(order.id)}${delivery.id}`,
@@ -673,7 +674,7 @@ const Operations: React.FC = () => {
             product_id: product.id,
             quantity: remaining,
             type: 'SAIDA',
-            date: order.deliveryDate,
+            date: isDeliveryMonth(order.deliveryDate) ? todayIso() : order.deliveryDate,
             category: product.category,
             unit: product.unit,
             destination: `${stockMovementPrefix(order.id)}${delivery.id}`,
@@ -1034,6 +1035,7 @@ const Operations: React.FC = () => {
     setActiveModule('order-entry');
     setEditingOrderId(order.id);
     setEditingDraftItem(null);
+    setMonthlyDelivery(isDeliveryMonth(order.deliveryDate));
     setOrderForm(prev => ({
       ...prev,
       category: order.category,
@@ -1254,7 +1256,7 @@ const Operations: React.FC = () => {
       throw new Error('Não foi possível identificar entregas com quantidade positiva nesta planilha. Confira as colunas de produto, unidade e quantidade e o nome ou código do local no cabeçalho, na aba ou nas colunas. O endereço do local é opcional.');
     }
     if (!metadata.deliveryDate) {
-      throw new Error('Não encontrei uma Data de Entrega válida no cabeçalho do Excel. Use o campo “Data de Entrega:” conforme o modelo.');
+      throw new Error('Não encontrei uma data ou mês de entrega válido no cabeçalho do Excel. Informe “Data de Entrega” (DD/MM/AAAA) ou “Mês/Ano” (MM/AAAA).');
     }
     if (!metadata.category) {
       const receivedCategory = metadata.categoryText ? ` Valor encontrado: “${metadata.categoryText}”.` : '';
@@ -2050,8 +2052,7 @@ const Operations: React.FC = () => {
   const periodReport = useMemo(() => {
     const filteredOrders = operationOrders.filter(order =>
       (reportCategory === 'Todas' || order.category === reportCategory) &&
-      (!reportStartDate || order.deliveryDate >= reportStartDate) &&
-      (!reportEndDate || order.deliveryDate <= reportEndDate)
+      deliveryDateInRange(order.deliveryDate, reportStartDate, reportEndDate)
     );
     const productMap = new Map<string, { product: string; unit: string; quantities: Record<string, number>; total: number }>();
     const matchedOrderIds = new Set<string>();
@@ -2109,8 +2110,7 @@ const Operations: React.FC = () => {
     const reportOrders = operationOrders
       .filter(order =>
         (reportCategory === 'Todas' || order.category === reportCategory) &&
-        (!reportStartDate || order.deliveryDate >= reportStartDate) &&
-        (!reportEndDate || order.deliveryDate <= reportEndDate)
+        deliveryDateInRange(order.deliveryDate, reportStartDate, reportEndDate)
       )
       .sort((a, b) => a.deliveryDate.localeCompare(b.deliveryDate) || a.importedAt.localeCompare(b.importedAt));
     const productMap = new Map<string, { product: string; unit: string; quantities: Record<string, number>; total: number }>();
@@ -2253,8 +2253,7 @@ const Operations: React.FC = () => {
     const filteredOrders = orders.filter(order =>
       (purchaseOperationIds.length === 0 || purchaseOperationIds.includes(order.operationId)) &&
       (reportCategory === 'Todas' || order.category === reportCategory) &&
-      (!reportStartDate || order.deliveryDate >= reportStartDate) &&
-      (!reportEndDate || order.deliveryDate <= reportEndDate)
+      deliveryDateInRange(order.deliveryDate, reportStartDate, reportEndDate)
     );
     const productMap = new Map<string, { product: string; unit: string; quantity: number }>();
     filteredOrders.forEach(order => {
@@ -2341,8 +2340,7 @@ const Operations: React.FC = () => {
 
   const billingOrders = useMemo(() => operationOrders.filter(order =>
     (reportCategory === 'Todas' || order.category === reportCategory) &&
-    (!reportStartDate || order.deliveryDate >= reportStartDate) &&
-    (!reportEndDate || order.deliveryDate <= reportEndDate)
+    deliveryDateInRange(order.deliveryDate, reportStartDate, reportEndDate)
   ), [operationOrders, reportCategory, reportStartDate, reportEndDate]);
   const billingOrder = billingOrders.find(order => order.id === billingOrderId);
   const billingScopeLabel = billingOrderId
@@ -2634,8 +2632,7 @@ const Operations: React.FC = () => {
     const rows = operationOrders
       .filter(order =>
         (reportCategory === 'Todas' || order.category === reportCategory) &&
-        (!reportStartDate || order.deliveryDate >= reportStartDate) &&
-        (!reportEndDate || order.deliveryDate <= reportEndDate)
+        deliveryDateInRange(order.deliveryDate, reportStartDate, reportEndDate)
       )
       .map(order => {
         const summary = buildSummary(order.deliveries);
@@ -2741,8 +2738,7 @@ const Operations: React.FC = () => {
       .filter(order =>
         (summaryOperationIds.length === 0 || summaryOperationIds.includes(order.operationId)) &&
         (reportCategory === 'Todas' || order.category === reportCategory) &&
-        (!reportStartDate || order.deliveryDate >= reportStartDate) &&
-        (!reportEndDate || order.deliveryDate <= reportEndDate)
+        deliveryDateInRange(order.deliveryDate, reportStartDate, reportEndDate)
       )
       .forEach(order => {
         const operation = operations.find(item => item.id === order.operationId);
@@ -3233,8 +3229,16 @@ const Operations: React.FC = () => {
                 </select>
               </div>
               <div>
-                <label>Data para entrega</label>
-                <input type="date" className="input-field" value={orderForm.deliveryDate} onChange={event => setOrderForm({ ...orderForm, deliveryDate: event.target.value })} />
+                <label>Previsão de entrega</label>
+                <select aria-label="Precisão da entrega" className="input-field" value={monthlyDelivery ? 'month' : 'date'} onChange={event => {
+                  const monthly = event.target.value === 'month';
+                  setMonthlyDelivery(monthly);
+                  setOrderForm({ ...orderForm, deliveryDate: monthly ? (orderForm.deliveryDate || todayIso()).slice(0, 7) : isDeliveryMonth(orderForm.deliveryDate) ? `${orderForm.deliveryDate}-01` : orderForm.deliveryDate });
+                }}>
+                  <option value="date">Dia específico</option>
+                  <option value="month">Mês/ano — sem dia definido</option>
+                </select>
+                <input type={monthlyDelivery ? "month" : "date"} aria-label="Entrega prevista" className="input-field" value={orderForm.deliveryDate} onChange={event => setOrderForm({ ...orderForm, deliveryDate: event.target.value })} />
               </div>
               <div style={{ gridColumn: 'span 2' }}>
                 <label>Período de consumo</label>

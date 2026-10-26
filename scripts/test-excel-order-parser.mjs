@@ -47,3 +47,29 @@ assert.equal(ambiguous.deliveries.length, 0);
 const zero = parse([...metadata, ['PRODUTO', 'UND', 'QTD'], ['ARROZ', 'KG', 0]], '001');
 assert.equal(zero.deliveries.length, 0);
 console.log('OK: locais sem endereço, cabeçalhos, códigos numéricos, nomes, matriz, metadados e identificação sem ambiguidades.');
+
+for (const value of ['10/2026', '2026-10', 'out/2026', 'Outubro de 2026']) {
+  const result = parse([['Mês/Ano', value], ['Categoria', 'CESTA BASICA'], ['Local', '001'], ['PRODUTO', 'UN', 'QTD'], ['CESTA BASICA', 'UN', 10]]);
+  assert.equal(result.metadata.deliveryDate, '2026-10', value);
+}
+// Excel date serial displayed as month/year must retain monthly precision.
+{
+  const workbook = XLSX.utils.book_new();
+  const sheet = XLSX.utils.aoa_to_sheet([['Data de Entrega', 46311], ['Local', '001'], ['PRODUTO', 'UN', 'QTD'], ['CESTA BASICA', 'UN', 10]]);
+  sheet.B1.z = 'mm/yyyy';
+  XLSX.utils.book_append_sheet(workbook, sheet, 'Planilha1');
+  self.onmessage({ data: { buffer: XLSX.write(workbook, { type: 'array', bookType: 'xlsx' }), deliveryPoints: points } });
+  assert.equal(response.result.metadata.deliveryDate, '2026-10');
+}
+const { parseDeliveryDate, deliveryDateInRange } = await import('../src/lib/deliveryDate.ts');
+assert.equal(parseDeliveryDate('26/10/2026'), '2026-10-26');
+assert.equal(parseDeliveryDate('31/02/2026'), '');
+assert.equal(parseDeliveryDate('13/2026'), '');
+assert.equal(parseDeliveryDate('29/02/2028'), '2028-02-29');
+assert(deliveryDateInRange('2026-10', '2026-10-15', '2026-10-20'));
+assert(deliveryDateInRange('2026-10', '2026-10-01', '2026-10-26'));
+assert(!deliveryDateInRange('2026-10', '2026-11-01', '2026-11-30'));
+assert(!deliveryDateInRange('2026-10', '2026-09-01', '2026-09-30'));
+assert(deliveryDateInRange('2028-02', '2028-02-29', '2028-02-29'));
+assert(!deliveryDateInRange('2026-10-26', '2026-10-01', '2026-10-25'));
+console.log('OK: mês/ano em texto e Excel, datas completas, validação e filtros por sobreposição.');

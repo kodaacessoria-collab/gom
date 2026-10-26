@@ -1,4 +1,5 @@
 import * as XLSX from 'xlsx';
+import { parseDeliveryDate } from '../lib/deliveryDate.ts';
 
 type DeliveryCategory = 'Hortifrutigranjeiro' | 'Estocáveis' | 'Dietas e Fórmulas' | 'Proteínas' | 'Limpeza' | 'CESTA BASICA';
 interface DeliveryPointInput { id: string; code: string; name: string }
@@ -78,10 +79,7 @@ const parseDate = (value: unknown) => {
     const parsed = XLSX.SSF.parse_date_code(value);
     if (parsed) return `${parsed.y}-${String(parsed.m).padStart(2, '0')}-${String(parsed.d).padStart(2, '0')}`;
   }
-  const text = displayText(value);
-  if (/^\d{4}-\d{2}-\d{2}/.test(text)) return text.slice(0, 10);
-  const match = text.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{4})$/);
-  return match ? `${match[3]}-${match[2].padStart(2, '0')}-${match[1].padStart(2, '0')}` : '';
+  return parseDeliveryDate(displayText(value));
 };
 
 const extractMetadata = (rows: unknown[][]): ExcelOrderMetadata => {
@@ -90,7 +88,10 @@ const extractMetadata = (rows: unknown[][]): ExcelOrderMetadata => {
     const label = normalizeKey(cell).split(':')[0].trim();
     const text = displayText(cell);
     const value = (text.includes(':') ? text.split(':').slice(1).join(':').trim() : '') || row.slice(index + 1).find(candidate => displayText(candidate));
-    if (label === 'DATA DE ENTREGA' && !result.deliveryDate) result.deliveryDate = parseDate(value);
+    if (['DATA DE ENTREGA', 'MES/ANO', 'MES ANO', 'MES DE ENTREGA', 'MES/ANO DE ENTREGA'].includes(label) && !result.deliveryDate) {
+      const date = parseDate(value);
+      result.deliveryDate = label === 'DATA DE ENTREGA' ? date : date.slice(0, 7);
+    }
     else if (label === 'PERIODO DE CONSUMO' && !result.consumptionPeriod) result.consumptionPeriod = displayText(value);
     else if (label === 'CATEGORIA' && !result.categoryText) {
       result.categoryText = displayText(value);
@@ -153,11 +154,21 @@ const parseMatrixSheet = (rows: unknown[][], points: DeliveryPointInput[]) => {
 const workerScope = self as unknown as { onmessage: ((event: MessageEvent<ParseExcelRequest>) => void) | null; postMessage: (message: ParseExcelResponse) => void };
 workerScope.onmessage = event => {
   try {
-    const workbook = XLSX.read(event.data.buffer, { type: 'array', cellDates: true });
+    const workbook = XLSX.read(event.data.buffer, { type: 'array', cellDates: true, cellNF: true });
     let metadata: ExcelOrderMetadata = { deliveryDate: '', consumptionPeriod: '', categoryText: '', generalNotes: '' };
     const deliveries: ParsedDelivery[] = [];
     workbook.SheetNames.forEach(sheetName => {
-      const rows = XLSX.utils.sheet_to_json(workbook.Sheets[sheetName], { header: 1, defval: '', blankrows: false }) as unknown[][];
+      const worksheet = workbook.Sheets[sheetName];
+      // Keep month precision when Excel stores a date with a month/year display format.
+      Object.entries(worksheet).forEach(([key, cell]) => {
+        if (key.startsWith('!') || !cell || !cell.z) return;
+        const dateFormat = String(cell.z).replace(/"[^"]*"|\\.|\[[^\]]*\]/g, '');
+        if (/m/i.test(dateFormat) && /y/i.test(dateFormat) && !/d/i.test(dateFormat)) {
+          const month = parseDeliveryDate(XLSX.utils.format_cell(cell));
+          if (month) worksheet[key] = { t: 's', v: month };
+        }
+      });
+      const rows = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: '', blankrows: false }) as unknown[][];
       if (!rows.length) return;
       const sheet = extractMetadata(rows);
       metadata = { deliveryDate: metadata.deliveryDate || sheet.deliveryDate, consumptionPeriod: metadata.consumptionPeriod || sheet.consumptionPeriod, category: metadata.category || sheet.category, categoryText: metadata.categoryText || sheet.categoryText, generalNotes: metadata.generalNotes || sheet.generalNotes };

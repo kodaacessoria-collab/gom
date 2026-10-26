@@ -17,7 +17,7 @@ const OPERATIONS_KEY = 'gom_delivery_operations';
 const ORDERS_KEY = 'gom_delivery_operation_orders';
 const currency = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' });
 const formatDate = (value?: string | null) => value
-  ? new Date(`${value.slice(0, 10)}T12:00:00`).toLocaleDateString('pt-BR')
+  ? /^\d{4}-\d{2}$/.test(value) ? value.split('-').reverse().join('/') : new Date(`${value.slice(0, 10)}T12:00:00`).toLocaleDateString('pt-BR')
   : '-';
 
 const readLocalState = <T,>(key: string, fallback: T): T => {
