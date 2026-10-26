@@ -2378,15 +2378,12 @@ const Operations: React.FC = () => {
       ['Seleção', billingScopeLabel],
       ['Pedidos considerados', productsByDateReport.orderCount, 'Entregas somadas', productsByDateReport.deliveryCount],
       [],
-      ['Produto entregue', 'UND', 'Quantidade', 'Preço de custo', 'Total do custo', 'Margem venda', 'Preço de venda', 'Total da venda'],
+      ['Produto entregue', 'UND', 'Quantidade', 'Preço de custo', 'Preço de venda', 'Total da venda'],
       ...productsByDateReport.rows.map(row => {
         const price = productPrices[stockKey(row.product, row.unit)] || { costPrice: 0, salePrice: 0 };
-        const margin = price.salePrice > 0 ? ((price.salePrice - price.costPrice) / price.salePrice) * 100 : 0;
-        return [row.product, row.unit, row.total, price.costPrice, row.total * price.costPrice, margin / 100, price.salePrice, row.total * price.salePrice];
+        return [row.product, row.unit, row.total, price.costPrice, price.salePrice, row.total * price.salePrice];
       }),
-      ['TOTAL GERAL', '', productsByDateReport.grandTotal, '',
-        productsByDateReport.rows.reduce((sum, row) => sum + row.total * (productPrices[stockKey(row.product, row.unit)]?.costPrice || 0), 0),
-        '', '',
+      ['TOTAL GERAL', '', productsByDateReport.grandTotal, '', '',
         productsByDateReport.rows.reduce((sum, row) => sum + row.total * (productPrices[stockKey(row.product, row.unit)]?.salePrice || 0), 0)],
     ];
     const workbook = XLSX.utils.book_new();
@@ -2395,18 +2392,16 @@ const Operations: React.FC = () => {
     const firstDataRowIndex = headerRowIndex + 1;
     const totalRowIndex = data.length - 1;
     for (let row = firstDataRowIndex; row <= totalRowIndex; row += 1) {
-      [3, 4, 6, 7].forEach(column => {
+      [3, 4, 5].forEach(column => {
         const cell = sheet[XLSX.utils.encode_cell({ r: row, c: column })];
         if (cell) cell.z = 'R$ #,##0.00';
       });
-      const marginCell = sheet[XLSX.utils.encode_cell({ r: row, c: 5 })];
-      if (marginCell) marginCell.z = '0.00%';
     }
     sheet['!cols'] = [
       { wch: 42 },
-      { wch: 12 }, { wch: 14 }, { wch: 18 }, { wch: 18 }, { wch: 16 }, { wch: 18 }, { wch: 18 },
+      { wch: 12 }, { wch: 14 }, { wch: 18 }, { wch: 18 }, { wch: 18 },
     ];
-    sheet['!autofilter'] = { ref: XLSX.utils.encode_range({ s: { r: headerRowIndex, c: 0 }, e: { r: totalRowIndex - 1, c: 7 } }) };
+    sheet['!autofilter'] = { ref: XLSX.utils.encode_range({ s: { r: headerRowIndex, c: 0 }, e: { r: totalRowIndex - 1, c: 5 } }) };
     sheet['!pageSetup'] = { orientation: 'landscape', fitToWidth: 1, fitToHeight: 0 };
     sheet['!margins'] = { left: 0.15, right: 0.15, top: 0.25, bottom: 0.25, header: 0.1, footer: 0.1 };
     XLSX.utils.book_append_sheet(workbook, sheet, 'Faturamento');
@@ -2429,34 +2424,30 @@ const Operations: React.FC = () => {
     const letterheadTitle = `RELATORIO DOS PRODUTOS ENTREGUES - ${getOperationTitle(activeOperation).toUpperCase()}`;
     const letterheadSubtitle = `Categoria: ${categoryLabel} | ${billingScopeLabel}`;
     const columnStyles: Record<number, any> = {
-      0: { cellWidth: 70 }, 1: { cellWidth: 16, halign: 'center' }, 2: { cellWidth: 22, halign: 'right' },
-      3: { cellWidth: 30, halign: 'right' }, 4: { cellWidth: 30, halign: 'right' }, 5: { cellWidth: 25, halign: 'right' },
-      6: { cellWidth: 30, halign: 'right' }, 7: { cellWidth: 30, halign: 'right' },
+      0: { cellWidth: 110 }, 1: { cellWidth: 22, halign: 'center' }, 2: { cellWidth: 31, halign: 'right' },
+      3: { cellWidth: 42, halign: 'right' }, 4: { cellWidth: 42, halign: 'right' }, 5: { cellWidth: 42, halign: 'right' },
     };
     const body: (string | number)[][] = productsByDateReport.rows.map(row => [
       row.product,
       row.unit,
       formatQuantity(row.total),
       formatCurrency(productPrices[stockKey(row.product, row.unit)]?.costPrice || 0),
-      formatCurrency(row.total * (productPrices[stockKey(row.product, row.unit)]?.costPrice || 0)),
-      `${((productPrices[stockKey(row.product, row.unit)]?.salePrice || 0) > 0 ? (((productPrices[stockKey(row.product, row.unit)]?.salePrice || 0) - (productPrices[stockKey(row.product, row.unit)]?.costPrice || 0)) / (productPrices[stockKey(row.product, row.unit)]?.salePrice || 1)) * 100 : 0).toLocaleString('pt-BR', { maximumFractionDigits: 2 })}%`,
       formatCurrency(productPrices[stockKey(row.product, row.unit)]?.salePrice || 0),
       formatCurrency(row.total * (productPrices[stockKey(row.product, row.unit)]?.salePrice || 0)),
     ]);
-    const totalCost = productsByDateReport.rows.reduce((sum, row) => sum + row.total * (productPrices[stockKey(row.product, row.unit)]?.costPrice || 0), 0);
     const totalSale = productsByDateReport.rows.reduce((sum, row) => sum + row.total * (productPrices[stockKey(row.product, row.unit)]?.salePrice || 0), 0);
     const grandTotalRow = body.length;
     body.push([
       'TOTAL GERAL',
       '',
       formatQuantity(productsByDateReport.grandTotal),
-      '', formatCurrency(totalCost), totalSale > 0 ? `${(((totalSale - totalCost) / totalSale) * 100).toLocaleString('pt-BR', { maximumFractionDigits: 2 })}%` : '0%', '', formatCurrency(totalSale),
+      '', '', formatCurrency(totalSale),
     ]);
 
     autoTable(doc, {
       startY: 55,
       margin: { top: 48, right: 4, bottom: 10, left: 4 },
-      head: [['Produto entregue', 'UND', 'Quantidade', 'Preço custo', 'Total custo', 'Margem venda', 'Preço venda', 'Total venda']],
+      head: [['Produto entregue', 'UND', 'Quantidade', 'Preço custo', 'Preço venda', 'Total venda']],
       body,
       theme: 'grid',
       styles: { font: 'helvetica', fontSize: 7.7, cellPadding: 1.1, overflow: 'linebreak', valign: 'middle' },
@@ -3909,7 +3900,7 @@ const Operations: React.FC = () => {
             <div className="view-header" style={{ marginBottom: '1rem', gap: '1rem' }}>
               <div>
                 <h2 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}><FileSpreadsheet size={20} /> Faturamento dos produtos entregues</h2>
-                <p style={{ textAlign: 'left', marginBottom: 0 }}>Selecione um romaneio individual ou some as entregas do período para calcular custos, vendas e margem.</p>
+                <p style={{ textAlign: 'left', marginBottom: 0 }}>Selecione um romaneio individual ou some as entregas do período para consultar preços de custo, preços de venda e faturamento.</p>
               </div>
             </div>
             <div className="period-report-filters">
@@ -3958,7 +3949,7 @@ const Operations: React.FC = () => {
             <div style={{ overflowX: 'auto', marginTop: '1rem' }}>
               <table className="data-table">
                 <thead>
-                  <tr><th>Produto entregue</th><th>UND</th><th>Quantidade</th><th>Preço de custo</th><th>Total do custo</th><th>Margem venda</th><th>Preço de venda</th><th>Total da venda</th></tr>
+                  <tr><th>Produto entregue</th><th>UND</th><th>Quantidade</th><th>Preço de custo</th><th>Preço de venda</th><th>Total da venda</th></tr>
                 </thead>
                 <tbody>
                   {productsByDateReport.rows.map(row => (
@@ -3967,21 +3958,17 @@ const Operations: React.FC = () => {
                       <td>{row.unit}</td>
                       <td style={{ fontWeight: 700 }}>{formatQuantity(row.total)}</td>
                       <td><input aria-label={`Preço de custo de ${row.product}`} className="input-field" type="number" min="0" step="0.01" style={{ minWidth: 120, margin: 0 }} value={productPrices[stockKey(row.product, row.unit)]?.costPrice || ''} onChange={event => persistProductPrice(stockKey(row.product, row.unit), 'costPrice', event.target.value)} placeholder="0,00" /></td>
-                      <td>{formatCurrency(row.total * (productPrices[stockKey(row.product, row.unit)]?.costPrice || 0))}</td>
-                      <td>{((productPrices[stockKey(row.product, row.unit)]?.salePrice || 0) > 0 ? (((productPrices[stockKey(row.product, row.unit)]?.salePrice || 0) - (productPrices[stockKey(row.product, row.unit)]?.costPrice || 0)) / (productPrices[stockKey(row.product, row.unit)]?.salePrice || 1)) * 100 : 0).toLocaleString('pt-BR', { maximumFractionDigits: 2 })}%</td>
                       <td><input aria-label={`Preço de venda de ${row.product}`} className="input-field" type="number" min="0" step="0.01" style={{ minWidth: 120, margin: 0 }} value={productPrices[stockKey(row.product, row.unit)]?.salePrice || ''} onChange={event => persistProductPrice(stockKey(row.product, row.unit), 'salePrice', event.target.value)} placeholder="0,00" /></td>
                       <td style={{ fontWeight: 700 }}>{formatCurrency(row.total * (productPrices[stockKey(row.product, row.unit)]?.salePrice || 0))}</td>
                     </tr>
                   ))}
                   {productsByDateReport.rows.length > 0 && (
                     <tr style={{ background: '#eff6ff', fontWeight: 800 }}>
-                      <td>Total geral</td><td></td><td>{formatQuantity(productsByDateReport.grandTotal)}</td><td></td>
-                      <td>{formatCurrency(productsByDateReport.rows.reduce((sum, row) => sum + row.total * (productPrices[stockKey(row.product, row.unit)]?.costPrice || 0), 0))}</td>
-                      <td>{(() => { const cost = productsByDateReport.rows.reduce((sum, row) => sum + row.total * (productPrices[stockKey(row.product, row.unit)]?.costPrice || 0), 0); const sale = productsByDateReport.rows.reduce((sum, row) => sum + row.total * (productPrices[stockKey(row.product, row.unit)]?.salePrice || 0), 0); return sale > 0 ? `${(((sale - cost) / sale) * 100).toLocaleString('pt-BR', { maximumFractionDigits: 2 })}%` : '0%'; })()}</td><td></td>
+                      <td>Total geral</td><td></td><td>{formatQuantity(productsByDateReport.grandTotal)}</td><td></td><td></td>
                       <td>{formatCurrency(productsByDateReport.rows.reduce((sum, row) => sum + row.total * (productPrices[stockKey(row.product, row.unit)]?.salePrice || 0), 0))}</td>
                     </tr>
                   )}
-                  {productsByDateReport.rows.length === 0 && <tr><td colSpan={8} style={{ textAlign: 'center', padding: '2rem' }}>Nenhuma entrega encontrada para os filtros selecionados.</td></tr>}
+                  {productsByDateReport.rows.length === 0 && <tr><td colSpan={6} style={{ textAlign: 'center', padding: '2rem' }}>Nenhuma entrega encontrada para os filtros selecionados.</td></tr>}
                 </tbody>
               </table>
             </div>
