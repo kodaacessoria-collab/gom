@@ -1,6 +1,6 @@
 import * as XLSX from 'xlsx';
 
-type DeliveryCategory = 'Hortifrutigranjeiro' | 'Estocáveis' | 'Dietas e Fórmulas' | 'Proteínas' | 'Limpeza';
+type DeliveryCategory = 'Hortifrutigranjeiro' | 'Estocáveis' | 'Dietas e Fórmulas' | 'Proteínas' | 'Limpeza' | 'CESTA BASICA';
 interface DeliveryPointInput { id: string; code: string; name: string }
 interface DeliveryItem { product: string; unit: string; quantity: number; notes?: string }
 interface ParsedDelivery { id: string; deliveryPointId: string; items: DeliveryItem[] }
@@ -8,7 +8,7 @@ interface ExcelOrderMetadata { deliveryDate: string; consumptionPeriod: string; 
 interface ParseExcelRequest { buffer: ArrayBuffer; deliveryPoints: DeliveryPointInput[] }
 interface ParseExcelResponse { result?: { metadata: ExcelOrderMetadata; deliveries: ParsedDelivery[] }; error?: string }
 
-const CATEGORIES: DeliveryCategory[] = ['Hortifrutigranjeiro', 'Estocáveis', 'Dietas e Fórmulas', 'Proteínas', 'Limpeza'];
+const CATEGORIES: DeliveryCategory[] = ['Hortifrutigranjeiro', 'Estocáveis', 'Dietas e Fórmulas', 'Proteínas', 'Limpeza', 'CESTA BASICA'];
 const normalizeText = (value: unknown) => String(value ?? '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/\s+/g, ' ').trim();
 const displayText = (value: unknown) => String(value ?? '').replace(/\s+/g, ' ').trim();
 const normalizeKey = (value: unknown) => normalizeText(value).toUpperCase();

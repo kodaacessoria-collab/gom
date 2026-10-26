@@ -37,8 +37,12 @@ import type { OperationPdfFolder } from '../lib/operationPdfFolders';
 
 GlobalWorkerOptions.workerSrc = new URL('pdfjs-dist/build/pdf.worker.mjs', import.meta.url).toString();
 
+import { addBasicBasketComposition, isMaceioBasicBasket } from '../lib/basicBasket';
+
+const basketDocuments = new WeakSet<jsPDF>();
+
 type SourceType = 'Manual' | 'Excel' | 'PDF';
-type DeliveryCategory = 'Hortifrutigranjeiro' | 'Estocáveis' | 'Dietas e Fórmulas' | 'Proteínas' | 'Limpeza';
+type DeliveryCategory = 'Hortifrutigranjeiro' | 'Estocáveis' | 'Dietas e Fórmulas' | 'Proteínas' | 'Limpeza' | 'CESTA BASICA';
 type OperationsModule = 'operations' | 'locations' | 'order-entry' | 'orders' | 'history' | 'orders-summary-report' | 'deliveries-summary-report' | 'period-report' | 'romaneio-products-report' | 'purchase-period-report' | 'products-by-date-report';
 
 interface OperationContract {
@@ -142,7 +146,7 @@ const saveSharedState = (key: SharedStateKey, value: unknown) => {
 };
 const REPORT_FONT = 'courier';
 const REPORT_FONT_SIZE = 11;
-const DELIVERY_CATEGORIES: DeliveryCategory[] = ['Hortifrutigranjeiro', 'Estocáveis', 'Dietas e Fórmulas', 'Proteínas', 'Limpeza'];
+const DELIVERY_CATEGORIES: DeliveryCategory[] = ['Hortifrutigranjeiro', 'Estocáveis', 'Dietas e Fórmulas', 'Proteínas', 'Limpeza', 'CESTA BASICA'];
 const DEFAULT_LOGO_VARIANT: PdfLogoVariant = 'gom';
 const LOGO_OPTIONS: { value: PdfLogoVariant; label: string }[] = [
   { value: 'gom', label: 'Logo LM' },
@@ -299,6 +303,8 @@ const getPdfHeader = (operation: OperationContract, order: OperationOrder) =>
   `ROMANEIO - ${order.category.toUpperCase()} - ${getOperationTitle(operation).toUpperCase()} - ${formatDate(order.deliveryDate)}`;
 
 const addHeader = async (doc: jsPDF, operation: OperationContract, order: OperationOrder, subtitle?: string) => {
+  if (isMaceioBasicBasket(operation, order)) basketDocuments.add(doc);
+  else basketDocuments.delete(doc);
   const details = [
     operation.bidNumber ? `Ata: ${operation.bidNumber}` : '',
     operation.supplyAuthorization ? `Autorizacao: ${operation.supplyAuthorization}` : '',
@@ -328,13 +334,14 @@ const addOrderGeneralNotes = (doc: jsPDF, order: OperationOrder, startY = 39) =>
   doc.setFontSize(REPORT_FONT_SIZE);
   doc.text(`Controle: ${getOrderControlNumber(order.importedAt)}`, 14, startY);
   startY += 7;
-  if (!notes) return startY;
+  if (!notes) return basketDocuments.has(doc) ? addBasicBasketComposition(doc, startY) : startY;
 
   const lines = doc.splitTextToSize(`Observacao geral: ${notes}`, 182);
   doc.setFont(REPORT_FONT, 'normal');
   doc.setFontSize(REPORT_FONT_SIZE);
   doc.text(lines, 14, startY);
-  return startY + (lines.length * 4) + 6;
+  const endY = startY + (lines.length * 4) + 6;
+  return basketDocuments.has(doc) ? addBasicBasketComposition(doc, endY) : endY;
 };
 
 const toColumnLetters = (index: number) => {
@@ -558,6 +565,17 @@ const Operations: React.FC = () => {
       alert(`A pasta “${folder.name}” não está disponível. O PDF será baixado normalmente. Clique novamente no botão de pasta da operação para selecioná-la.`);
       return null;
     }
+  };
+
+  const matchesBasketReportFilters = (order: OperationOrder) =>
+    (reportCategory === 'Todas' || order.category === reportCategory) &&
+    (!reportStartDate || order.deliveryDate >= reportStartDate) &&
+    (!reportEndDate || order.deliveryDate <= reportEndDate);
+
+  const appendBasketReportComposition = (doc: jsPDF, reportOrders: OperationOrder[]) => {
+    if (!reportOrders.some(order => isMaceioBasicBasket(operations.find(operation => operation.id === order.operationId), order))) return;
+    doc.addPage();
+    addBasicBasketComposition(doc, 20);
   };
 
   const savePdf = async (doc: jsPDF, fileName: string, writer: FileSystemWritableFileStream | null) => {
@@ -2172,6 +2190,7 @@ const Operations: React.FC = () => {
       horizontalPageBreak: true,
       horizontalPageBreakRepeat: [0, 1],
     });
+    appendBasketReportComposition(doc, romaneioProductsReport.columns);
     await savePdf(doc, fileName, writer);
   };
 
@@ -2308,6 +2327,7 @@ const Operations: React.FC = () => {
       footStyles: { font: REPORT_FONT, fontStyle: 'bold', fillColor: [226, 232, 240], textColor: [0, 0, 0] },
       columnStyles: { 0: { cellWidth: 120 }, 1: { cellWidth: 25, halign: 'center' }, 2: { cellWidth: 40, halign: 'right' } },
     });
+    appendBasketReportComposition(doc, orders.filter(order => (purchaseOperationIds.length === 0 || purchaseOperationIds.includes(order.operationId)) && matchesBasketReportFilters(order)));
     await savePdf(doc, fileName, null);
   };
 
@@ -2493,6 +2513,7 @@ const Operations: React.FC = () => {
       );
     }
 
+    appendBasketReportComposition(doc, billingOrders.filter(order => !billingOrderId || order.id === billingOrderId));
     await savePdf(doc, fileName, writer);
   };
 
@@ -2553,6 +2574,7 @@ const Operations: React.FC = () => {
         }
       },
     });
+    appendBasketReportComposition(doc, operationOrders.filter(order => matchesBasketReportFilters(order) && order.deliveries.some(delivery => (reportDeliveryPointId === 'Todos' || delivery.deliveryPointId === reportDeliveryPointId) && delivery.items.some(item => item.quantity > 0 && (reportProduct === 'Todos' || stockKey(item.product, item.unit) === reportProduct)))));
     await savePdf(doc, fileName, writer);
   };
 
@@ -2674,6 +2696,7 @@ const Operations: React.FC = () => {
       headStyles: { font: REPORT_FONT, fontStyle: 'bold', fillColor: [79, 70, 229] },
       footStyles: { font: REPORT_FONT, fontStyle: 'bold', fillColor: [226, 232, 240], textColor: [0, 0, 0] },
     });
+    appendBasketReportComposition(doc, ordersSummaryReport.rows.map(row => row.order));
     await savePdf(doc, fileName, writer);
   };
 
@@ -2838,6 +2861,7 @@ const Operations: React.FC = () => {
         8: { cellWidth: 22, halign: 'right' },
       },
     });
+    appendBasketReportComposition(doc, orders.filter(order => deliveriesSummaryReport.rows.some(row => row.orderIds.has(order.id))));
     await savePdf(doc, fileName, writer);
   };
 
