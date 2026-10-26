@@ -2381,10 +2381,10 @@ const Operations: React.FC = () => {
       ['Produto entregue', 'UND', 'Quantidade', 'Preço de custo', 'Preço de venda', 'Total da venda'],
       ...productsByDateReport.rows.map(row => {
         const price = productPrices[stockKey(row.product, row.unit)] || { costPrice: 0, salePrice: 0 };
-        return [row.product, row.unit, row.total, price.costPrice, price.salePrice, row.total * price.costPrice];
+        return [row.product, row.unit, row.total, price.costPrice, price.salePrice, row.total * price.salePrice];
       }),
       ['TOTAL GERAL', '', productsByDateReport.grandTotal, '', '',
-        productsByDateReport.rows.reduce((sum, row) => sum + row.total * (productPrices[stockKey(row.product, row.unit)]?.costPrice || 0), 0)],
+        productsByDateReport.rows.reduce((sum, row) => sum + row.total * (productPrices[stockKey(row.product, row.unit)]?.salePrice || 0), 0)],
     ];
     const workbook = XLSX.utils.book_new();
     const sheet = XLSX.utils.aoa_to_sheet(data);
@@ -2400,7 +2400,7 @@ const Operations: React.FC = () => {
     // Fórmulas com valor inicial em cache para leitores sem recálculo automático.
     for (let row = firstDataRowIndex; row < totalRowIndex; row += 1) {
       const totalCell = sheet[XLSX.utils.encode_cell({ r: row, c: 5 })];
-      totalCell.f = `C${row + 1}*D${row + 1}`;
+      totalCell.f = `C${row + 1}*E${row + 1}`;
     }
     [2, 5].forEach(column => {
       const totalCell = sheet[XLSX.utils.encode_cell({ r: totalRowIndex, c: column })];
