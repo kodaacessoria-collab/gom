@@ -430,6 +430,7 @@ const Operations: React.FC = () => {
   const [summaryOperationIds, setSummaryOperationIds] = useState<string[]>([]);
   const [reportStartDate, setReportStartDate] = useState(() => `${todayIso().slice(0, 8)}01`);
   const [reportEndDate, setReportEndDate] = useState(todayIso);
+  const [billingOrderId, setBillingOrderId] = useState('');
   const [reportProduct, setReportProduct] = useState('Todos');
   const [reportDeliveryPointId, setReportDeliveryPointId] = useState('Todos');
   const [sharedStateReady, setSharedStateReady] = useState(false);
@@ -2318,12 +2319,20 @@ const Operations: React.FC = () => {
     return `${sanitizeFileName(`RELATORIO PRODUTOS - ${operationName} - ${categoryName} - ${productName} - ${pointName} - ${formatDate(reportStartDate)} a ${formatDate(reportEndDate)}`)}.${extension}`;
   };
 
+  const billingOrders = useMemo(() => operationOrders.filter(order =>
+    (reportCategory === 'Todas' || order.category === reportCategory) &&
+    (!reportStartDate || order.deliveryDate >= reportStartDate) &&
+    (!reportEndDate || order.deliveryDate <= reportEndDate)
+  ), [operationOrders, reportCategory, reportStartDate, reportEndDate]);
+  const billingOrder = billingOrders.find(order => order.id === billingOrderId);
+  const billingScopeLabel = billingOrderId
+    ? billingOrder
+      ? `Romaneio - Controle ${getOrderControlNumber(billingOrder.importedAt)} - ${formatDate(billingOrder.deliveryDate)} - ${billingOrder.category}`
+      : 'Romaneio fora dos filtros selecionados'
+    : `Periodo: ${formatDate(reportStartDate)} a ${formatDate(reportEndDate)}`;
+
   const productsByDateReport = useMemo(() => {
-    const filteredOrders = operationOrders.filter(order =>
-      (reportCategory === 'Todas' || order.category === reportCategory) &&
-      (!reportStartDate || order.deliveryDate >= reportStartDate) &&
-      (!reportEndDate || order.deliveryDate <= reportEndDate)
-    );
+    const filteredOrders = billingOrders.filter(order => !billingOrderId || order.id === billingOrderId);
     const dates = Array.from(new Set(filteredOrders.map(order => order.deliveryDate))).sort();
     const productsByKey = new Map<string, { product: string; unit: string; quantities: Record<string, number>; total: number }>();
 
@@ -2355,7 +2364,7 @@ const Operations: React.FC = () => {
       dateTotals,
       grandTotal: rows.reduce((sum, row) => sum + row.total, 0),
     };
-  }, [operationOrders, reportCategory, reportStartDate, reportEndDate]);
+  }, [billingOrders, billingOrderId]);
 
   const generateProductsByDateExcel = () => {
     if (!activeOperation || productsByDateReport.rows.length === 0) {
@@ -2366,7 +2375,7 @@ const Operations: React.FC = () => {
     const data: (string | number)[][] = [
       [`Faturamento dos produtos entregues - ${activeOperation.name}`],
       ['Operação', activeOperation.name, 'Categoria', categoryLabel],
-      ['Período', `${formatDate(reportStartDate)} a ${formatDate(reportEndDate)}`],
+      ['Seleção', billingScopeLabel],
       ['Pedidos considerados', productsByDateReport.orderCount, 'Entregas somadas', productsByDateReport.deliveryCount],
       [],
       ['Produto entregue', 'UND', 'Quantidade', 'Preço de custo', 'Total do custo', 'Margem venda', 'Preço de venda', 'Total da venda'],
@@ -2402,7 +2411,7 @@ const Operations: React.FC = () => {
     sheet['!margins'] = { left: 0.15, right: 0.15, top: 0.25, bottom: 0.25, header: 0.1, footer: 0.1 };
     XLSX.utils.book_append_sheet(workbook, sheet, 'Faturamento');
     const categoryName = reportCategory === 'Todas' ? 'Todas categorias' : reportCategory;
-    const fileName = sanitizeFileName(`FATURAMENTO DE ENTREGAS - ${activeOperation.name} - ${categoryName} - ${formatDate(reportStartDate)} a ${formatDate(reportEndDate)}`);
+    const fileName = sanitizeFileName(`FATURAMENTO DE ENTREGAS - ${activeOperation.name} - ${categoryName} - ${billingScopeLabel}`);
     XLSX.writeFile(workbook, `${fileName}.xlsx`);
   };
 
@@ -2413,12 +2422,12 @@ const Operations: React.FC = () => {
     }
 
     const categoryLabel = reportCategory === 'Todas' ? 'Todas as categorias' : reportCategory;
-    const baseName = sanitizeFileName(`FATURAMENTO DE ENTREGAS - ${activeOperation.name} - ${categoryLabel} - ${formatDate(reportStartDate)} a ${formatDate(reportEndDate)}`);
+    const baseName = sanitizeFileName(`FATURAMENTO DE ENTREGAS - ${activeOperation.name} - ${categoryLabel} - ${billingScopeLabel}`);
     const fileName = `${baseName}.pdf`;
     const writer = await preparePdfWriter(activeOperation, fileName);
     const doc = new jsPDF({ orientation: 'landscape' });
     const letterheadTitle = `RELATORIO DOS PRODUTOS ENTREGUES - ${getOperationTitle(activeOperation).toUpperCase()}`;
-    const letterheadSubtitle = `Categoria: ${categoryLabel} | Periodo: ${formatDate(reportStartDate)} a ${formatDate(reportEndDate)}`;
+    const letterheadSubtitle = `Categoria: ${categoryLabel} | ${billingScopeLabel}`;
     const columnStyles: Record<number, any> = {
       0: { cellWidth: 70 }, 1: { cellWidth: 16, halign: 'center' }, 2: { cellWidth: 22, halign: 'right' },
       3: { cellWidth: 30, halign: 'right' }, 4: { cellWidth: 30, halign: 'right' }, 5: { cellWidth: 25, halign: 'right' },
@@ -3900,7 +3909,7 @@ const Operations: React.FC = () => {
             <div className="view-header" style={{ marginBottom: '1rem', gap: '1rem' }}>
               <div>
                 <h2 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}><FileSpreadsheet size={20} /> Faturamento dos produtos entregues</h2>
-                <p style={{ textAlign: 'left', marginBottom: 0 }}>Soma as entregas do período, permite cadastrar custo e venda e calcula o faturamento e a margem.</p>
+                <p style={{ textAlign: 'left', marginBottom: 0 }}>Selecione um romaneio individual ou some as entregas do período para calcular custos, vendas e margem.</p>
               </div>
             </div>
             <div className="period-report-filters">
@@ -3918,6 +3927,16 @@ const Operations: React.FC = () => {
               <div>
                 <label>Data final</label>
                 <input type="date" className="input-field" min={reportStartDate || undefined} value={reportEndDate} onChange={event => setReportEndDate(event.target.value)} />
+              </div>
+              <div>
+                <label htmlFor="billing-romaneio">Romaneio</label>
+                <select id="billing-romaneio" className="input-field" value={billingOrderId} onChange={event => setBillingOrderId(event.target.value)}>
+                  <option value="">Todos os romaneios do período</option>
+                  {billingOrderId && !billingOrder && <option value={billingOrderId}>Romaneio fora dos filtros selecionados</option>}
+                  {billingOrders.map(order => <option key={order.id} value={order.id}>
+                    {formatDate(order.deliveryDate)} - Controle {getOrderControlNumber(order.importedAt)} - {order.category}{order.generalNotes?.trim() ? ` - ${order.generalNotes.trim()}` : ''}
+                  </option>)}
+                </select>
               </div>
               <div className="period-report-actions">
                 <button type="button" className="button button-outline" disabled={productsByDateReport.rows.length === 0} onClick={generateProductsByDatePdf}>
