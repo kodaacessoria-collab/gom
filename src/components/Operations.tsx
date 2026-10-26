@@ -329,20 +329,20 @@ const addDeliveryAddress = (doc: jsPDF, point?: DeliveryPoint, startY = 46) => {
   return startY + (addressLines.length * 5) + 4;
 };
 
-const addOrderGeneralNotes = (doc: jsPDF, order: OperationOrder, startY = 39) => {
+const addOrderGeneralNotes = (doc: jsPDF, order: OperationOrder, startY = 39, includeComposition = true) => {
   const notes = displayText(order.generalNotes);
   doc.setFont(REPORT_FONT, 'bold');
   doc.setFontSize(REPORT_FONT_SIZE);
   doc.text(`Controle: ${getOrderControlNumber(order.importedAt)}`, 14, startY);
   startY += 7;
-  if (!notes) return basketDocuments.has(doc) ? addBasicBasketComposition(doc, startY) : startY;
+  if (!notes) return includeComposition && basketDocuments.has(doc) ? addBasicBasketComposition(doc, startY) : startY;
 
   const lines = doc.splitTextToSize(`Observacao geral: ${notes}`, 182);
   doc.setFont(REPORT_FONT, 'normal');
   doc.setFontSize(REPORT_FONT_SIZE);
   doc.text(lines, 14, startY);
   const endY = startY + (lines.length * 4) + 6;
-  return basketDocuments.has(doc) ? addBasicBasketComposition(doc, endY) : endY;
+  return includeComposition && basketDocuments.has(doc) ? addBasicBasketComposition(doc, endY) : endY;
 };
 
 const toColumnLetters = (index: number) => {
@@ -357,6 +357,7 @@ const toColumnLetters = (index: number) => {
 };
 
 const addReceiptFields = (doc: jsPDF, startY: number) => {
+  if (basketDocuments.has(doc)) startY = addBasicBasketComposition(doc, startY + 8);
   const pageHeight = doc.internal.pageSize.getHeight();
   const receiptHeight = 26;
   const bottomMargin = 14;
@@ -1670,7 +1671,7 @@ const Operations: React.FC = () => {
     await addHeader(doc, reportOperation, order, `${sector?.name || 'Sem setor'} | ${point?.name || 'Local de entrega'}`);
     doc.text(`Local: ${point?.name || '-'} | Codigo: ${point?.code || '-'}`, 14, 39);
     const addressEndY = addDeliveryAddress(doc, point);
-    const tableStartY = addOrderGeneralNotes(doc, order, addressEndY);
+    const tableStartY = addOrderGeneralNotes(doc, order, addressEndY, false);
 
     autoTable(doc, {
       startY: tableStartY,
@@ -1748,7 +1749,7 @@ const Operations: React.FC = () => {
       await addHeader(doc, reportOperation, order, `${sector.name} | ${displayCode} - ${point?.name || 'Local de entrega'}`);
       doc.text(`Local: ${point?.name || '-'} | Codigo: ${displayCode}`, 14, 39);
       const addressEndY = addDeliveryAddress(doc, point);
-      tableStartY = addOrderGeneralNotes(doc, order, addressEndY);
+      tableStartY = addOrderGeneralNotes(doc, order, addressEndY, false);
 
       autoTable(doc, {
         startY: tableStartY,
