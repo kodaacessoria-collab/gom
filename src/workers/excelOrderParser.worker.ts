@@ -42,15 +42,35 @@ const normalizeDeliveries = (deliveries: ParsedDelivery[]) => {
   return Array.from(grouped.values()).map(delivery => ({ ...delivery, items: aggregateItems(delivery.items) })).filter(delivery => delivery.items.length > 0);
 };
 
+// Match only a unique registered place; address is intentionally not required.
 const findPoint = (points: DeliveryPointInput[], label: string) => {
-  const key = normalizeKey(label);
   const simple = normalizeLabel(label);
-  const exact = points.find(point => normalizeKey(point.code) === key || normalizeKey(point.name) === key || normalizeLabel(point.code) === simple || normalizeLabel(point.name) === simple);
-  if (exact) return exact;
-  return [...points]
-    .sort((a, b) => Math.max(normalizeLabel(b.code).length, normalizeLabel(b.name).length) - Math.max(normalizeLabel(a.code).length, normalizeLabel(a.name).length))
-    .find(point => [normalizeLabel(point.code), normalizeLabel(point.name)].filter(alias => alias.length >= 5).some(alias => simple.includes(alias) || alias.includes(simple)));
+  if (!simple) return undefined;
+  const unique = (matches: DeliveryPointInput[]) => matches.length === 1 ? matches[0] : undefined;
+  const exact = points.filter(point => [point.code, point.name].some(value => normalizeLabel(value) === simple));
+  if (exact.length) return unique(exact);
+  const numericCode = (value: string) => /^\d+$/.test(value) ? value.replace(/^0+(?=\d)/, '') : '';
+  const code = numericCode(simple);
+  if (code) {
+    const numeric = points.filter(point => numericCode(normalizeLabel(point.code)) === code);
+    if (numeric.length) return unique(numeric);
+  }
+  const schoolName = (value: string) => normalizeLabel(value)
+    .replace(/^(?:ESCOLA MUNICIPAL|ESCOLA ESTADUAL|ESCOLA|E M E F|EMEF|E M|EM) /, '');
+  const name = schoolName(label);
+  const names = points.filter(point => schoolName(point.name) === name);
+  if (names.length) return unique(names);
+  const contained = points.filter(point => [point.code, point.name]
+    .map(normalizeLabel).filter(alias => alias.length >= 5)
+    .some(alias => ` ${simple} `.includes(` ${alias} `)));
+  return unique(contained);
 };
+
+const headerKey = (value: unknown) => normalizeKey(value).replace(/[.:]+$/g, '').trim();
+const productHeaders = new Set(['PRODUTO', 'PRODUTOS', 'DESCRICAO', 'DESCRICAO DO PRODUTO', 'DESCRICAO DOS PRODUTOS', 'ITEM']);
+const unitHeaders = new Set(['UN', 'UND', 'UNID', 'UNIDADE', 'EMBALAGEM']);
+const quantityHeaders = new Set(['QTD', 'QTDE', 'QUANT', 'QUANTIDADE']);
+const locationHeaders = new Set(['NOME DA ESCOLA', 'LOCAL DE ENTREGA', 'UNIDADE ESCOLAR', 'ESCOLA', 'LOCAL', 'DESTINO', 'CODIGO', 'CODIGO DO LOCAL', 'CODIGO DA ESCOLA']);
 
 const parseDate = (value: unknown) => {
   if (value instanceof Date && !Number.isNaN(value.getTime())) return `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, '0')}-${String(value.getDate()).padStart(2, '0')}`;
@@ -67,7 +87,7 @@ const parseDate = (value: unknown) => {
 const extractMetadata = (rows: unknown[][]): ExcelOrderMetadata => {
   const result: ExcelOrderMetadata = { deliveryDate: '', consumptionPeriod: '', categoryText: '', generalNotes: '' };
   rows.slice(0, 20).forEach(row => row.forEach((cell, index) => {
-    const label = normalizeKey(cell).replace(/\s*:\s*$/, '');
+    const label = normalizeKey(cell).split(':')[0].trim();
     const text = displayText(cell);
     const value = (text.includes(':') ? text.split(':').slice(1).join(':').trim() : '') || row.slice(index + 1).find(candidate => displayText(candidate));
     if (label === 'DATA DE ENTREGA' && !result.deliveryDate) result.deliveryDate = parseDate(value);
@@ -81,35 +101,44 @@ const extractMetadata = (rows: unknown[][]): ExcelOrderMetadata => {
 };
 
 const parseUnitSheet = (sheetName: string, rows: unknown[][], points: DeliveryPointInput[]): ParsedDelivery | null => {
-  const headerRow = rows.findIndex(row => row.some(cell => normalizeKey(cell) === 'PRODUTO') && row.some(cell => ['QTD', 'QTDE', 'QUANTIDADE'].includes(normalizeKey(cell))));
+  const headerRow = rows.findIndex(row => row.some(cell => productHeaders.has(headerKey(cell))) && row.some(cell => quantityHeaders.has(headerKey(cell))));
   if (headerRow < 0) return null;
-  const headers = rows[headerRow].map(normalizeKey);
-  const productIndex = headers.findIndex(header => header === 'PRODUTO');
-  const unitIndex = headers.findIndex(header => ['UND', 'UNIDADE', 'EMBALAGEM'].includes(header));
-  const quantityIndex = headers.findIndex(header => ['QTD', 'QTDE', 'QUANTIDADE'].includes(header));
+  const headers = rows[headerRow].map(headerKey);
+  const productIndex = headers.findIndex(header => productHeaders.has(header));
+  const unitIndex = headers.findIndex(header => unitHeaders.has(header));
+  const quantityIndex = headers.findIndex(header => quantityHeaders.has(header));
   const notesIndex = headers.findIndex(header => header === 'OBS' || header === 'OBS.');
   if (productIndex < 0 || quantityIndex < 0) return null;
   const items = aggregateItems(rows.slice(headerRow + 1).map(row => ({ product: displayText(row[productIndex]), unit: displayText(unitIndex >= 0 ? row[unitIndex] : 'UN') || 'UN', quantity: toNumber(row[quantityIndex]), notes: displayText(notesIndex >= 0 ? row[notesIndex] : '') })));
   if (!items.length) return null;
-  let deliveryLabel = '';
-  for (const row of rows.slice(0, 15)) {
-    const index = row.findIndex(cell => ['NOME DA ESCOLA', 'LOCAL DE ENTREGA', 'UNIDADE ESCOLAR'].includes(normalizeKey(cell)));
-    if (index >= 0) deliveryLabel = row.slice(index + 1).map(displayText).find(Boolean) || '';
-    if (deliveryLabel) break;
+  const labels: string[] = [];
+  for (const row of rows.slice(0, headerRow)) {
+    row.forEach((cell, index) => {
+      const text = displayText(cell);
+      const [label, ...inline] = text.split(':');
+      if (!locationHeaders.has(headerKey(label))) return;
+      const value = inline.join(':').trim() || row.slice(index + 1).map(displayText).find(Boolean) || '';
+      if (value) labels.push(value);
+    });
   }
-  const sheetKey = normalizeKey(sheetName);
-  const point = (deliveryLabel ? findPoint(points, deliveryLabel) : undefined) || findPoint(points, sheetName) || points.find(candidate => sheetKey.includes(normalizeKey(candidate.code)));
-  if (!point && (points.length !== 1 || ignoredHeaders.has(sheetKey))) return null;
-  return { id: makeId(), deliveryPointId: point?.id || points[0].id, items };
+  const matches = labels.map(label => findPoint(points, label)).filter((point): point is DeliveryPointInput => Boolean(point));
+  if (new Set(matches.map(point => point.id)).size > 1) return null;
+  const genericSheet = /^(?:PLANILHA|SHEET)\s*\d*$/i.test(sheetName);
+  const point = matches[0] || findPoint(points, sheetName) ||
+    (!labels.length && genericSheet && points.length === 1 ? points[0] : undefined);
+  // An explicit, unmatched place must never be assigned to another registration.
+  if (!point) return null;
+
+  return { id: makeId(), deliveryPointId: point.id, items };
 };
 
 const parseMatrixSheet = (rows: unknown[][], points: DeliveryPointInput[]) => {
-  const headerRow = rows.findIndex(row => row.some(cell => normalizeKey(cell) === 'PRODUTO') && row.some(cell => ['EMBALAGEM', 'UND', 'UNIDADE'].includes(normalizeKey(cell))));
+  const headerRow = rows.findIndex(row => row.some(cell => productHeaders.has(headerKey(cell))) && row.some(cell => unitHeaders.has(headerKey(cell))));
   if (headerRow < 0) return [];
   const headers = rows[headerRow];
-  const normalized = headers.map(normalizeKey);
-  const productIndex = normalized.findIndex(header => header === 'PRODUTO');
-  const unitIndex = normalized.findIndex(header => ['EMBALAGEM', 'UND', 'UNIDADE'].includes(header));
+  const normalized = headers.map(headerKey);
+  const productIndex = normalized.findIndex(header => productHeaders.has(header));
+  const unitIndex = normalized.findIndex(header => unitHeaders.has(header));
   if (productIndex < 0 || unitIndex < 0) return [];
   return headers.map((header, index) => ({ header: displayText(header), index }))
     .filter(column => column.index !== productIndex && column.index !== unitIndex && column.header && (findPoint(points, column.header) || !ignoredHeaders.has(normalizeKey(column.header))))

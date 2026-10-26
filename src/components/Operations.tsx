@@ -1251,7 +1251,7 @@ const Operations: React.FC = () => {
     if (!activeOperation || operationPoints.length === 0) throw new Error('Cadastre ao menos um local de entrega antes de importar.');
     const { metadata, deliveries: normalizedDeliveries } = await parseExcelInWorker(file, operationPoints);
     if (normalizedDeliveries.length === 0) {
-      throw new Error('Não encontrei locais de entrega compatíveis com os locais cadastrados. Confira se as abas/colunas do Excel usam o mesmo nome ou código dos locais.');
+      throw new Error('Não foi possível identificar entregas com quantidade positiva nesta planilha. Confira as colunas de produto, unidade e quantidade e o nome ou código do local no cabeçalho, na aba ou nas colunas. O endereço do local é opcional.');
     }
     if (!metadata.deliveryDate) {
       throw new Error('Não encontrei uma Data de Entrega válida no cabeçalho do Excel. Use o campo “Data de Entrega:” conforme o modelo.');
