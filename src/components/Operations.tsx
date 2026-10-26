@@ -1513,25 +1513,40 @@ const Operations: React.FC = () => {
       .sort((a, b) => a.name.localeCompare(b.name));
   };
 
-  const getDeliveryPointSummaryPdfOptions = (summary: ReturnType<typeof getDeliveryPointSummaryTable>) => {
+  const getDeliveryPointSummaryPdfOptions = (summary: { head: string[][]; body: string[][]; pointColumns: { name: string }[] }, doc: jsPDF) => {
     const totalColumnIndex = summary.head[0].length - 1;
     const pointColumnIndexes = summary.pointColumns.map((_, index) => index + 2);
-    const pointColumnWidth = 81.5 / Math.max(summary.pointColumns.length, 1);
+    // Keep names and quantities readable; continue wide tables on another page.
+    doc.setFont(REPORT_FONT, 'bold');
+    doc.setFontSize(9);
+    const pointWidths = pointColumnIndexes.map(columnIndex => {
+      const nameLines = doc.splitTextToSize(String(summary.head[0][columnIndex] || ''), 32) as string[];
+      const headerWidth = nameLines.length * 3.2 + 3;
+      const values = [...summary.body.map(row => String(row[columnIndex] ?? '')), String(summary.head[1]?.[columnIndex] || '')];
+      const quantityWidth = Math.max(0, ...values.map(value => doc.getTextWidth(value))) + 4;
+      return Math.max(12, headerWidth, quantityWidth);
+    });
+    const availableWidth = doc.internal.pageSize.getWidth() - 28 - 48 - 12 - 20;
+    const naturalWidth = pointWidths.reduce((sum, width) => sum + width, 0);
+    const extraWidth = naturalWidth < availableWidth ? (availableWidth - naturalWidth) / Math.max(pointWidths.length, 1) : 0;
     const schoolHeaderFillColor: [number, number, number] = [219, 234, 254];
     const schoolHeaderFontSize = 9;
     const schoolHeaderHeight = 36;
     const schoolHeaderTextHeight = schoolHeaderHeight - 4;
     const columnStyles = pointColumnIndexes.reduce<Record<number, any>>((acc, columnIndex) => {
-      acc[columnIndex] = { cellWidth: pointColumnWidth, halign: 'center', overflow: 'linebreak' };
+      acc[columnIndex] = { cellWidth: pointWidths[columnIndex - 2] + extraWidth, halign: 'center', overflow: 'linebreak' };
       return acc;
     }, {
-      0: { cellWidth: 58, overflow: 'linebreak' },
-      1: { cellWidth: 24, overflow: 'linebreak' },
-      [totalColumnIndex]: { cellWidth: 18, halign: 'center' },
+      0: { cellWidth: 48, overflow: 'linebreak' },
+      1: { cellWidth: 12, overflow: 'linebreak' },
+      [totalColumnIndex]: { cellWidth: 20, halign: 'center' },
     });
 
     return {
       columnStyles,
+      margin: { left: 14, right: 14 },
+      horizontalPageBreak: true,
+      horizontalPageBreakRepeat: [0, 1, totalColumnIndex],
       styles: { font: REPORT_FONT, fontSize: 6.8, cellPadding: 1, overflow: 'linebreak', minCellHeight: 6 },
       headStyles: {
         font: REPORT_FONT,
@@ -1571,7 +1586,7 @@ const Operations: React.FC = () => {
         data.doc.setFontSize(schoolHeaderFontSize);
         data.doc.setTextColor(0, 0, 0);
         const schoolNameLines = data.doc.splitTextToSize(schoolName, schoolHeaderTextHeight) as string[];
-        const lineSpacing = 2.8;
+        const lineSpacing = 3.2;
         schoolNameLines.forEach((line, lineIndex) => {
           const lineWidth = data.doc.getTextWidth(line);
           const centeredLineOffset = (lineIndex - ((schoolNameLines.length - 1) / 2)) * lineSpacing;
@@ -1702,8 +1717,7 @@ const Operations: React.FC = () => {
       startY: tableStartY,
       head: sectorSummary.head,
       body: sectorSummary.body,
-      styles: { font: REPORT_FONT, fontSize: sectorSummary.sectorColumns.length > 3 ? 7 : REPORT_FONT_SIZE, cellPadding: 1.2 },
-      headStyles: { font: REPORT_FONT, fontSize: REPORT_FONT_SIZE, fontStyle: 'bold', fillColor: [79, 70, 229] },
+      ...getDeliveryPointSummaryPdfOptions({ ...sectorSummary, pointColumns: sectorSummary.sectorColumns }, doc),
       theme: 'grid',
     });
 
@@ -1711,10 +1725,10 @@ const Operations: React.FC = () => {
       const scopedDeliveries = order.deliveries.filter(delivery => (pointById(delivery.deliveryPointId)?.sectorId || 'sem_setor') === sector.id);
       const summary = getDeliveryPointSummaryTable(scopedDeliveries, true);
 
-      doc.addPage('a4', 'portrait');
+      doc.addPage('a4', summary.pointColumns.length > 8 ? 'landscape' : 'portrait');
       await addHeader(doc, reportOperation, order, `TOTAL - ${sector.name}`);
       tableStartY = addOrderGeneralNotes(doc, order, 39);
-      const tableOptions = getDeliveryPointSummaryPdfOptions(summary);
+      const tableOptions = getDeliveryPointSummaryPdfOptions(summary, doc);
       autoTable(doc, {
         startY: tableStartY,
         head: summary.head,
@@ -1740,7 +1754,7 @@ const Operations: React.FC = () => {
     );
 
     for (const { delivery, sector, displayCode } of orderedDeliveries) {
-      doc.addPage();
+      doc.addPage('a4', 'portrait');
       const point = pointById(delivery.deliveryPointId);
       const items = aggregateDeliveryItems(delivery.items);
 
@@ -1831,7 +1845,7 @@ const Operations: React.FC = () => {
     const sector = sectorById(sectorId);
     const fileName = getRomaneioFileName(reportOperation, order, sector ? `SOMA ${sector.name}` : 'TOTAL SETORES');
     const writer = await preparePdfWriter(reportOperation, fileName);
-    const doc = new jsPDF();
+    const doc = new jsPDF({ orientation: sector && scopedDeliveries.length > 8 ? 'landscape' : 'portrait' });
     doc.setFont(REPORT_FONT, 'normal');
     doc.setFontSize(REPORT_FONT_SIZE);
     await addHeader(doc, reportOperation, order, sector ? `Soma das unidades - ${sector.name}` : 'Soma de todos os setores');
@@ -1842,10 +1856,10 @@ const Operations: React.FC = () => {
       head: summaryTable.head,
       body: summaryTable.body,
       theme: 'grid',
-      ...(sector ? getDeliveryPointSummaryPdfOptions(summaryTable as ReturnType<typeof getDeliveryPointSummaryTable>) : {
-        styles: { font: REPORT_FONT, fontSize: summaryTable.head[0].length > 6 ? 7 : REPORT_FONT_SIZE, cellPadding: 1.2 },
-        headStyles: { font: REPORT_FONT, fontSize: REPORT_FONT_SIZE, fontStyle: 'bold', fillColor: [79, 70, 229] },
-      }),
+      ...getDeliveryPointSummaryPdfOptions({
+        ...summaryTable,
+        pointColumns: 'pointColumns' in summaryTable ? summaryTable.pointColumns : summaryTable.sectorColumns,
+      }, doc),
     });
     await savePdf(doc, fileName, writer);
   };
