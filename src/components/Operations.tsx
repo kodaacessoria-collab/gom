@@ -1,3 +1,5 @@
+import { resolveDeliveryPointSectors } from '../lib/deliveryPointSectors';
+import { readAllRows } from '../lib/readAllRows';
 import { deliveryDateInRange, isDeliveryMonth } from '../lib/deliveryDate';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
@@ -185,7 +187,14 @@ const readStorage = <T,>(key: string, fallback: T): T => {
   }
 };
 
-const saveStorage = <T,>(key: string, value: T) => localStorage.setItem(key, JSON.stringify(value));
+const saveStorage = <T,>(key: string, value: T) => {
+  try {
+    localStorage.setItem(key, JSON.stringify(value));
+  } catch (error) {
+    // A full browser cache must not undo an order already saved to the server.
+    console.warn('Não foi possível atualizar o cache local:', error);
+  }
+};
 
 const normalizeText = (value: unknown) =>
   String(value ?? '')
@@ -228,12 +237,18 @@ interface ExcelOrderMetadata {
   generalNotes: string;
 }
 
-const parseExcelInWorker = async (file: File, deliveryPoints: DeliveryPoint[]): Promise<{ metadata: ExcelOrderMetadata; deliveries: OrderDelivery[] }> => {
+const parseExcelInWorker = async (file: File, deliveryPoints: DeliveryPoint[], onProgress: (message: string) => void): Promise<{ metadata: ExcelOrderMetadata; deliveries: OrderDelivery[] }> => {
   const buffer = await file.arrayBuffer();
   const worker = new Worker(new URL('../workers/excelOrderParser.worker.ts', import.meta.url), { type: 'module' });
 
   return new Promise((resolve, reject) => {
-    worker.onmessage = (event: MessageEvent<{ result?: { metadata: ExcelOrderMetadata; deliveries: OrderDelivery[] }; error?: string }>) => {
+    const timeout = window.setTimeout(() => {
+      worker.terminate();
+      reject(new Error('A leitura excedeu 60 segundos. Confira se a planilha contém apenas as abas necessárias e tente novamente.'));
+    }, 60_000);
+    worker.onmessage = (event: MessageEvent<{ result?: { metadata: ExcelOrderMetadata; deliveries: OrderDelivery[] }; error?: string; progress?: string }>) => {
+      if (event.data.progress) { onProgress(event.data.progress); return; }
+      window.clearTimeout(timeout);
       worker.terminate();
       if (event.data.error) {
         reject(new Error(event.data.error));
@@ -246,6 +261,7 @@ const parseExcelInWorker = async (file: File, deliveryPoints: DeliveryPoint[]): 
       resolve(event.data.result);
     };
     worker.onerror = event => {
+      window.clearTimeout(timeout);
       worker.terminate();
       reject(new Error(event.message || 'Não foi possível processar a planilha.'));
     };
@@ -392,7 +408,8 @@ const getRomaneioFileName = (operation: OperationContract, order: OperationOrder
 const Operations: React.FC = () => {
   const [operations, setOperations] = useState<OperationContract[]>(() => readStorage(OPERATIONS_KEY, defaultOperations));
   const [sectors, setSectors] = useState<Sector[]>(() => readStorage(SECTORS_KEY, defaultSectors));
-  const [deliveryPoints, setDeliveryPoints] = useState<DeliveryPoint[]>(() => readStorage(DELIVERY_POINTS_KEY, []));
+  const [storedDeliveryPoints, setDeliveryPoints] = useState<DeliveryPoint[]>(() => readStorage(DELIVERY_POINTS_KEY, []));
+  const deliveryPoints = useMemo(() => resolveDeliveryPointSectors(storedDeliveryPoints, sectors), [storedDeliveryPoints, sectors]);
   const [orders, setOrders] = useState<OperationOrder[]>(() => readStorage(ORDERS_KEY, []));
   const [productPrices, setProductPrices] = useState<ProductPrices>(() => readStorage(PRODUCT_PRICES_KEY, {}));
   const [products, setProducts] = useState<Product[]>([]);
@@ -501,8 +518,12 @@ const Operations: React.FC = () => {
   }, [activeOperationId, operationSectors, operationPoints, newPoint.sectorId, orderForm.deliveryPointId]);
 
   async function fetchProducts() {
-    const { data } = await supabase.from('products').select('*').order('name');
-    if (data) setProducts(data);
+    try {
+      const data = await readAllRows<Product>((first, last) => supabase.from('products').select('*').order('name').order('id').range(first, last));
+      setProducts(data);
+    } catch (error) {
+      console.error('Não foi possível carregar o estoque completo:', error);
+    }
   }
 
   async function loadSharedState() {
@@ -619,37 +640,47 @@ const Operations: React.FC = () => {
   const stockMovementPrefix = (orderId: string) => `OPERATION_STOCK:${orderId}:`;
 
   const applyOrderStock = async (order: OperationOrder) => {
-    const { data, error } = await supabase.from('products').select('*').order('expiry_date', { ascending: true });
-    if (error) throw error;
-    const inventoryProducts = [...(data || [])];
+    const inventoryProducts = await readAllRows<Product>((first, last) => supabase.from('products').select('*')
+      .order('expiry_date', { ascending: true }).order('id').range(first, last));
+    const productsByKey = new Map<string, typeof inventoryProducts>();
+    for (const product of inventoryProducts) {
+      const key = stockKey(product.name, product.unit);
+      const matches = productsByKey.get(key) || [];
+      matches.push(product);
+      productsByKey.set(key, matches);
+    }
+    // Register missing products together instead of one network round trip per item.
+    const missingProducts = new Map<string, { name: string; category: string; unit: string; quantity: number; min_stock: number; deposit: string }>();
+    for (const delivery of order.deliveries) {
+      for (const item of delivery.items) {
+        const key = stockKey(item.product, item.unit);
+        if (!productsByKey.has(key)) missingProducts.set(key, {
+          name: item.product,
+          category: categoryToInventoryCategory(order.category),
+          unit: item.unit || 'UN',
+          quantity: 0,
+          min_stock: 0,
+          deposit: 'Depósito-Grupo OM',
+        });
+      }
+    }
+    const missing = [...missingProducts.values()];
+    for (let offset = 0; offset < missing.length; offset += 200) {
+      const { data: created, error: createError } = await supabase.from('products').insert(missing.slice(offset, offset + 200)).select();
+      if (createError) throw createError;
+      for (const product of created || []) {
+        inventoryProducts.push(product);
+        productsByKey.set(stockKey(product.name, product.unit), [product]);
+      }
+    }
     const available = new Map(inventoryProducts.map(product => [product.id, Number(product.quantity)]));
     const slips: Array<Record<string, unknown>> = [];
 
     for (const delivery of order.deliveries) {
       for (const item of delivery.items) {
         let remaining = Number(item.quantity);
-        let matches = inventoryProducts.filter(product =>
-          normalizeKey(product.name) === normalizeKey(item.product) &&
-          (!item.unit || normalizeKey(product.unit) === normalizeKey(item.unit))
-        );
-        if (matches.length === 0) {
-          const { data: createdProduct, error: createError } = await supabase
-            .from('products')
-            .insert({
-              name: item.product,
-              category: categoryToInventoryCategory(order.category),
-              unit: item.unit || 'UN',
-              quantity: 0,
-              min_stock: 0,
-              deposit: 'Depósito-Grupo OM',
-            })
-            .select()
-            .single();
-          if (createError) throw createError;
-          inventoryProducts.push(createdProduct);
-          available.set(createdProduct.id, 0);
-          matches = [createdProduct];
-        }
+        const matches = productsByKey.get(stockKey(item.product, item.unit)) || [];
+        if (!matches.length) throw new Error(`Não foi possível localizar o produto ${item.product} no estoque.`);
 
         for (const product of matches) {
           const balance = available.get(product.id) || 0;
@@ -1252,7 +1283,7 @@ const Operations: React.FC = () => {
 
   const parseExcelOrder = async (file: File): Promise<OperationOrder> => {
     if (!activeOperation || operationPoints.length === 0) throw new Error('Cadastre ao menos um local de entrega antes de importar.');
-    const { metadata, deliveries: normalizedDeliveries } = await parseExcelInWorker(file, operationPoints);
+    const { metadata, deliveries: normalizedDeliveries } = await parseExcelInWorker(file, operationPoints, message => setImportFeedback({ type: 'progress', message }));
     if (normalizedDeliveries.length === 0) {
       throw new Error('Não foi possível identificar entregas com quantidade positiva nesta planilha. Confira as colunas de produto, unidade e quantidade e o nome ou código do local no cabeçalho, na aba ou nas colunas. O endereço do local é opcional.');
     }
@@ -1332,7 +1363,7 @@ const Operations: React.FC = () => {
     const file = selectedImportFile;
     if (!file || !activeOperation) return;
     setImporting(true);
-    setImportFeedback({ type: 'progress', message: `Lendo ${file.name} em segundo plano...` });
+    setImportFeedback({ type: 'progress', message: `Lendo ${file.name} para ${activeOperation.name}...` });
     let stockAppliedOrderId: string | null = null;
     try {
       const extension = file.name.split('.').pop()?.toLowerCase();

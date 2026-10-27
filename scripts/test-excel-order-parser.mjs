@@ -3,20 +3,21 @@ import * as XLSX from 'xlsx';
 
 let response;
 globalThis.self = { postMessage(value) { response = value; } };
-await import('../src/workers/excelOrderParser.worker.ts');
+const { valueRows } = await import('../src/workers/excelOrderParser.worker.ts');
 
 // No address or neighborhood is supplied to the importer.
 const points = [
   { id: 'jose', code: '001', name: 'Escola Municipal José da Silva' },
   { id: 'maria', code: '002', name: 'Escola Municipal Maria de Souza' },
 ];
-const parse = (rows, name = 'Planilha1', registrations = points) => {
+const parse = (rows, name = 'Planilha1', registrations = points, expectedError = '') => {
   const workbook = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet(rows), name);
   self.onmessage({ data: {
     buffer: XLSX.write(workbook, { type: 'array', bookType: 'xlsx' }),
     deliveryPoints: registrations,
   } });
+  if (expectedError) { assert.match(response.error || '', new RegExp(expectedError)); return; }
   assert(!response.error, response.error);
   return response.result;
 };
@@ -40,10 +41,8 @@ const bySheet = parse([...metadata, ['PRODUTO', 'UND', 'QTD'], ['CESTA BASICA', 
 assert.equal(bySheet.deliveries[0]?.deliveryPointId, 'jose');
 const generic = parse([...metadata, ['PRODUTO', 'UND', 'QTD'], ['ARROZ', 'KG', 2]], 'Planilha1', points.slice(0, 1));
 assert.equal(generic.deliveries[0]?.deliveryPointId, 'jose');
-const unknown = parse([...metadata, ['LOCAL DE ENTREGA', 'Escola Desconhecida'], ['PRODUTO', 'UND', 'QTD'], ['ARROZ', 'KG', 2]], 'Planilha1', points.slice(0, 1));
-assert.equal(unknown.deliveries.length, 0);
-const ambiguous = parse([...metadata, ['LOCAL', 'José da Silva'], ['PRODUTO', 'UND', 'QTD'], ['ARROZ', 'KG', 2]], 'Planilha1', [...points, { id: 'duplicate', code: '003', name: 'EM José da Silva' }]);
-assert.equal(ambiguous.deliveries.length, 0);
+parse([...metadata, ['LOCAL DE ENTREGA', 'Escola Desconhecida'], ['PRODUTO', 'UND', 'QTD'], ['ARROZ', 'KG', 2]], 'Planilha1', points.slice(0, 1), 'operação selecionada');
+parse([...metadata, ['LOCAL', 'José da Silva'], ['PRODUTO', 'UND', 'QTD'], ['ARROZ', 'KG', 2]], 'Planilha1', [...points, { id: 'duplicate', code: '003', name: 'EM José da Silva' }], 'operação selecionada');
 const zero = parse([...metadata, ['PRODUTO', 'UND', 'QTD'], ['ARROZ', 'KG', 0]], '001');
 assert.equal(zero.deliveries.length, 0);
 console.log('OK: locais sem endereço, cabeçalhos, códigos numéricos, nomes, matriz, metadados e identificação sem ambiguidades.');
@@ -73,3 +72,44 @@ assert(!deliveryDateInRange('2026-10', '2026-09-01', '2026-09-30'));
 assert(deliveryDateInRange('2028-02', '2028-02-29', '2028-02-29'));
 assert(!deliveryDateInRange('2026-10-26', '2026-10-01', '2026-10-25'));
 console.log('OK: mês/ano em texto e Excel, datas completas, validação e filtros por sobreposição.');
+
+const flat = parse([...metadata, ['LOCAL', 'PRODUTO', 'UND', 'QTD'], ['001', 'ARROZ', 'KG', 2], ['002', 'FEIJÃO', 'KG', 3], ['001', 'ARROZ', 'KG', 4]]);
+assert.deepEqual(flat.deliveries.map(d => [d.deliveryPointId, d.items[0].quantity]), [['jose', 6], ['maria', 3]]);
+parse([...metadata, ['PRODUTO', 'UND', '001', 'Local desconhecido', 'TOTAL'], ['ARROZ', 'KG', 2, 3, 5]], 'Planilha1', points, 'Local desconhecido');
+// Formatting may inflate the declared Excel range to the final row and column.
+{
+  const sheet = XLSX.utils.aoa_to_sheet([...metadata, ['PRODUTO', 'UND', '001'], ['ARROZ', 'KG', 2]]);
+  sheet['!ref'] = 'A1:XFD1048576';
+  const start = performance.now();
+  assert.equal(valueRows(sheet).at(-1)[2], 2);
+  assert(performance.now() - start < 1000, 'A faixa vazia não deve atrasar a leitura');
+}
+console.log('OK: locais por linha, bloqueio de importação parcial e faixa vazia gigante.');
+
+parse([...metadata, ['LOCAL', 'Escola Desconhecida'], ['PRODUTO', 'UND', 'QTD'], ['ARROZ', 'KG', 1]], '001', points, 'operação selecionada');
+// A valid sheet must not hide an unmatched delivery on another sheet.
+{
+  const workbook = XLSX.utils.book_new();
+  for (const [name, label] of [['A', '001'], ['B', 'Escola Desconhecida']]) {
+    XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet([...metadata, ['LOCAL', label], ['PRODUTO', 'UND', 'QTD'], ['ARROZ', 'KG', 2]]), name);
+  }
+  self.onmessage({ data: { buffer: XLSX.write(workbook, { type: 'array', bookType: 'xlsx' }), deliveryPoints: points } });
+  assert.match(response.error, /Aba B/);
+  assert(!response.result);
+}
+console.log('OK: divergência entre cabeçalho e aba, e bloqueio de perda de dados entre abas.');
+
+const totalRow = parse([...metadata, ['LOCAL', '001'], ['PRODUTO', 'UND', 'QTD', 'OBSERVAÇÃO'], ['ARROZ', 'KG', 2, 'Entregar cedo'], ['TOTAL', '', 2]]);
+assert.equal(totalRow.deliveries[0].items.length, 1, 'Total da planilha não é produto');
+assert.equal(totalRow.deliveries[0].items[0].notes, 'Entregar cedo');
+
+// A full school name must win over a shorter neighborhood registration in
+// the basket sector, regardless of registration order.
+const school = { id: 'school', code: '1A', name: 'CMEI Professora Anne Cleide Pimentel Bezerra' };
+const neighborhood = { id: 'basket', code: '007', name: 'ANTARES' };
+for (const registrations of [[school, neighborhood], [neighborhood, school]]) {
+  const result = parse([...metadata, ['PRODUTO', 'UND', 'CMEI Professora Anne Cleide Pimentel Bezerra - ANTARES'], ['ARROZ', 'KG', 10]], 'Pedido', registrations);
+  assert.equal(result.deliveries[0].deliveryPointId, 'school');
+}
+parse([...metadata, ['PRODUTO', 'UND', 'CMEI Professora Anne Cleide Pimentel Bezerra - ANTARES'], ['ARROZ', 'KG', 10]], 'Pedido', [school, { ...school, id: 'duplicate', code: '1B' }, neighborhood], 'operação selecionada');
+console.log('OK: nomes completos têm prioridade sobre bairros; duplicados continuam bloqueados.');

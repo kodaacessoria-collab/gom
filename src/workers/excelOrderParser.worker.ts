@@ -7,7 +7,7 @@ interface DeliveryItem { product: string; unit: string; quantity: number; notes?
 interface ParsedDelivery { id: string; deliveryPointId: string; items: DeliveryItem[] }
 interface ExcelOrderMetadata { deliveryDate: string; consumptionPeriod: string; category?: DeliveryCategory; categoryText: string; generalNotes: string }
 interface ParseExcelRequest { buffer: ArrayBuffer; deliveryPoints: DeliveryPointInput[] }
-interface ParseExcelResponse { result?: { metadata: ExcelOrderMetadata; deliveries: ParsedDelivery[] }; error?: string }
+interface ParseExcelResponse { result?: { metadata: ExcelOrderMetadata; deliveries: ParsedDelivery[] }; error?: string; progress?: string }
 
 const CATEGORIES: DeliveryCategory[] = ['Hortifrutigranjeiro', 'Estocáveis', 'Dietas e Fórmulas', 'Proteínas', 'Limpeza', 'CESTA BASICA'];
 const normalizeText = (value: unknown) => String(value ?? '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/\s+/g, ' ').trim();
@@ -23,9 +23,11 @@ const itemKey = (item: DeliveryItem) => `${normalizeKey(item.product)}|${normali
 const makeId = () => `delivery_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 const ignoredHeaders = new Set(['TOTAL', 'COLUNAS1', 'COLUNAS2', 'COLUNAS3', 'VERDURAS', 'LEGUMES', 'HORTIFRUTI', 'HORTIFRUTIGRANJEIRO', ...CATEGORIES.map(normalizeKey)]);
 
+const isTotalRow = (product: string) => /^(?:TOTAL(?: GERAL)?|SUB ?TOTAL)\s*:?$/.test(normalizeKey(product));
+
 const aggregateItems = (items: DeliveryItem[]) => {
   const grouped = new Map<string, DeliveryItem>();
-  items.filter(item => item.product && item.quantity > 0).forEach(item => {
+  items.filter(item => item.product && !isTotalRow(item.product) && item.quantity > 0).forEach(item => {
     const current = grouped.get(itemKey(item));
     if (current) current.quantity += item.quantity;
     else grouped.set(itemKey(item), { ...item });
@@ -44,7 +46,7 @@ const normalizeDeliveries = (deliveries: ParsedDelivery[]) => {
 };
 
 // Match only a unique registered place; address is intentionally not required.
-const findPoint = (points: DeliveryPointInput[], label: string) => {
+const findPointUncached = (points: DeliveryPointInput[], label: string) => {
   const simple = normalizeLabel(label);
   if (!simple) return undefined;
   const unique = (matches: DeliveryPointInput[]) => matches.length === 1 ? matches[0] : undefined;
@@ -61,16 +63,47 @@ const findPoint = (points: DeliveryPointInput[], label: string) => {
   const name = schoolName(label);
   const names = points.filter(point => schoolName(point.name) === name);
   if (names.length) return unique(names);
-  const contained = points.filter(point => [point.code, point.name]
-    .map(normalizeLabel).filter(alias => alias.length >= 5)
-    .some(alias => ` ${simple} `.includes(` ${alias} `)));
-  return unique(contained);
+  // A complete school name is more specific than a neighborhood alias from
+  // another sector. Equal-strength candidates must still remain ambiguous.
+  const contained = points.map(point => ({
+    point,
+    score: Math.max(0, ...[point.code, point.name].map(normalizeLabel)
+      .filter(alias => alias.length >= 5 && ` ${simple} `.includes(` ${alias} `))
+      .map(alias => alias.length)),
+  })).filter(candidate => candidate.score > 0);
+  const bestScore = Math.max(0, ...contained.map(candidate => candidate.score));
+  return unique(contained.filter(candidate => candidate.score === bestScore).map(candidate => candidate.point));
+};
+
+// Normalize each distinct label once, even in large row-based workbooks.
+const pointCache = new WeakMap<DeliveryPointInput[], Map<string, DeliveryPointInput | undefined>>();
+const findPoint = (points: DeliveryPointInput[], label: string) => {
+  let cache = pointCache.get(points);
+  if (!cache) { cache = new Map(); pointCache.set(points, cache); }
+  if (!cache.has(label)) cache.set(label, findPointUncached(points, label));
+  return cache.get(label);
+};
+
+// Some Excel files declare a million-row range because of formatting alone.
+// Visit stored values, avoiding an allocation/scan of that entire empty range.
+export const valueRows = (sheet: XLSX.WorkSheet): unknown[][] => {
+  const rows = new Map<number, unknown[]>();
+  for (const key of Object.keys(sheet)) {
+    if (key.startsWith('!')) continue;
+    const cell = sheet[key];
+    if (!cell || cell.v === undefined || cell.v === null || cell.v === '') continue;
+    const { r, c } = XLSX.utils.decode_cell(key);
+    const row = rows.get(r) || [];
+    row[c] = cell.v;
+    rows.set(r, row);
+  }
+  return [...rows.entries()].sort(([a], [b]) => a - b).map(([, row]) => row);
 };
 
 const headerKey = (value: unknown) => normalizeKey(value).replace(/[.:]+$/g, '').trim();
-const productHeaders = new Set(['PRODUTO', 'PRODUTOS', 'DESCRICAO', 'DESCRICAO DO PRODUTO', 'DESCRICAO DOS PRODUTOS', 'ITEM']);
-const unitHeaders = new Set(['UN', 'UND', 'UNID', 'UNIDADE', 'EMBALAGEM']);
-const quantityHeaders = new Set(['QTD', 'QTDE', 'QUANT', 'QUANTIDADE']);
+const productHeaders = new Set(['PRODUTO', 'PRODUTOS', 'DESCRICAO', 'DESCRICAO DO PRODUTO', 'DESCRICAO DOS PRODUTOS', 'ITEM', 'ALIMENTO', 'ALIMENTOS']);
+const unitHeaders = new Set(['UN', 'UND', 'UNID', 'UNIDADE', 'UNIDADES', 'EMBALAGEM', 'MEDIDA']);
+const quantityHeaders = new Set(['QTD', 'QTDE', 'QUANT', 'QUANTIDADE', 'QUANTIDADE SOLICITADA', 'QTD SOLICITADA']);
 const locationHeaders = new Set(['NOME DA ESCOLA', 'LOCAL DE ENTREGA', 'UNIDADE ESCOLAR', 'ESCOLA', 'LOCAL', 'DESTINO', 'CODIGO', 'CODIGO DO LOCAL', 'CODIGO DA ESCOLA']);
 
 const parseDate = (value: unknown) => {
@@ -88,11 +121,11 @@ const extractMetadata = (rows: unknown[][]): ExcelOrderMetadata => {
     const label = normalizeKey(cell).split(':')[0].trim();
     const text = displayText(cell);
     const value = (text.includes(':') ? text.split(':').slice(1).join(':').trim() : '') || row.slice(index + 1).find(candidate => displayText(candidate));
-    if (['DATA DE ENTREGA', 'MES/ANO', 'MES ANO', 'MES DE ENTREGA', 'MES/ANO DE ENTREGA'].includes(label) && !result.deliveryDate) {
+    if (['DATA DE ENTREGA', 'DATA DA ENTREGA', 'MES/ANO', 'MES ANO', 'MES DE ENTREGA', 'MES/ANO DE ENTREGA'].includes(label) && !result.deliveryDate) {
       const date = parseDate(value);
-      result.deliveryDate = label === 'DATA DE ENTREGA' ? date : date.slice(0, 7);
+      result.deliveryDate = ['DATA DE ENTREGA', 'DATA DA ENTREGA'].includes(label) ? date : date.slice(0, 7);
     }
-    else if (label === 'PERIODO DE CONSUMO' && !result.consumptionPeriod) result.consumptionPeriod = displayText(value);
+    else if (['PERIODO DE CONSUMO', 'DATA DO CONSUMO'].includes(label) && !result.consumptionPeriod) result.consumptionPeriod = displayText(value);
     else if (label === 'CATEGORIA' && !result.categoryText) {
       result.categoryText = displayText(value);
       result.category = CATEGORIES.find(category => normalizeKey(category) === normalizeKey(value));
@@ -108,8 +141,9 @@ const parseUnitSheet = (sheetName: string, rows: unknown[][], points: DeliveryPo
   const productIndex = headers.findIndex(header => productHeaders.has(header));
   const unitIndex = headers.findIndex(header => unitHeaders.has(header));
   const quantityIndex = headers.findIndex(header => quantityHeaders.has(header));
-  const notesIndex = headers.findIndex(header => header === 'OBS' || header === 'OBS.');
+  const notesIndex = headers.findIndex(header => ['OBS', 'OBSERVACAO', 'OBSERVACOES'].includes(header));
   if (productIndex < 0 || quantityIndex < 0) return null;
+  if (headers.some(header => locationHeaders.has(header))) return null;
   const items = aggregateItems(rows.slice(headerRow + 1).map(row => ({ product: displayText(row[productIndex]), unit: displayText(unitIndex >= 0 ? row[unitIndex] : 'UN') || 'UN', quantity: toNumber(row[quantityIndex]), notes: displayText(notesIndex >= 0 ? row[notesIndex] : '') })));
   if (!items.length) return null;
   const labels: string[] = [];
@@ -125,7 +159,7 @@ const parseUnitSheet = (sheetName: string, rows: unknown[][], points: DeliveryPo
   const matches = labels.map(label => findPoint(points, label)).filter((point): point is DeliveryPointInput => Boolean(point));
   if (new Set(matches.map(point => point.id)).size > 1) return null;
   const genericSheet = /^(?:PLANILHA|SHEET)\s*\d*$/i.test(sheetName);
-  const point = matches[0] || findPoint(points, sheetName) ||
+  const point = matches[0] || (!labels.length ? findPoint(points, sheetName) : undefined) ||
     (!labels.length && genericSheet && points.length === 1 ? points[0] : undefined);
   // An explicit, unmatched place must never be assigned to another registration.
   if (!point) return null;
@@ -133,31 +167,51 @@ const parseUnitSheet = (sheetName: string, rows: unknown[][], points: DeliveryPo
   return { id: makeId(), deliveryPointId: point.id, items };
 };
 
-const parseMatrixSheet = (rows: unknown[][], points: DeliveryPointInput[]) => {
-  const headerRow = rows.findIndex(row => row.some(cell => productHeaders.has(headerKey(cell))) && row.some(cell => unitHeaders.has(headerKey(cell))));
+const parseTableSheet = (rows: unknown[][], points: DeliveryPointInput[], unresolved: Set<string>) => {
+  const headerRow = rows.findIndex(row => row.some(cell => productHeaders.has(headerKey(cell))) &&
+    row.some(cell => unitHeaders.has(headerKey(cell)) || quantityHeaders.has(headerKey(cell))));
   if (headerRow < 0) return [];
   const headers = rows[headerRow];
   const normalized = headers.map(headerKey);
   const productIndex = normalized.findIndex(header => productHeaders.has(header));
   const unitIndex = normalized.findIndex(header => unitHeaders.has(header));
-  if (productIndex < 0 || unitIndex < 0) return [];
-  return headers.map((header, index) => ({ header: displayText(header), index }))
-    .filter(column => column.index !== productIndex && column.index !== unitIndex && column.header && (findPoint(points, column.header) || !ignoredHeaders.has(normalizeKey(column.header))))
-    .map(column => {
-      const point = findPoint(points, column.header);
-      if (!point) return null;
-      const items = aggregateItems(rows.slice(headerRow + 1).map(row => ({ product: displayText(row[productIndex]), unit: displayText(row[unitIndex]) || 'UN', quantity: toNumber(row[column.index]) })));
-      return items.length ? { id: makeId(), deliveryPointId: point.id, items } : null;
-    }).filter((delivery): delivery is ParsedDelivery => Boolean(delivery));
+  const quantityIndex = normalized.findIndex(header => quantityHeaders.has(header));
+  const locationIndexes = normalized.flatMap((header, index) => locationHeaders.has(header) ? [index] : []);
+  const deliveries: ParsedDelivery[] = [];
+  const notesIndex = normalized.findIndex(header => ['OBS', 'OBSERVACAO', 'OBSERVACOES'].includes(header));
+  if (quantityIndex >= 0 && locationIndexes.length) {
+    for (const row of rows.slice(headerRow + 1)) {
+      const item = { product: displayText(row[productIndex]), unit: displayText(row[unitIndex]) || 'UN', quantity: toNumber(row[quantityIndex]), notes: displayText(row[notesIndex]) };
+      if (!item.product || isTotalRow(item.product) || item.quantity <= 0) continue;
+      const labels = locationIndexes.map(index => displayText(row[index])).filter(Boolean);
+      const matches = labels.map(label => findPoint(points, label)).filter((point): point is DeliveryPointInput => Boolean(point));
+      if (new Set(matches.map(point => point.id)).size !== 1) { unresolved.add(labels.join(' / ') || 'Local não informado'); continue; }
+      deliveries.push({ id: makeId(), deliveryPointId: matches[0].id, items: [item] });
+    }
+    return deliveries;
+  }
+  if (unitIndex < 0) return [];
+  for (const [index, header] of headers.entries()) {
+    const label = displayText(header);
+    if (index === productIndex || index === unitIndex || !label || ignoredHeaders.has(normalizeKey(label)) || quantityHeaders.has(headerKey(label))) continue;
+    const items = aggregateItems(rows.slice(headerRow + 1).map(row => ({ product: displayText(row[productIndex]), unit: displayText(row[unitIndex]) || 'UN', quantity: toNumber(row[index]) })));
+    if (!items.length) continue;
+    const point = findPoint(points, label);
+    if (!point) { unresolved.add(label); continue; }
+    deliveries.push({ id: makeId(), deliveryPointId: point.id, items });
+  }
+  return deliveries;
 };
 
 const workerScope = self as unknown as { onmessage: ((event: MessageEvent<ParseExcelRequest>) => void) | null; postMessage: (message: ParseExcelResponse) => void };
 workerScope.onmessage = event => {
   try {
-    const workbook = XLSX.read(event.data.buffer, { type: 'array', cellDates: true, cellNF: true });
+    const workbook = XLSX.read(event.data.buffer, { type: 'array', cellDates: true, cellNF: true, cellText: false });
     let metadata: ExcelOrderMetadata = { deliveryDate: '', consumptionPeriod: '', categoryText: '', generalNotes: '' };
     const deliveries: ParsedDelivery[] = [];
-    workbook.SheetNames.forEach(sheetName => {
+    const unresolved = new Set<string>();
+    workbook.SheetNames.forEach((sheetName, index) => {
+      workerScope.postMessage({ progress: `Lendo aba ${index + 1} de ${workbook.SheetNames.length}: ${sheetName}...` });
       const worksheet = workbook.Sheets[sheetName];
       // Keep month precision when Excel stores a date with a month/year display format.
       Object.entries(worksheet).forEach(([key, cell]) => {
@@ -168,14 +222,23 @@ workerScope.onmessage = event => {
           if (month) worksheet[key] = { t: 's', v: month };
         }
       });
-      const rows = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: '', blankrows: false }) as unknown[][];
+      const rows = valueRows(worksheet);
       if (!rows.length) return;
       const sheet = extractMetadata(rows);
       metadata = { deliveryDate: metadata.deliveryDate || sheet.deliveryDate, consumptionPeriod: metadata.consumptionPeriod || sheet.consumptionPeriod, category: metadata.category || sheet.category, categoryText: metadata.categoryText || sheet.categoryText, generalNotes: metadata.generalNotes || sheet.generalNotes };
       const unit = parseUnitSheet(sheetName, rows, event.data.deliveryPoints);
       if (unit) deliveries.push(unit);
-      else deliveries.push(...parseMatrixSheet(rows, event.data.deliveryPoints));
+      else {
+        deliveries.push(...parseTableSheet(rows, event.data.deliveryPoints, unresolved));
+        const quantityRow = rows.findIndex(row => row.some(cell => quantityHeaders.has(headerKey(cell))) && row.some(cell => productHeaders.has(headerKey(cell))));
+        const quantityColumn = quantityRow < 0 ? -1 : rows[quantityRow].findIndex(cell => quantityHeaders.has(headerKey(cell)));
+        const hasPositiveItems = rows.slice(quantityRow + 1).some(row => toNumber(row[quantityColumn]) > 0);
+        const hasQuantityHeader = rows.some(row => row.some(cell => quantityHeaders.has(headerKey(cell))) && row.some(cell => productHeaders.has(headerKey(cell))));
+        const hasRowLocations = rows.some(row => row.some(cell => locationHeaders.has(headerKey(cell))) && row.some(cell => productHeaders.has(headerKey(cell))));
+        if (hasPositiveItems && hasQuantityHeader && !hasRowLocations) unresolved.add(`Aba ${sheetName} (local não identificado)`);
+      }
     });
+    if (unresolved.size) throw new Error(`Importação interrompida para evitar dados incompletos. Locais não identificados na operação selecionada: ${[...unresolved].slice(0, 8).join('; ')}${unresolved.size > 8 ? ` e mais ${unresolved.size - 8}` : ''}. Selecione a operação correta e confira os nomes ou códigos dos locais.`);
     workerScope.postMessage({ result: { metadata, deliveries: normalizeDeliveries(deliveries) } });
   } catch (error) {
     workerScope.postMessage({ error: error instanceof Error ? error.message : 'Não foi possível ler a planilha.' });
