@@ -1,5 +1,5 @@
 import React, { useEffect } from 'react';
-import { LayoutDashboard, Package, BarChart3, X, History, Users, LogOut, Lock, ClipboardCheck, Building2, WalletCards } from 'lucide-react';
+import { LayoutDashboard, Package, BarChart3, X, History, Users, LogOut, Lock, ClipboardCheck, Building2, WalletCards, ReceiptText } from 'lucide-react';
 import type { Role } from '../types';
 
 interface SidebarProps {
@@ -17,6 +17,7 @@ const Sidebar: React.FC<SidebarProps> = ({ activeTab, setActiveTab, isOpen, togg
     { id: 'dashboard', label: 'Painel', icon: LayoutDashboard },
     { id: 'inventory', label: 'Estoque', icon: Package },
     { id: 'operations', label: 'Operações', icon: Building2 },
+    { id: 'igeve-billing', label: 'Faturamento IGEVE', icon: ReceiptText },
     { id: 'accounts-payable', label: 'Contas a Pagar', icon: WalletCards },
     { id: 'reports', label: 'Relatórios', icon: BarChart3 },
     { id: 'audit', label: 'Auditoria', icon: ClipboardCheck, adminOnly: true },

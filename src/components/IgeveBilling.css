@@ -1,0 +1,22 @@
+.igeve-billing { display: grid; gap: 1.25rem; }
+.igeve-heading { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 1rem; }
+.igeve-heading h1, .igeve-billing p { text-align: left; margin-bottom: .5rem; }
+.igeve-heading h1 { font-size: 2rem; }
+.igeve-panel.card { max-width: none; padding: 1.5rem; min-width: 0; }
+.igeve-panel h2 { margin-bottom: 1rem; }
+.igeve-actions { display: flex; gap: .5rem; flex-wrap: wrap; }
+.igeve-billing .button { width: auto; gap: .4rem; }
+.igeve-billing button:disabled { opacity: .5; cursor: not-allowed; }
+.igeve-filters { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 1rem; }
+.igeve-billing label { display: block; font-size: .9rem; }
+.igeve-billing .input-field { width: 100%; margin: .5rem 0; }
+.igeve-billing small { color: var(--text-muted); }
+.igeve-editor { position: fixed; inset: 0; background: rgba(0,0,0,.8); z-index: 10000; overflow: auto; padding: 2rem; display: flex; align-items: flex-start; justify-content: center; }
+.igeve-editor > form { max-width: 1200px !important; display: grid; gap: 1rem; }
+.igeve-editor td input { min-width: 100px; }
+.igeve-editor td:first-child input { min-width: 220px; }
+@media(max-width:600px) { .igeve-editor { padding: .5rem; } .igeve-panel.card { padding: 1rem; } .igeve-heading h1 { font-size: 1.6rem; } }
+.igeve-billing .table-container { width: 100%; overflow-x: auto; }
+.igeve-billing table { width: 100%; border-collapse: collapse; }
+.igeve-billing th, .igeve-billing td { padding: .8rem; text-align: left; border-bottom: 1px solid var(--border); }
+.igeve-billing th { white-space: nowrap; }

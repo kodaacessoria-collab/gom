@@ -12,6 +12,7 @@ import Auth from './components/Auth';
 import Settings from './components/Settings';
 import StockAudit from './components/StockAudit';
 import AccountsPayable from './components/AccountsPayable';
+import IgeveBilling from './components/IgeveBilling';
 import { supabase } from './lib/supabase';
 import type { Role } from './types';
 import { mapDbRoleToRole } from './types';
@@ -154,7 +155,7 @@ function App() {
   const renderContent = () => {
     // Role-based route protection
     const allowedTabs: Record<Role, string[]> = {
-      admin: ['dashboard', 'inventory', 'slips', 'operations', 'purchase-orders', 'accounts-payable', 'reports', 'audit', 'logs', 'users', 'settings'],
+      admin: ['dashboard', 'inventory', 'slips', 'operations', 'purchase-orders', 'accounts-payable', 'igeve-billing', 'reports', 'audit', 'logs', 'users', 'settings'],
       om: ['inventory', 'reports', 'settings'],
       red: ['reports', 'settings']
     };
@@ -178,6 +179,7 @@ function App() {
       case 'operations': return <Operations />;
       case 'purchase-orders': return <PurchaseOrders />;
       case 'accounts-payable': return <AccountsPayable />;
+      case 'igeve-billing': return <IgeveBilling />;
       case 'reports': return <Reports userRole={userRole} />;
       case 'logs': return <Logs />;
       case 'users': return <Users />;
