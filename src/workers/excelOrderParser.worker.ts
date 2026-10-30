@@ -72,7 +72,12 @@ const findPointUncached = (points: DeliveryPointInput[], label: string) => {
       .map(alias => alias.length)),
   })).filter(candidate => candidate.score > 0);
   const bestScore = Math.max(0, ...contained.map(candidate => candidate.score));
-  return unique(contained.filter(candidate => candidate.score === bestScore).map(candidate => candidate.point));
+  if (contained.length) return unique(contained.filter(candidate => candidate.score === bestScore).map(candidate => candidate.point));
+  // Orders may omit a suffix present in the registration (for example,
+  // "CEI Rubi" versus "CEI Rubi - Guainazes"). Require whole words and a
+  // single candidate; never choose the first of several matching places.
+  if (simple.length < 5) return undefined;
+  return unique(points.filter(point => ` ${normalizeLabel(point.name)} `.includes(` ${simple} `)));
 };
 
 // Normalize each distinct label once, even in large row-based workbooks.
