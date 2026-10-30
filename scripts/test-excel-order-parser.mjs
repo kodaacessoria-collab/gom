@@ -113,3 +113,26 @@ for (const registrations of [[school, neighborhood], [neighborhood, school]]) {
 }
 parse([...metadata, ['PRODUTO', 'UND', 'CMEI Professora Anne Cleide Pimentel Bezerra - ANTARES'], ['ARROZ', 'KG', 10]], 'Pedido', [school, { ...school, id: 'duplicate', code: '1B' }, neighborhood], 'operação selecionada');
 console.log('OK: nomes completos têm prioridade sobre bairros; duplicados continuam bloqueados.');
+
+// Real registration uses a city suffix omitted by PEDIDO SP DIETAS.xlsx.
+const rubi = { id: 'rubi', code: '1A', name: 'CEI Rubi - Guainazes' };
+const mendonca = { id: 'mendonca', code: '1B', name: 'CEI Mendonça (Guaianazes)' };
+const spPoints = [rubi, mendonca];
+const spMetadata = [['Categoria', 'Dietas e Fórmulas'], ['Data de Entrega', '30/10/2026']];
+const spMatrix = parse([...spMetadata, ['PRODUTO', 'UND', 'CEI Rubi', 'CEI Mendonça'], ['FÓRMULA', 'LT', 4, 6]], 'Pedido', spPoints);
+assert.deepEqual(spMatrix.deliveries.map(d => [d.deliveryPointId, d.items[0].quantity]), [['rubi', 4], ['mendonca', 6]]);
+assert.equal(spMatrix.metadata.category, 'Dietas e Fórmulas');
+const spRows = parse([...spMetadata, ['LOCAL', 'PRODUTO', 'UND', 'QTD'], ['CEI Rubi', 'FÓRMULA', 'LT', 4]], 'Pedido', spPoints);
+assert.equal(spRows.deliveries[0].deliveryPointId, 'rubi');
+const spUnit = parse([...spMetadata, ['LOCAL', 'CEI Rubi'], ['PRODUTO', 'UND', 'QTD'], ['FÓRMULA', 'LT', 4]], 'Pedido', spPoints);
+assert.equal(spUnit.deliveries[0].deliveryPointId, 'rubi');
+const abbreviatedRows = [...spMetadata, ['PRODUTO', 'UND', 'CEI Rubi'], ['FÓRMULA', 'LT', 4]];
+parse(abbreviatedRows, 'Pedido', [{ ...rubi, name: 'CEI Rubiana' }], 'CEI Rubi');
+parse(abbreviatedRows, 'Pedido', [{ ...rubi, name: 'CEI Rubiácea' }], 'CEI Rubi');
+for (const registrations of [
+  [rubi, { ...rubi, id: 'other', code: '2A', name: 'CEI Rubi - Centro' }],
+  [{ ...rubi, id: 'other', code: '2A', name: 'CEI Rubi - Centro' }, rubi],
+]) parse(abbreviatedRows, 'Pedido', registrations, 'CEI Rubi');
+const exactRubi = parse(abbreviatedRows, 'Pedido', [...spPoints, { id: 'exact', code: '2A', name: 'CEI Rubi' }]);
+assert.equal(exactRubi.deliveries[0].deliveryPointId, 'exact');
+console.log('OK: CEI Rubi com sufixo no cadastro em matriz, linhas e unidade; nomes semelhantes e abreviações ambíguas continuam bloqueados.');
