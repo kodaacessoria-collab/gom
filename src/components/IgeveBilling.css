@@ -41,3 +41,5 @@
 
 /* Keep the category menu above the following cards, which create their own stacking contexts. */
 .igeve-filter-panel.card { position: relative; z-index: 2; overflow: visible; }
+.igeve-billing .igeve-price-input { min-width: 140px; max-width: 200px; margin: 0; }
+.igeve-price-table .igeve-heading { margin-bottom: 1rem; }

@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { isIgeveOperation, billingDateInRange, invoiceTotal, lineTotal, companyTotals, validateInvoice, sortBillingRows, locationTotals, locationBillingInvoices, billingPriceKey, createLocationBillingInvoice, locationInvoiceConflict, effectiveBillingInvoices, billingCategoryMatches, billingInvoiceCategoryMatches, billingCategoryOptions } from '../src/lib/igeveBilling.ts';
+import { isIgeveOperation, billingDateInRange, invoiceTotal, lineTotal, companyTotals, validateInvoice, sortBillingRows, locationTotals, locationBillingInvoices, billingOperationPriceKey, billingPriceCatalog, billingPricesFromEntries, parseBillingPrice, billingUnitPrice, createDeliveryBillingInvoice, createLocationBillingInvoice, locationInvoiceConflict, effectiveBillingInvoices, billingCategoryMatches, billingInvoiceCategoryMatches, billingCategoryOptions } from '../src/lib/igeveBilling.ts';
 for (const city of ['Maceió', 'Gauianases', 'Guaianases', 'Guaianazes', 'Boituva', 'Mongaguá', 'Rio de Janeiro']) {
   assert.equal(isIgeveOperation({ id: city, name: `Operação ${city}`, city }), true, city);
 }
@@ -91,7 +91,7 @@ const octoberOrder = { ...source, deliveryDate: '2026-10-28', importedAt: '2026-
 const reportSource = {
   orders: [octoberOrder, { ...octoberOrder, id: 'monthly', deliveryDate: '2026-10', deliveries: [{ ...delivery, deliveryPointId: 'point-2' }] }, { ...octoberOrder, id: 'september', deliveryDate: '2026-09-30' }, { ...octoberOrder, id: 'november', deliveryDate: '2026-11-01' }, { ...octoberOrder, id: 'outside', operationId: 'other' }],
   operations: reportOperations, points: reportPoints,
-  prices: { [billingPriceKey('Arroz', 'KG')]: { salePrice: 2.55 } }, invoices: [],
+  prices: { [billingOperationPriceKey('maceio', 'Estocáveis', 'Arroz', 'KG')]: { salePrice: 2.55 } }, invoices: [],
   start: '2026-10-01', end: '2026-10-31', draftDate: '2026-11-02',
 };
 const reportSnapshot = structuredClone(reportSource);
@@ -169,7 +169,7 @@ assert.equal(locationBillingInvoices({ ...reportSource, orders: multiOrders, cat
 const multiGroup = locationTotals(multiInvoices, multiOrders, reportPoints)[0];
 const makeMulti = selection => createLocationBillingInvoice(multiGroup, multiOrders, reportSource.prices, reportSource.start, reportSource.end, selection, reportSource.draftDate);
 const multiLocal = makeMulti(['DIETA', 'Estocáveis']);
-assert.equal(multiLocal.items[0].quantity, 6, 'Soma somente as entregas das categorias escolhidas');
+assert.equal(multiLocal.items.reduce((sum, item) => sum + item.quantity, 0), 6, 'Soma somente as entregas das categorias escolhidas');
 assert.equal(multiLocal.id, makeMulti(['Estocáveis', 'DIETA', 'DIETA']).id, 'Ordem de seleção e repetições não criam outro faturamento');
 assert.deepEqual(multiLocal.location.categories, ['DIETA', 'Estocáveis']);
 assert.equal(billingInvoiceCategoryMatches(multiLocal, ['LIMPEZA']), false);
@@ -191,3 +191,37 @@ const threeSelections = ['Estocáveis', 'Dietas e Fórmulas', 'Proteínas'];
 assert.deepEqual(fullCategoryOptions.filter(category => billingCategoryMatches(category, threeSelections)).sort(), [...threeSelections].sort());
 assert.equal(fullCategoryOptions.filter(category => billingCategoryMatches(category, [])).length, 6);
 console.log('OK: catálogo completo de categorias, categorias históricas e seleção de uma, várias ou todas.');
+
+const priceOrders = [octoberOrder, { ...octoberOrder, id: 'repeat', deliveries: [{ ...delivery, items: [{ product: ' arroz ', unit: 'kg', quantity: 1 }] }] }, dietOrder, { ...octoberOrder, id: 'boituva-price', operationId: 'boituva' }];
+const productCatalog = billingPriceCatalog(priceOrders, reportOperations, [], []);
+assert.equal(productCatalog.length, 3, 'Pré-cadastra produto por operação/categoria/unidade e elimina repetições');
+assert.ok(productCatalog.every(entry => entry.salePrice === null), 'Catálogo começa com preços a preencher');
+const priceSnapshot = structuredClone(priceOrders);
+const definedPrices = productCatalog.map(entry => ({ ...entry, salePrice: entry.operationId === 'boituva' ? 9 : entry.category === 'DIETA' ? 7 : 5 }));
+const operationPrices = billingPricesFromEntries(definedPrices);
+assert.equal(billingUnitPrice(operationPrices, 'maceio', 'Estocáveis', 'Arroz', 'KG'), 5);
+assert.equal(billingUnitPrice(operationPrices, 'boituva', 'Estocáveis', 'Arroz', 'KG'), 9, 'Mesmo produto usa outro preço em outra operação');
+assert.equal(billingUnitPrice(operationPrices, 'maceio', 'DIETA', 'Arroz', 'KG'), 7, 'Mesmo produto usa outro preço em outra categoria');
+assert.equal(billingUnitPrice(operationPrices, 'maceio', 'Estocáveis', 'Arroz', 'UN'), 0, 'Não usa preço de outra unidade');
+assert.equal(billingUnitPrice(operationPrices, 'maceio', 'Limpeza', 'Arroz', 'KG'), 0, 'Não usa preço de outra categoria');
+assert.equal(billingOperationPriceKey('maceio', 'Estocáveis', 'Arroz', 'KG'), billingOperationPriceKey('maceio', 'ESTOCAVEIS', ' arroz ', 'kg'));
+const newInvoice = createDeliveryBillingInvoice(octoberOrder, delivery, reportOperations[0], point, operationPrices, reportSource.draftDate);
+assert.equal(newInvoice.items[0].price, 5);
+assert.equal(invoiceTotal(newInvoice), 15);
+const repricedSources = locationBillingInvoices({ ...reportSource, orders: [octoberOrder, dietOrder], prices: operationPrices });
+const repricedLocal = createLocationBillingInvoice(locationTotals(repricedSources, [octoberOrder, dietOrder], reportPoints)[0], [octoberOrder, dietOrder], operationPrices, reportSource.start, reportSource.end, [], reportSource.draftDate);
+assert.equal(repricedLocal.items.length, 2, 'Categorias com preços próprios ficam em linhas distintas no faturamento por local');
+assert.equal(invoiceTotal(repricedLocal), 36, 'Cada quantidade usa o preço da categoria correta: 3×5 + 3×7');
+assert.equal(locationBillingInvoices({ ...reportSource, invoices: [billedInNovember], prices: operationPrices }).find(invoice => invoice.id === billedInNovember.id).items[0].price, 20, 'Não altera preços de faturamentos salvos');
+assert.equal(billingPriceCatalog([], reportOperations, [], definedPrices).length, 3, 'Preços salvos preservam catálogo mesmo se a origem for removida');
+const zeroPrice = { ...definedPrices[0], salePrice: 0 };
+assert.equal(billingPricesFromEntries([zeroPrice])[zeroPrice.key].salePrice, 0, 'Preço zero é válido');
+assert.equal(Object.keys(billingPricesFromEntries([{ ...zeroPrice, salePrice: null }])).length, 0, 'Preço pendente não é cadastrado como zero');
+assert.equal(parseBillingPrice(''), null);
+assert.equal(parseBillingPrice('0'), 0);
+assert.equal(parseBillingPrice('12.34'), 12.34);
+for (const value of ['-1', 'Infinity', 'NaN', '1.234']) assert.throws(() => parseBillingPrice(value));
+assert.deepEqual(priceOrders, priceSnapshot, 'Montar o catálogo não altera os romaneios');
+console.log('OK: catálogo automático, preços por operação/categoria/unidade, preço zero, campos pendentes e preenchimento dos faturamentos.');
+
+assert.equal(billingUnitPrice({ 'ARROZ|KG': { salePrice: 999 } }, 'maceio', 'Estocáveis', 'Arroz', 'KG'), 0, 'Nunca busca preço global para uma operação/categoria sem preço cadastrado');

@@ -1,10 +1,10 @@
 import { getOrderControlNumber } from './orderControlNumber.ts';
 
 export const BILLING_PREFIX = 'gom_igeve_invoice_';
-export const SOURCE_KEYS = ['gom_delivery_operations', 'gom_delivery_points', 'gom_delivery_operation_orders', 'gom_delivery_product_prices'];
+export const SOURCE_KEYS = ['gom_delivery_operations', 'gom_delivery_points', 'gom_delivery_operation_orders'];
 export interface BillingOperation { id: string; name: string; city: string }
 export interface BillingPoint { id: string; name: string; operationId: string }
-export interface BillingItem { id: string; product: string; unit: string; quantity: number; price: number; billedQuantity?: number }
+export interface BillingItem { id: string; product: string; unit: string; quantity: number; price: number; billedQuantity?: number; category?: string }
 export interface BillingOrder {
   id: string; operationId: string; category: string; deliveryDate: string; importedAt: string;
   deliveries: { id: string; deliveryPointId: string; items: { product: string; unit: string; quantity: number }[] }[];
@@ -37,6 +37,40 @@ export const billingInvoiceCategoryMatches = (invoice: BillingInvoice, selection
   return categories.some(category => billingCategoryMatches(category, selection));
 };
 export const billingPriceKey = (product: string, unit: string) => `${normalizeBillingText(product)}|${normalizeBillingText(unit || 'UN')}`;
+export const BILLING_PRICE_PREFIX = 'gom_igeve_price_';
+export interface BillingPriceEntry {
+  key: string; operationId: string; category: string; product: string; unit: string; salePrice: number | null;
+}
+export interface SavedBillingPrice { entry: BillingPriceEntry; version: string }
+export const billingOperationPriceKey = (operationId: string, category: string, product: string, unit: string) =>
+  `${BILLING_PRICE_PREFIX}${encodeURIComponent(JSON.stringify([operationId, normalizeBillingText(category), normalizeBillingText(product), normalizeBillingText(unit || 'UN')]))}`;
+export const parseBillingPrice = (value: string): number | null => {
+  if (!value.trim()) return null;
+  const price = Number(value);
+  if (!Number.isFinite(price) || price < 0 || Math.abs(price * 100 - Math.round(price * 100)) > 1e-6) throw new Error('Informe um preço maior ou igual a zero, com até duas casas decimais.');
+  return Math.round(price * 100) / 100;
+};
+export function billingPriceCatalog(orders: BillingOrder[], operations: BillingOperation[], invoices: BillingInvoice[], saved: BillingPriceEntry[]): BillingPriceEntry[] {
+  const validOperations = new Set(operations.filter(isIgeveOperation).map(operation => operation.id));
+  const catalog = new Map<string, BillingPriceEntry>();
+  const add = (operationId: string, category: string, product: string, unit: string) => {
+    if (!validOperations.has(operationId) || !category.trim() || !product.trim()) return;
+    const key = billingOperationPriceKey(operationId, category, product, unit);
+    if (!catalog.has(key)) catalog.set(key, { key, operationId, category, product: product.trim(), unit: unit.trim() || 'UN', salePrice: null });
+  };
+  for (const order of orders) for (const delivery of order.deliveries) for (const item of delivery.items) add(order.operationId, order.category, item.product, item.unit);
+  for (const invoice of invoices) for (const item of invoice.items) {
+    const category = item.category || (!invoice.location ? invoice.category : invoice.location.categories?.length === 1 ? invoice.location.categories[0] : invoice.location.category && !invoice.location.category.includes(',') ? invoice.location.category : '');
+    if (category) add(invoice.operationId, category, item.product, item.unit);
+  }
+  for (const entry of saved) if (validOperations.has(entry.operationId)) catalog.set(entry.key, { ...entry });
+  return [...catalog.values()].sort((a, b) => a.operationId.localeCompare(b.operationId) || a.category.localeCompare(b.category, 'pt-BR') || a.product.localeCompare(b.product, 'pt-BR') || a.unit.localeCompare(b.unit, 'pt-BR'));
+}
+export const billingPricesFromEntries = (entries: BillingPriceEntry[]): BillingPrices => Object.fromEntries(entries
+  .filter(entry => entry.salePrice !== null && Number.isFinite(entry.salePrice) && entry.salePrice >= 0)
+  .map(entry => [entry.key, { salePrice: entry.salePrice! }]));
+export const billingUnitPrice = (prices: BillingPrices, operationId: string, category: string, product: string, unit: string) =>
+  prices[billingOperationPriceKey(operationId, category, product, unit)]?.salePrice ?? 0;
 export const lineTotal = (item: BillingItem) => Math.round((item.billedQuantity ?? item.quantity) * item.price * 100) / 100;
 export const invoiceTotal = (invoice: BillingInvoice) => Math.round(invoice.items.reduce((sum, item) => sum + lineTotal(item), 0) * 100) / 100;
 export const validateInvoice = (invoice: BillingInvoice) => {
@@ -125,7 +159,7 @@ export function createDeliveryBillingInvoice(order: BillingOrder, delivery: Bill
     control: getOrderControlNumber(order.importedAt), operationId: order.operationId,
     operation: operation?.name || order.operationId, destination: point?.name || delivery.deliveryPointId,
     category: order.category, company: '', cnpj: '', date, notes: '',
-    items: delivery.items.map((item, index) => ({ ...item, id: `${delivery.id}_${index}`, price: prices[billingPriceKey(item.product, item.unit)]?.salePrice || 0 })),
+    items: delivery.items.map((item, index) => ({ ...item, id: `${delivery.id}_${index}`, category: order.category, price: billingUnitPrice(prices, order.operationId, order.category, item.product, item.unit) })),
   };
 }
 
@@ -182,9 +216,8 @@ export function createLocationBillingInvoice(group: LocationBillingTotal, orders
     if (!invoice.parentId) deliveryKeys.add(sourceKey);
     const sourceItems = !invoice.parentId ? sources.get(sourceKey)?.items || invoice.items : invoice.items;
     for (const sourceItem of sourceItems) {
-      const key = JSON.stringify([normalizeBillingText(sourceItem.product), normalizeBillingText(sourceItem.unit || 'UN')]);
-      const savedItem = invoice.items.find(item => billingPriceKey(item.product, item.unit) === billingPriceKey(sourceItem.product, sourceItem.unit));
-      const row = items.get(key) || { id: key, product: sourceItem.product, unit: sourceItem.unit || 'UN', quantity: 0, billedQuantity: 0, price: prices[billingPriceKey(sourceItem.product, sourceItem.unit)]?.salePrice ?? savedItem?.price ?? 0 };
+      const key = JSON.stringify([normalizeBillingText(invoice.category), normalizeBillingText(sourceItem.product), normalizeBillingText(sourceItem.unit || 'UN')]);
+      const row = items.get(key) || { id: key, product: sourceItem.product, unit: sourceItem.unit || 'UN', quantity: 0, billedQuantity: 0, category: invoice.category, price: billingUnitPrice(prices, invoice.operationId, invoice.category, sourceItem.product, sourceItem.unit) };
       row.quantity = Math.round((row.quantity + sourceItem.quantity) * 1e6) / 1e6;
       row.billedQuantity = row.quantity;
       items.set(key, row);
