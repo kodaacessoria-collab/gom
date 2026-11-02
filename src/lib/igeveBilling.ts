@@ -46,3 +46,21 @@ export const billingDateInRange = (value: string, start: string, end: string) =>
   const last = monthly ? `${value}-${new Date(Number(value.slice(0, 4)), Number(value.slice(5, 7)), 0).getDate()}` : value;
   return (!start || last >= start) && (!end || first <= end);
 };
+
+export interface BillingSort { column: string; direction: 'asc' | 'desc' }
+type SortValue = string | number;
+const billingCollator = new Intl.Collator('pt-BR', { numeric: true, sensitivity: 'base' });
+export function sortBillingRows<T>(rows: T[], sort: BillingSort | undefined, value: (row: T, column: string) => SortValue | SortValue[]): T[] {
+  if (!sort) return rows;
+  return [...rows].sort((a, b) => {
+    const left = [value(a, sort.column)].flat();
+    const right = [value(b, sort.column)].flat();
+    for (let index = 0; index < Math.max(left.length, right.length); index++) {
+      const x = left[index] ?? '';
+      const y = right[index] ?? '';
+      const comparison = typeof x === 'number' && typeof y === 'number' ? x - y : billingCollator.compare(String(x), String(y));
+      if (comparison) return sort.direction === 'asc' ? comparison : -comparison;
+    }
+    return 0;
+  });
+}

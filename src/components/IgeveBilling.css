@@ -20,3 +20,8 @@
 .igeve-billing table { width: 100%; border-collapse: collapse; }
 .igeve-billing th, .igeve-billing td { padding: .8rem; text-align: left; border-bottom: 1px solid var(--border); }
 .igeve-billing th { white-space: nowrap; }
+
+.igeve-sort { display: inline-flex; align-items: center; gap: .5rem; padding: .2rem 0; border: 0; background: transparent; color: inherit; font: inherit; font-weight: inherit; text-align: left; cursor: pointer; }
+.igeve-sort svg { flex-shrink: 0; opacity: .6; }
+.igeve-sort:hover, .igeve-billing th[aria-sort="ascending"], .igeve-billing th[aria-sort="descending"] { color: var(--primary, #818cf8); }
+.igeve-sort:focus-visible { outline: 2px solid var(--primary, #818cf8); outline-offset: 4px; border-radius: 3px; }
