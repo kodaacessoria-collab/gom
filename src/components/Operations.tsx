@@ -1,3 +1,4 @@
+import { buildOperationBillingSummary, buildOperationBillingWorkbook, buildPeriodBillingArchive, selectOperationBillingOrders } from '../lib/operationBillingExcel';
 import { resolveDeliveryPointSectors } from '../lib/deliveryPointSectors';
 import { readAllRows } from '../lib/readAllRows';
 import { deliveryDateInRange, isDeliveryMonth } from '../lib/deliveryDate';
@@ -458,6 +459,8 @@ const Operations: React.FC = () => {
   const [reportStartDate, setReportStartDate] = useState(() => `${todayIso().slice(0, 8)}01`);
   const [reportEndDate, setReportEndDate] = useState(todayIso);
   const [billingOrderId, setBillingOrderId] = useState('');
+  const [billingArchiveBusy, setBillingArchiveBusy] = useState(false);
+  const [billingArchiveMessage, setBillingArchiveMessage] = useState('');
   const [reportProduct, setReportProduct] = useState('Todos');
   const [reportDeliveryPointId, setReportDeliveryPointId] = useState('Todos');
   const [sharedStateReady, setSharedStateReady] = useState(false);
@@ -2384,10 +2387,7 @@ const Operations: React.FC = () => {
     return `${sanitizeFileName(`RELATORIO PRODUTOS - ${operationName} - ${categoryName} - ${productName} - ${pointName} - ${formatDate(reportStartDate)} a ${formatDate(reportEndDate)}`)}.${extension}`;
   };
 
-  const billingOrders = useMemo(() => operationOrders.filter(order =>
-    (reportCategory === 'Todas' || order.category === reportCategory) &&
-    deliveryDateInRange(order.deliveryDate, reportStartDate, reportEndDate)
-  ), [operationOrders, reportCategory, reportStartDate, reportEndDate]);
+  const billingOrders = useMemo(() => activeOperation ? selectOperationBillingOrders(operationOrders, activeOperation.id, reportStartDate, reportEndDate, reportCategory) : [], [operationOrders, activeOperation, reportCategory, reportStartDate, reportEndDate]);
   const billingOrder = billingOrders.find(order => order.id === billingOrderId);
   const billingScopeLabel = billingOrderId
     ? billingOrder
@@ -2395,40 +2395,7 @@ const Operations: React.FC = () => {
       : 'Romaneio fora dos filtros selecionados'
     : `Periodo: ${formatDate(reportStartDate)} a ${formatDate(reportEndDate)}`;
 
-  const productsByDateReport = useMemo(() => {
-    const filteredOrders = billingOrders.filter(order => !billingOrderId || order.id === billingOrderId);
-    const dates = Array.from(new Set(filteredOrders.map(order => order.deliveryDate))).sort();
-    const productsByKey = new Map<string, { product: string; unit: string; quantities: Record<string, number>; total: number }>();
-
-    filteredOrders.forEach(order => {
-      order.deliveries.forEach(delivery => {
-        aggregateDeliveryItems(delivery.items).forEach(item => {
-          const key = stockKey(item.product, item.unit);
-          const current = productsByKey.get(key) || { product: item.product, unit: item.unit, quantities: {}, total: 0 };
-          current.quantities[order.deliveryDate] = (current.quantities[order.deliveryDate] || 0) + item.quantity;
-          current.total += item.quantity;
-          productsByKey.set(key, current);
-        });
-      });
-    });
-
-    const rows = Array.from(productsByKey.values()).sort((a, b) =>
-      a.product.localeCompare(b.product) || a.unit.localeCompare(b.unit)
-    );
-    const dateTotals = dates.reduce<Record<string, number>>((acc, date) => {
-      acc[date] = rows.reduce((sum, row) => sum + (row.quantities[date] || 0), 0);
-      return acc;
-    }, {});
-
-    return {
-      dates,
-      rows,
-      orderCount: filteredOrders.length,
-      deliveryCount: filteredOrders.reduce((sum, order) => sum + order.deliveries.length, 0),
-      dateTotals,
-      grandTotal: rows.reduce((sum, row) => sum + row.total, 0),
-    };
-  }, [billingOrders, billingOrderId]);
+  const productsByDateReport = useMemo(() => buildOperationBillingSummary(billingOrders.filter(order => !billingOrderId || order.id === billingOrderId)), [billingOrders, billingOrderId]);
 
   const generateProductsByDateExcel = () => {
     if (!activeOperation || productsByDateReport.rows.length === 0) {
@@ -2436,53 +2403,25 @@ const Operations: React.FC = () => {
       return;
     }
     const categoryLabel = reportCategory === 'Todas' ? 'Todas as categorias' : reportCategory;
-    const data: (string | number)[][] = [
-      [`Faturamento dos produtos entregues - ${activeOperation.name}`],
-      ['Operação', activeOperation.name, 'Categoria', categoryLabel],
-      ['Seleção', billingScopeLabel],
-      ['Pedidos considerados', productsByDateReport.orderCount, 'Entregas somadas', productsByDateReport.deliveryCount],
-      [],
-      ['Produto entregue', 'UND', 'Quantidade', 'Preço de custo', 'Preço de venda', 'Total da venda'],
-      ...productsByDateReport.rows.map(row => {
-        const price = productPrices[stockKey(row.product, row.unit)] || { costPrice: 0, salePrice: 0 };
-        return [row.product, row.unit, row.total, price.costPrice, price.salePrice, row.total * price.salePrice];
-      }),
-      ['TOTAL GERAL', '', productsByDateReport.grandTotal, '', '',
-        productsByDateReport.rows.reduce((sum, row) => sum + row.total * (productPrices[stockKey(row.product, row.unit)]?.salePrice || 0), 0)],
-    ];
-    const workbook = XLSX.utils.book_new();
-    const sheet = XLSX.utils.aoa_to_sheet(data);
-    const headerRowIndex = 5;
-    const firstDataRowIndex = headerRowIndex + 1;
-    const totalRowIndex = data.length - 1;
-    for (let row = firstDataRowIndex; row <= totalRowIndex; row += 1) {
-      [3, 4, 5].forEach(column => {
-        const cell = sheet[XLSX.utils.encode_cell({ r: row, c: column })];
-        if (cell) cell.z = 'R$ #,##0.00';
-      });
-    }
-    // Fórmulas com valor inicial em cache para leitores sem recálculo automático.
-    for (let row = firstDataRowIndex; row < totalRowIndex; row += 1) {
-      const totalCell = sheet[XLSX.utils.encode_cell({ r: row, c: 5 })];
-      totalCell.f = `C${row + 1}*E${row + 1}`;
-    }
-    [2, 5].forEach(column => {
-      const totalCell = sheet[XLSX.utils.encode_cell({ r: totalRowIndex, c: column })];
-      const firstCell = XLSX.utils.encode_cell({ r: firstDataRowIndex, c: column });
-      const lastCell = XLSX.utils.encode_cell({ r: totalRowIndex - 1, c: column });
-      totalCell.f = `SUM(${firstCell}:${lastCell})`;
-    });
-    sheet['!cols'] = [
-      { wch: 42 },
-      { wch: 12 }, { wch: 14 }, { wch: 18 }, { wch: 18 }, { wch: 18 },
-    ];
-    sheet['!autofilter'] = { ref: XLSX.utils.encode_range({ s: { r: headerRowIndex, c: 0 }, e: { r: totalRowIndex - 1, c: 5 } }) };
-    sheet['!pageSetup'] = { orientation: 'landscape', fitToWidth: 1, fitToHeight: 0 };
-    sheet['!margins'] = { left: 0.15, right: 0.15, top: 0.25, bottom: 0.25, header: 0.1, footer: 0.1 };
-    XLSX.utils.book_append_sheet(workbook, sheet, 'Faturamento');
+    const workbook = buildOperationBillingWorkbook(productsByDateReport, activeOperation.name, categoryLabel, billingScopeLabel, productPrices);
     const categoryName = reportCategory === 'Todas' ? 'Todas categorias' : reportCategory;
     const fileName = sanitizeFileName(`FATURAMENTO DE ENTREGAS - ${activeOperation.name} - ${categoryName} - ${billingScopeLabel}`);
     XLSX.writeFile(workbook, `${fileName}.xlsx`);
+  };
+
+  const generateSeparateBillingExcels = async () => {
+    if (!activeOperation || billingArchiveBusy) return;
+    setBillingArchiveBusy(true); setBillingArchiveMessage('Gerando um arquivo Excel para cada romaneio do período...');
+    try {
+      const archive = await buildPeriodBillingArchive(operationOrders, activeOperation, reportStartDate, reportEndDate, reportCategory, productPrices);
+      const url = URL.createObjectURL(new Blob([new Uint8Array(archive.bytes).buffer], { type: 'application/zip' }));
+      const link = document.createElement('a');
+      link.href = url; link.download = archive.filename;
+      document.body.appendChild(link); link.click(); link.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+      setBillingArchiveMessage(`${archive.count} arquivo(s) Excel gerado(s), um para cada romaneio, em um único ZIP.`);
+    } catch (error) { setBillingArchiveMessage(error instanceof Error ? error.message : 'Não foi possível gerar os arquivos. Tente novamente.'); }
+    finally { setBillingArchiveBusy(false); }
   };
 
   const generateProductsByDatePdf = async () => {
@@ -4021,8 +3960,13 @@ const Operations: React.FC = () => {
                 <button type="button" className="button button-outline excel-action" disabled={productsByDateReport.rows.length === 0} onClick={generateProductsByDateExcel}>
                   <FileSpreadsheet size={17} style={{ marginRight: '0.45rem' }} /> Gerar Excel
                 </button>
+                <button type="button" className="button button-outline excel-action" disabled={billingArchiveBusy || billingOrders.length === 0} onClick={() => void generateSeparateBillingExcels()}>
+                  <Download size={17} style={{ marginRight: '0.45rem' }} /> {billingArchiveBusy ? 'Gerando arquivos...' : 'Excel por romaneio do período (ZIP)'}
+                </button>
               </div>
             </div>
+            <p style={{ textAlign: 'left', margin: '.75rem 0' }}>Excel por romaneio do período: baixa um ZIP com um arquivo separado para cada romaneio da operação, categoria e período selecionados.</p>
+            {billingArchiveMessage && <p role="status" style={{ textAlign: 'left', margin: '.5rem 0' }}>{billingArchiveMessage}</p>}
             <div className="period-report-summary">
               <span className="badge badge-blue">{productsByDateReport.orderCount} pedido(s)</span>
               <span className="badge badge-green">{productsByDateReport.rows.length} produto(s)</span>
