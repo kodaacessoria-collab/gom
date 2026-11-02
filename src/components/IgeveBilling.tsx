@@ -7,7 +7,7 @@ import * as XLSX from 'xlsx';
 import { supabase } from '../lib/supabase';
 import { getOrderControlNumber } from '../lib/orderControlNumber';
 import { addPdfHeader } from '../lib/pdfBranding';
-import { BILLING_PREFIX, SOURCE_KEYS, billingCategoryMatches, billingInvoiceCategoryMatches, sortBillingRows, createLocationBillingInvoice, locationInvoiceConflict, effectiveBillingInvoices, createDeliveryBillingInvoice, locationBillingInvoices, locationTotals, companyTotals, billingDateInRange, invoiceTotal, isIgeveOperation, lineTotal, validateInvoice } from '../lib/igeveBilling';
+import { BILLING_PREFIX, SOURCE_KEYS, billingCategoryOptions, billingCategoryMatches, billingInvoiceCategoryMatches, sortBillingRows, createLocationBillingInvoice, locationInvoiceConflict, effectiveBillingInvoices, createDeliveryBillingInvoice, locationBillingInvoices, locationTotals, companyTotals, billingDateInRange, invoiceTotal, isIgeveOperation, lineTotal, validateInvoice } from '../lib/igeveBilling';
 import type { BillingInvoice, BillingOperation, BillingOrder, BillingPoint, SavedInvoice, BillingSort } from '../lib/igeveBilling';
 import type { Company } from '../types';
 import './IgeveBilling.css';
@@ -87,10 +87,12 @@ export default function IgeveBilling() {
   const validPeriod = !start || !end || start <= end;
   const filteredOrders = orders.filter(order => validPeriod && operations.some(op => op.id === order.operationId) && (!operationId || order.operationId === operationId) && billingCategoryMatches(order.category, categoryFilter) && billingDateInRange(order.deliveryDate, start, end));
   const filteredInvoices = effectiveBillingInvoices(saved.map(row => row.invoice)).filter(invoice => validPeriod && (!operationId || invoice.operationId === operationId) && (!companyFilter || invoice.company === companyFilter) && billingInvoiceCategoryMatches(invoice, categoryFilter) && billingDateInRange(invoice.date, start, end));
-  const categories = [...new Set([
+  const categories = billingCategoryOptions([
     ...orders.filter(order => operations.some(op => op.id === order.operationId)).map(order => order.category),
     ...saved.filter(row => !row.invoice.location).map(row => row.invoice.category),
-  ])].filter(Boolean).sort((a, b) => a.localeCompare(b, 'pt-BR'));
+    ...saved.flatMap(row => row.invoice.location?.categories || []),
+    ...categoryFilter,
+  ]);
   const availableRows = sortBillingRows(filteredOrders.flatMap(order => order.deliveries.map(delivery => ({
     order, delivery,
     operation: operations.find(op => op.id === order.operationId)?.name || '',
@@ -216,7 +218,7 @@ export default function IgeveBilling() {
   return <section className="igeve-billing">
     <div className="igeve-heading"><div><h1>Faturamento IGEVE</h1><p>Romaneios e complementos com valores próprios para faturamento.</p></div><button className="button button-outline" disabled={busy || !!draft} onClick={() => void load()}><RefreshCw size={18} /> Atualizar</button></div>
     <nav className="igeve-actions" aria-label="Faturamento IGEVE">{[['romaneios', 'Faturamento por romaneio'], ['saved', 'Romaneios de faturamento'], ['locations', 'Faturamento por operação/local'], ['report', 'Relatório por empresas']].map(([id, label]) => <button key={id} className={`button ${tab !== id ? 'button-outline' : ''}`} onClick={() => setTab(id)}>{label}</button>)}</nav>
-    <div className="card igeve-panel"><div className="igeve-filters">
+    <div className="card igeve-panel igeve-filter-panel"><div className="igeve-filters">
       <label>Operação<select className="input-field" value={operationId} onChange={event => { setOperationId(event.target.value); setLocationFilter(''); }}><option value="">Todas as operações IGEVE</option>{operations.map(op => <option key={op.id} value={op.id}>{op.name}</option>)}</select></label>
       <div className="igeve-category-filter"><span id="igeve-category-label">Categoria</span><details onKeyDown={event => { if (event.key === 'Escape') { event.currentTarget.open = false; event.currentTarget.querySelector('summary')?.focus(); } }}><summary className="input-field" aria-labelledby="igeve-category-label igeve-category-selection"><span id="igeve-category-selection">{categoryFilter.length ? categoryFilter.join(', ') : 'Todas as categorias'}</span></summary><div className="igeve-category-options" role="group" aria-label="Selecionar categorias">
         <label><input type="checkbox" checked={!categoryFilter.length} onChange={() => setCategoryFilter([])} />Todas as categorias</label>

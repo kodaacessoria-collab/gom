@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { isIgeveOperation, billingDateInRange, invoiceTotal, lineTotal, companyTotals, validateInvoice, sortBillingRows, locationTotals, locationBillingInvoices, billingPriceKey, createLocationBillingInvoice, locationInvoiceConflict, effectiveBillingInvoices, billingCategoryMatches, billingInvoiceCategoryMatches } from '../src/lib/igeveBilling.ts';
+import { isIgeveOperation, billingDateInRange, invoiceTotal, lineTotal, companyTotals, validateInvoice, sortBillingRows, locationTotals, locationBillingInvoices, billingPriceKey, createLocationBillingInvoice, locationInvoiceConflict, effectiveBillingInvoices, billingCategoryMatches, billingInvoiceCategoryMatches, billingCategoryOptions } from '../src/lib/igeveBilling.ts';
 for (const city of ['Maceió', 'Gauianases', 'Guaianases', 'Guaianazes', 'Boituva', 'Mongaguá', 'Rio de Janeiro']) {
   assert.equal(isIgeveOperation({ id: city, name: `Operação ${city}`, city }), true, city);
 }
@@ -179,3 +179,15 @@ assert.equal(makeMulti([]).id, makeMulti('').id, 'Preserva faturamentos antigos 
 assert.equal(makeMulti(['DIETA']).id, makeMulti('DIETA').id, 'Preserva faturamentos antigos de categoria única');
 assert.deepEqual(JSON.parse(JSON.stringify(multiLocal)).location.categories, multiLocal.location.categories);
 console.log('OK: seleção de múltiplas categorias, soma filtrada e compatibilidade das chaves de faturamentos salvos.');
+
+const fullCategoryOptions = billingCategoryOptions([]);
+assert.equal(fullCategoryOptions.length, 6, 'Exibe todas as categorias mesmo sem pedidos carregados');
+for (const category of ['Hortifrutigranjeiro', 'Estocáveis', 'Dietas e Fórmulas', 'Proteínas', 'Limpeza', 'CESTA BASICA']) {
+  assert.ok(fullCategoryOptions.includes(category));
+}
+assert.equal(billingCategoryOptions(['CESTA BASICA']).length, 6, 'Somente cesta nos pedidos não limita o catálogo');
+assert.equal(billingCategoryOptions(['Estocáveis', 'Categoria antiga', '']).length, 7, 'Mantém categorias adicionais dos registros sem duplicar as padrão');
+const threeSelections = ['Estocáveis', 'Dietas e Fórmulas', 'Proteínas'];
+assert.deepEqual(fullCategoryOptions.filter(category => billingCategoryMatches(category, threeSelections)).sort(), [...threeSelections].sort());
+assert.equal(fullCategoryOptions.filter(category => billingCategoryMatches(category, [])).length, 6);
+console.log('OK: catálogo completo de categorias, categorias históricas e seleção de uma, várias ou todas.');

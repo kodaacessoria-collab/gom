@@ -24,6 +24,8 @@ export const normalizeBillingText = (value: string) => value.normalize('NFD').re
 export const isIgeveOperation = (operation: BillingOperation) =>
   ['MACEIO', 'GUAIANASES', 'GAUIANASES', 'GUAIANAZES', 'BOITUVA', 'MONGAGUA', 'RIO DE JANEIRO'].some(city =>
     (` ${normalizeBillingText(`${operation.name} ${operation.city}`)} `).includes(` ${city} `));
+export const BILLING_CATEGORIES = ['Hortifrutigranjeiro', 'Estocáveis', 'Dietas e Fórmulas', 'Proteínas', 'Limpeza', 'CESTA BASICA'] as const;
+export const billingCategoryOptions = (additional: string[]) => [...new Set([...BILLING_CATEGORIES, ...additional].filter(Boolean))].sort((a, b) => a.localeCompare(b, 'pt-BR'));
 export type BillingCategorySelection = string | string[];
 export const selectedBillingCategories = (selection: BillingCategorySelection) => [...new Set((Array.isArray(selection) ? selection : [selection]).filter(Boolean))].sort();
 export const billingCategoryMatches = (category: string, selection: BillingCategorySelection) => {
