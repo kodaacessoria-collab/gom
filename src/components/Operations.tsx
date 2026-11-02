@@ -1356,6 +1356,8 @@ const Operations: React.FC = () => {
 
   const handleActiveOperationChange = (operationId: string) => {
     setActiveOperationId(operationId);
+    setBillingOrderId('');
+    setBillingArchiveMessage('');
     saveStorage(ACTIVE_OPERATION_KEY, operationId);
     setSelectedImportFile(null);
     setImportInputKey(current => current + 1);
@@ -3924,28 +3926,34 @@ const Operations: React.FC = () => {
             <div className="view-header" style={{ marginBottom: '1rem', gap: '1rem' }}>
               <div>
                 <h2 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}><FileSpreadsheet size={20} /> Faturamento dos produtos entregues</h2>
-                <p style={{ textAlign: 'left', marginBottom: 0 }}>Selecione um romaneio individual ou some as entregas do período para consultar preços de custo, preços de venda e faturamento.</p>
+                <p style={{ textAlign: 'left', marginBottom: 0 }}>Selecione a operação, a categoria e o período para somar os produtos de todos os romaneios encontrados. Para consultar apenas um pedido, selecione o romaneio.</p>
               </div>
             </div>
             <div className="period-report-filters">
               <div>
+                <label htmlFor="billing-operation">Operação</label>
+                <select id="billing-operation" className="input-field" value={activeOperation?.id || ''} disabled={billingArchiveBusy} onChange={event => handleActiveOperationChange(event.target.value)}>
+                  {operations.map(operation => <option key={operation.id} value={operation.id}>{operation.name}</option>)}
+                </select>
+              </div>
+              <div>
                 <label>Categoria</label>
-                <select className="input-field" value={reportCategory} onChange={event => setReportCategory(event.target.value as 'Todas' | DeliveryCategory)}>
+                <select className="input-field" value={reportCategory} onChange={event => { setReportCategory(event.target.value as 'Todas' | DeliveryCategory); setBillingOrderId(''); setBillingArchiveMessage(''); }}>
                   <option value="Todas">Todas as categorias</option>
                   {DELIVERY_CATEGORIES.map(category => <option key={category} value={category}>{category}</option>)}
                 </select>
               </div>
               <div>
                 <label>Data inicial</label>
-                <input type="date" className="input-field" max={reportEndDate || undefined} value={reportStartDate} onChange={event => setReportStartDate(event.target.value)} />
+                <input type="date" className="input-field" max={reportEndDate || undefined} value={reportStartDate} onChange={event => { setReportStartDate(event.target.value); setBillingOrderId(''); setBillingArchiveMessage(''); }} />
               </div>
               <div>
                 <label>Data final</label>
-                <input type="date" className="input-field" min={reportStartDate || undefined} value={reportEndDate} onChange={event => setReportEndDate(event.target.value)} />
+                <input type="date" className="input-field" min={reportStartDate || undefined} value={reportEndDate} onChange={event => { setReportEndDate(event.target.value); setBillingOrderId(''); setBillingArchiveMessage(''); }} />
               </div>
               <div>
                 <label htmlFor="billing-romaneio">Romaneio</label>
-                <select id="billing-romaneio" className="input-field" value={billingOrderId} onChange={event => setBillingOrderId(event.target.value)}>
+                <select id="billing-romaneio" className="input-field" value={billingOrderId} onChange={event => { setBillingOrderId(event.target.value); setBillingArchiveMessage(''); }}>
                   <option value="">Todos os romaneios do período</option>
                   {billingOrderId && !billingOrder && <option value={billingOrderId}>Romaneio fora dos filtros selecionados</option>}
                   {billingOrders.map(order => <option key={order.id} value={order.id}>
