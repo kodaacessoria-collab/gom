@@ -7,7 +7,7 @@ import * as XLSX from 'xlsx';
 import { supabase } from '../lib/supabase';
 import { getOrderControlNumber } from '../lib/orderControlNumber';
 import { addPdfHeader } from '../lib/pdfBranding';
-import { BILLING_PREFIX, SOURCE_KEYS, billingPriceKey, sortBillingRows, companyTotals, billingDateInRange, invoiceTotal, isIgeveOperation, lineTotal, validateInvoice } from '../lib/igeveBilling';
+import { BILLING_PREFIX, SOURCE_KEYS, billingPriceKey, sortBillingRows, locationTotals, companyTotals, billingDateInRange, invoiceTotal, isIgeveOperation, lineTotal, validateInvoice } from '../lib/igeveBilling';
 import type { BillingInvoice, BillingOperation, BillingOrder, BillingPoint, SavedInvoice, BillingSort } from '../lib/igeveBilling';
 import type { Company } from '../types';
 import './IgeveBilling.css';
@@ -52,6 +52,8 @@ export default function IgeveBilling() {
   const [operationId, setOperationId] = useState('');
   const [companyFilter, setCompanyFilter] = useState('');
   const [categoryFilter, setCategoryFilter] = useState('');
+  const [locationFilter, setLocationFilter] = useState('');
+  const [expandedLocation, setExpandedLocation] = useState('');
   const [sorts, setSorts] = useState<Record<string, BillingSort>>({});
   const sort = sorts[tab];
   const changeSort = (column: string) => setSorts(current => ({ ...current, [tab]: { column, direction: current[tab]?.column === column && current[tab].direction === 'asc' ? 'desc' : 'asc' } }));
@@ -126,12 +128,28 @@ export default function IgeveBilling() {
       default: return '';
     }
   });
+  const locationGroups = locationTotals(filteredInvoices, orders, points);
+  const visibleLocations = sortBillingRows(locationGroups.filter(row => !locationFilter || row.key === locationFilter), sorts.locations, (row, column) => {
+    switch (column) {
+      case 'operation': return row.operation;
+      case 'destination': return row.destination;
+      case 'count': return row.count;
+      case 'complementCount': return row.complementCount;
+      case 'base': return row.base;
+      case 'complement': return row.complement;
+      case 'total': return row.total;
+      default: return '';
+    }
+  });
+  const locationGrandTotal = Math.round(visibleLocations.reduce((sum, row) => sum + row.total, 0) * 100) / 100;
+  const locationInvoices = visibleLocations.flatMap(row => row.invoices);
+  const expandedGroup = visibleLocations.find(row => row.key === expandedLocation);
   const open = (invoice: BillingInvoice, savedVersion: string | null) => { setDraft(structuredClone(invoice)); setVersion(savedVersion); setMessage(''); };
   function importDelivery(order: BillingOrder, delivery: BillingOrder['deliveries'][number]) {
     const id = `${BILLING_PREFIX}${order.id}_${delivery.id}`;
     const existing = saved.find(row => row.invoice.id === id);
     if (existing) return open(existing.invoice, existing.version);
-    open({ id, sourceOrderId: order.id, sourceDeliveryId: delivery.id, control: getOrderControlNumber(order.importedAt), operationId: order.operationId, operation: operations.find(op => op.id === order.operationId)?.name || '', destination: points.find(point => point.id === delivery.deliveryPointId)?.name || delivery.deliveryPointId, category: order.category, company: '', cnpj: '', date: today(), notes: '', items: delivery.items.map(item => ({ ...item, id: crypto.randomUUID(), price: prices[billingPriceKey(item.product, item.unit)]?.salePrice || 0 })) }, null);
+    open({ id, sourceOrderId: order.id, sourceDeliveryId: delivery.id, control: getOrderControlNumber(order.importedAt), operationId: order.operationId, deliveryPointId: delivery.deliveryPointId, operation: operations.find(op => op.id === order.operationId)?.name || '', destination: points.find(point => point.id === delivery.deliveryPointId)?.name || delivery.deliveryPointId, category: order.category, company: '', cnpj: '', date: today(), notes: '', items: delivery.items.map(item => ({ ...item, id: crypto.randomUUID(), price: prices[billingPriceKey(item.product, item.unit)]?.salePrice || 0 })) }, null);
   }
   function complement(invoice: BillingInvoice) {
     open({ ...structuredClone(invoice), id: `${BILLING_PREFIX}${crypto.randomUUID()}`, parentId: invoice.id, date: today(), notes: '', items: [newItem()] }, null);
@@ -155,7 +173,7 @@ export default function IgeveBilling() {
   async function exportPdf(invoice?: BillingInvoice) {
     try {
       const doc = new jsPDF({ orientation: 'landscape' });
-      await addPdfHeader(doc, { title: invoice ? `Faturamento IGEVE - ${invoice.parentId ? 'Complemento' : 'Romaneio'}` : 'Faturamento IGEVE por empresa', subtitle: invoice ? `${invoice.company} | CNPJ: ${invoice.cnpj || '-'} | ${dateLabel(invoice.date)}` : `Período de faturamento: ${dateLabel(start) || 'início'} a ${dateLabel(end) || 'hoje'}` });
+      await addPdfHeader(doc, { title: invoice ? `Faturamento IGEVE - ${invoice.parentId ? 'Complemento' : 'Romaneio'}` : tab === 'locations' ? 'Faturamento IGEVE por operação/local' : 'Faturamento IGEVE por empresa', subtitle: invoice ? `${invoice.company} | CNPJ: ${invoice.cnpj || '-'} | ${dateLabel(invoice.date)}` : `Período de faturamento: ${dateLabel(start) || 'início'} a ${dateLabel(end) || 'hoje'}` });
       if (invoice) {
         doc.setFontSize(10);
         const info = `${invoice.operation} | ${invoice.destination} | Controle: ${invoice.control} | ${invoice.category}`;
@@ -165,29 +183,36 @@ export default function IgeveBilling() {
         const notes = [invoice.parentId ? `Complemento do controle ${parent?.control || invoice.control}` : '', invoice.notes].filter(Boolean).join(' | ');
         autoTable(doc, { startY: 45 + infoLines.length * 5, head: [['Produto', 'Unidade', 'Quantidade', 'Preço unitário', 'Total']], body: invoice.items.map(item => [item.product, item.unit, item.quantity, money(item.price), money(lineTotal(item))]), foot: [['TOTAL', '', '', '', money(invoiceTotal(invoice))]] });
         if (notes) { doc.addPage(); doc.text(doc.splitTextToSize(`Observações: ${notes}`, 275), 10, 20); }
+      } else if (tab === 'locations') {
+        autoTable(doc, { startY: 40, head: [['Operação', 'Local', 'Romaneios', 'Qtd. complementos', 'Faturamento base', 'Complementos', 'Total']], body: visibleLocations.map(row => [row.operation, row.destination, row.count, row.complementCount, money(row.base), money(row.complement), money(row.total)]), foot: [['TOTAL', '', visibleLocations.reduce((sum, row) => sum + row.count, 0), visibleLocations.reduce((sum, row) => sum + row.complementCount, 0), '', '', money(locationGrandTotal)]] });
+        doc.addPage();
+        autoTable(doc, { head: [['Operação / local', 'Empresa', 'Controle', 'Categoria', 'Tipo', 'Data faturamento', 'Total']], body: locationInvoices.map(item => [`${item.operation} / ${item.destination}`, item.company, item.control, item.category, item.parentId ? 'Complemento' : 'Romaneio', dateLabel(item.date), money(invoiceTotal(item))]) });
       } else {
         autoTable(doc, { startY: 40, head: [['Empresa', 'CNPJ', 'Romaneios', 'Faturamento base', 'Complementos', 'Total']], body: totals.map(row => [row.company, row.cnpj, row.count, money(row.base), money(row.complement), money(row.base + row.complement)]), foot: [['TOTAL', '', visibleInvoices.length, '', '', money(visibleInvoices.reduce((sum, invoice) => sum + invoiceTotal(invoice), 0))]] });
         doc.addPage();
         autoTable(doc, { head: [['Empresa', 'Operação / local', 'Controle', 'Tipo', 'Data faturamento', 'Total']], body: visibleInvoices.map(item => [item.company, `${item.operation} / ${item.destination}`, item.control, item.parentId ? 'Complemento' : 'Romaneio', dateLabel(item.date), money(invoiceTotal(item))]) });
       }
-      doc.save(invoice ? `faturamento-${invoice.control}-${invoice.id.slice(-8)}.pdf` : 'faturamento-igeve-empresas.pdf');
+      doc.save(invoice ? `faturamento-${invoice.control}-${invoice.id.slice(-8)}.pdf` : tab === 'locations' ? 'faturamento-igeve-locais.pdf' : 'faturamento-igeve-empresas.pdf');
     } catch { setMessage('Não foi possível gerar o PDF. Tente novamente.'); }
   }
   function exportExcel() {
     const workbook = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(totals.map(row => ({ Empresa: row.company, CNPJ: row.cnpj, Romaneios: row.count, Base: row.base, Complementos: row.complement, Total: row.base + row.complement }))), 'Por empresa');
-    XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(visibleInvoices.flatMap(invoice => invoice.items.map(item => ({ Empresa: invoice.company, CNPJ: invoice.cnpj, Operacao: invoice.operation, Local: invoice.destination, Controle: invoice.control, Tipo: invoice.parentId ? 'Complemento' : 'Romaneio', Vinculo: invoice.parentId || '', Data: invoice.date, Produto: item.product, Unidade: item.unit, Quantidade: item.quantity, Preco: item.price, Total: lineTotal(item) })))), 'Detalhamento');
-    XLSX.writeFile(workbook, 'faturamento-igeve-empresas.xlsx');
+    if (tab === 'locations') {
+      XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(visibleLocations.map(row => ({ Operacao: row.operation, Local: row.destination, Romaneios: row.count, QuantidadeComplementos: row.complementCount, Base: row.base, Complementos: row.complement, Total: row.total }))), 'Por operacao e local');
+    } else XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(totals.map(row => ({ Empresa: row.company, CNPJ: row.cnpj, Romaneios: row.count, Base: row.base, Complementos: row.complement, Total: row.base + row.complement }))), 'Por empresa');
+    XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet((tab === 'locations' ? locationInvoices : visibleInvoices).flatMap(invoice => invoice.items.map(item => ({ Empresa: invoice.company, CNPJ: invoice.cnpj, Operacao: invoice.operation, Local: invoice.destination, Controle: invoice.control, Tipo: invoice.parentId ? 'Complemento' : 'Romaneio', Vinculo: invoice.parentId || '', Data: invoice.date, Produto: item.product, Unidade: item.unit, Quantidade: item.quantity, Preco: item.price, Total: lineTotal(item) })))), 'Detalhamento');
+    XLSX.writeFile(workbook, tab === 'locations' ? 'faturamento-igeve-locais.xlsx' : 'faturamento-igeve-empresas.xlsx');
   }
   return <section className="igeve-billing">
     <div className="igeve-heading"><div><h1>Faturamento IGEVE</h1><p>Romaneios e complementos com valores próprios para faturamento.</p></div><button className="button button-outline" disabled={busy || !!draft} onClick={() => void load()}><RefreshCw size={18} /> Atualizar</button></div>
-    <nav className="igeve-actions" aria-label="Faturamento IGEVE">{[['romaneios', 'Faturamento por romaneio'], ['saved', 'Romaneios de faturamento'], ['report', 'Relatório por empresas']].map(([id, label]) => <button key={id} className={`button ${tab !== id ? 'button-outline' : ''}`} onClick={() => setTab(id)}>{label}</button>)}</nav>
+    <nav className="igeve-actions" aria-label="Faturamento IGEVE">{[['romaneios', 'Faturamento por romaneio'], ['saved', 'Romaneios de faturamento'], ['locations', 'Faturamento por operação/local'], ['report', 'Relatório por empresas']].map(([id, label]) => <button key={id} className={`button ${tab !== id ? 'button-outline' : ''}`} onClick={() => setTab(id)}>{label}</button>)}</nav>
     <div className="card igeve-panel"><div className="igeve-filters">
-      <label>Operação<select className="input-field" value={operationId} onChange={event => setOperationId(event.target.value)}><option value="">Todas as operações IGEVE</option>{operations.map(op => <option key={op.id} value={op.id}>{op.name}</option>)}</select></label>
+      <label>Operação<select className="input-field" value={operationId} onChange={event => { setOperationId(event.target.value); setLocationFilter(''); }}><option value="">Todas as operações IGEVE</option>{operations.map(op => <option key={op.id} value={op.id}>{op.name}</option>)}</select></label>
       <label>Categoria<select className="input-field" value={categoryFilter} onChange={event => setCategoryFilter(event.target.value)}><option value="">Todas as categorias</option>{categories.map(category => <option key={category} value={category}>{category}</option>)}</select></label>
       <label>{tab === 'romaneios' ? 'Entrega de' : 'Faturamento de'}<input className="input-field" type="date" value={start} onChange={event => setStart(event.target.value)} /></label>
       <label>Até<input className="input-field" type="date" value={end} onChange={event => setEnd(event.target.value)} /></label>
       {tab !== 'romaneios' && <label>Empresa<select className="input-field" value={companyFilter} onChange={event => setCompanyFilter(event.target.value)}><option value="">Todas as empresas</option>{[...new Set(saved.map(row => row.invoice.company))].sort().map(name => <option key={name}>{name}</option>)}</select></label>}
+      {tab === 'locations' && <label>Local<select className="input-field" value={locationFilter} onChange={event => setLocationFilter(event.target.value)}><option value="">Todos os locais</option>{locationFilter && !locationGroups.some(row => row.key === locationFilter) && <option value={locationFilter}>Local selecionado (sem faturamento nos filtros atuais)</option>}{locationGroups.map(row => <option key={row.key} value={row.key}>{row.operation} / {row.destination}</option>)}</select></label>}
     </div><small>Maceió, Guaianases, Boituva, Mongaguá e Rio de Janeiro. Alterações aqui são exclusivas do faturamento.</small></div>
     {message && <div className="card igeve-panel" role="status">{message}</div>}
     {!validPeriod && <div role="alert">A data inicial deve ser anterior ou igual à data final.</div>}
@@ -197,6 +222,14 @@ export default function IgeveBilling() {
       {!availableRows.length && <tr><td colSpan={5}>Nenhum romaneio encontrado. Confira a categoria, o período e as operações cadastradas em Operações.</td></tr>}
     </tbody></table></div></div>}
     {ready && tab === 'saved' && <div className="card igeve-panel"><h2>Romaneios de faturamento</h2><div className="table-container"><table><thead><tr>{header('company', 'Empresa / operação')}{header('control', 'Controle / local')}{header('type', 'Tipo')}{header('date', 'Data')}{header('total', 'Total')}{header('actions', 'Ações')}</tr></thead><tbody>{visibleInvoices.map(invoice => <tr key={invoice.id}><td>{invoice.company}<br />{invoice.operation}</td><td>{invoice.control}<br />{invoice.destination}</td><td>{invoice.parentId ? 'Complemento' : 'Romaneio'}</td><td>{dateLabel(invoice.date)}</td><td>{money(invoiceTotal(invoice))}</td><td><div className="igeve-actions"><button className="button button-outline" disabled={busy} onClick={() => open(invoice, saved.find(row => row.invoice.id === invoice.id)!.version)}>Editar</button>{!invoice.parentId && <button className="button button-outline" disabled={busy} onClick={() => complement(invoice)}><Plus size={16} /> Complemento</button>}<button className="button button-outline" onClick={() => void exportPdf(invoice)}><FileText size={16} /> PDF</button></div></td></tr>)}{!visibleInvoices.length && <tr><td colSpan={6}>Nenhum faturamento salvo neste período.</td></tr>}</tbody></table></div></div>}
+    {ready && tab === 'locations' && <div className="card igeve-panel">
+      <div className="igeve-heading"><div><h2>Faturamento por operação/local</h2><p>Soma dos romaneios de faturamento salvos e complementos de cada local, conforme os filtros.</p></div><div className="igeve-actions"><button className="button button-outline" disabled={!visibleLocations.length} onClick={() => void exportPdf()}>Exportar PDF</button><button className="button button-outline" disabled={!visibleLocations.length} onClick={exportExcel}>Exportar Excel</button></div></div>
+      <div className="table-container"><table><thead><tr>{header('operation', 'Operação')}{header('destination', 'Local')}{header('count', 'Romaneios')}{header('complementCount', 'Qtd. complementos')}{header('base', 'Faturamento base')}{header('complement', 'Complementos')}{header('total', 'Total')}<th scope="col">Detalhamento</th></tr></thead>
+        <tbody>{visibleLocations.map(row => <tr key={row.key}><td>{row.operation}</td><td>{row.destination}</td><td>{row.count}</td><td>{row.complementCount}</td><td>{money(row.base)}</td><td>{money(row.complement)}</td><td>{money(row.total)}</td><td><button className="button button-outline" aria-expanded={expandedGroup?.key === row.key} aria-controls="igeve-location-details" onClick={() => setExpandedLocation(current => current === row.key ? '' : row.key)}>{expandedGroup?.key === row.key ? 'Ocultar romaneios' : 'Ver romaneios'}</button></td></tr>)}{!visibleLocations.length && <tr><td colSpan={8}>Nenhum faturamento encontrado para os filtros.</td></tr>}</tbody>
+        <tfoot><tr><th colSpan={6}>Total geral</th><td><strong>{money(locationGrandTotal)}</strong></td><td /></tr></tfoot>
+      </table></div>
+      {expandedGroup && <div id="igeve-location-details"><h3>{expandedGroup.operation} / {expandedGroup.destination}</h3><div className="table-container"><table><thead><tr><th>Controle</th><th>Empresa</th><th>Categoria</th><th>Tipo</th><th>Data</th><th>Total</th><th>Ação</th></tr></thead><tbody>{expandedGroup.invoices.map(invoice => <tr key={invoice.id}><td>{invoice.control}</td><td>{invoice.company}</td><td>{invoice.category}</td><td>{invoice.parentId ? 'Complemento' : 'Romaneio'}</td><td>{dateLabel(invoice.date)}</td><td>{money(invoiceTotal(invoice))}</td><td><button className="button button-outline" disabled={busy} onClick={() => open(invoice, saved.find(row => row.invoice.id === invoice.id)!.version)}>Abrir faturamento</button></td></tr>)}</tbody></table></div></div>}
+    </div>}
     {ready && tab === 'report' && <div className="card igeve-panel"><div className="igeve-heading"><h2>Faturamento por empresas</h2><div className="igeve-actions"><button className="button button-outline" disabled={!totals.length} onClick={() => void exportPdf()}>Exportar PDF</button><button className="button button-outline" disabled={!totals.length} onClick={exportExcel}>Exportar Excel</button></div></div><div className="table-container"><table><thead><tr>{header('company', 'Empresa')}{header('cnpj', 'CNPJ')}{header('count', 'Romaneios')}{header('base', 'Base')}{header('complement', 'Complementos')}{header('total', 'Total')}</tr></thead><tbody>{totals.map(row => <tr key={row.cnpj || row.company}><td>{row.company}</td><td>{row.cnpj || '-'}</td><td>{row.count}</td><td>{money(row.base)}</td><td>{money(row.complement)}</td><td>{money(row.base + row.complement)}</td></tr>)}{!totals.length && <tr><td colSpan={6}>Nenhum faturamento encontrado para os filtros.</td></tr>}</tbody><tfoot><tr><th colSpan={5}>Total geral</th><th>{money(visibleInvoices.reduce((sum, invoice) => sum + invoiceTotal(invoice), 0))}</th></tr></tfoot></table></div></div>}
     {draft && <div className="igeve-editor" role="dialog" aria-modal="true" aria-label="Editar faturamento"><form className="card igeve-panel" onSubmit={event => void save(event)}><h2>{draft.parentId ? 'Romaneio de complemento' : 'Faturamento por romaneio'} — {draft.control}</h2><p>{draft.operation} · {draft.destination} · {draft.category}</p><div className="igeve-filters">
       <label>Empresa para faturamento<input required className="input-field" list="igeve-companies" value={draft.company} onChange={event => { const company = companies.find(item => item.legal_name === event.target.value); setDraft({ ...draft, company: event.target.value, cnpj: company?.cnpj || '' }); }} /><datalist id="igeve-companies">{companies.map(company => <option key={company.id} value={company.legal_name}>{company.trade_name}</option>)}</datalist></label>

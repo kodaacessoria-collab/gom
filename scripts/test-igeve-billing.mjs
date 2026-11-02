@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { isIgeveOperation, billingDateInRange, invoiceTotal, lineTotal, companyTotals, validateInvoice, sortBillingRows } from '../src/lib/igeveBilling.ts';
+import { isIgeveOperation, billingDateInRange, invoiceTotal, lineTotal, companyTotals, validateInvoice, sortBillingRows, locationTotals } from '../src/lib/igeveBilling.ts';
 for (const city of ['Maceió', 'Gauianases', 'Guaianases', 'Guaianazes', 'Boituva', 'Mongaguá', 'Rio de Janeiro']) {
   assert.equal(isIgeveOperation({ id: city, name: `Operação ${city}`, city }), true, city);
 }
@@ -44,3 +44,37 @@ assert.deepEqual(rows, originalRows, 'Ordenação não altera os dados de origem
 assert.deepEqual(sortBillingRows(rows, undefined, () => ''), originalRows);
 assert.deepEqual(sortBillingRows([], { column: 'name', direction: 'asc' }, row => row.name), []);
 console.log('OK: ordenação crescente/decrescente de texto, datas, valores, colunas compostas e preservação dos registros.');
+
+const second = { ...structuredClone(base), id: 'second', sourceOrderId: 'order-2', category: 'DIETA', company: 'Empresa B', items: [{ ...base.items[0], price: 10 }] };
+const otherOperation = { ...structuredClone(base), id: 'boituva', operationId: 'boituva', operation: 'Boituva' };
+const otherLocation = { ...structuredClone(base), id: 'other-location', destination: 'Outra escola' };
+const locationInput = [base, second, extra, otherOperation, otherLocation];
+const locationSnapshot = structuredClone(locationInput);
+const locations = locationTotals(locationInput);
+assert.equal(locations.length, 3, 'Não deve misturar operações ou locais distintos');
+const school = locations.find(row => row.operation === 'Maceió' && row.destination === 'Escola');
+assert.equal(school.count, 2, 'Conta os romaneios base sem incluir complementos');
+assert.equal(school.complementCount, 1);
+assert.equal(school.base, 37.65, 'Soma todos os romaneios do local, de categorias e empresas diferentes');
+assert.equal(school.complement, 10);
+assert.equal(school.total, 47.65);
+assert.deepEqual(school.invoices.map(invoice => invoice.id), ['base', 'second', 'extra']);
+assert.deepEqual(locationInput, locationSnapshot, 'Agrupar não altera os faturamentos salvos');
+assert.deepEqual(locationTotals([]), []);
+assert.equal(locationTotals([base, { ...extra, destination: '  ESCÓLA  ' }]).length, 1, 'Normaliza o nome quando o ID não está disponível');
+const point = { id: 'point-1', operationId: base.operationId, name: base.destination };
+const source = { id: base.sourceOrderId, operationId: base.operationId, category: base.category, deliveryDate: base.date, importedAt: '', deliveries: [{ id: base.sourceDeliveryId, deliveryPointId: point.id, items: [] }] };
+const renamed = { ...second, deliveryPointId: point.id, destination: 'Escola renomeada' };
+assert.equal(locationTotals([base, renamed], [source]).length, 1, 'Agrupa pelo ID mesmo após renomear o local');
+assert.equal(locationTotals([base, renamed], [], [point]).length, 1, 'Recupera o local de faturamentos antigos pelo cadastro');
+assert.equal(locationTotals([{ ...base, deliveryPointId: 'point-1' }, { ...second, deliveryPointId: 'point-2' }]).length, 2, 'Mantém locais com IDs distintos separados, mesmo com nomes iguais');
+assert.equal(locationTotals([extra])[0].count, 0, 'Complemento pode aparecer sozinho em um período');
+assert.equal(locationTotals([extra])[0].total, 10);
+const cents = [0.1, 0.2].map((price, index) => ({ ...base, id: `cents-${index}`, items: [{ ...base.items[0], quantity: 1, price }] }));
+assert.equal(locationTotals(cents)[0].total, 0.3, 'Mantém os centavos exatos na soma');
+const filteredByCategory = locationTotals(locationInput.filter(invoice => invoice.category === 'DIETA'));
+assert.equal(filteredByCategory.length, 1);
+assert.equal(filteredByCategory[0].total, 30, 'Consolida somente os faturamentos que passaram pelos filtros');
+assert.equal(sortBillingRows(locations, { column: 'total', direction: 'desc' }, row => row.total)[0].total, 47.65);
+assert.equal(locations.reduce((sum, row) => sum + Math.round(row.total * 100), 0), locationInput.reduce((sum, invoice) => sum + Math.round(invoiceTotal(invoice) * 100), 0), 'Total agrupado corresponde à soma de todos os romaneios e complementos');
+console.log('OK: faturamento por operação/local, múltiplos romaneios, complementos, filtros, centavos e compatibilidade com registros antigos.');

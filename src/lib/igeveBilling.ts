@@ -8,7 +8,7 @@ export interface BillingOrder {
   deliveries: { id: string; deliveryPointId: string; items: { product: string; unit: string; quantity: number }[] }[];
 }
 export interface BillingInvoice {
-  id: string; parentId?: string; sourceOrderId: string; sourceDeliveryId: string;
+  id: string; parentId?: string; deliveryPointId?: string; sourceOrderId: string; sourceDeliveryId: string;
   control: string; operationId: string; operation: string; destination: string; category: string;
   company: string; cnpj: string; date: string; notes: string; items: BillingItem[];
 }
@@ -63,4 +63,36 @@ export function sortBillingRows<T>(rows: T[], sort: BillingSort | undefined, val
     }
     return 0;
   });
+}
+
+export interface LocationBillingTotal {
+  key: string; operation: string; destination: string; count: number; complementCount: number;
+  base: number; complement: number; total: number; invoices: BillingInvoice[];
+}
+
+export function locationTotals(invoices: BillingInvoice[], orders: BillingOrder[] = [], points: BillingPoint[] = []): LocationBillingTotal[] {
+  const sources = new Map(orders.flatMap(order => order.deliveries.map(delivery =>
+    [JSON.stringify([order.id, delivery.id]), delivery.deliveryPointId] as const)));
+  const pointNames = new Map<string, string | null>();
+  for (const point of points) {
+    const key = JSON.stringify([point.operationId, normalizeBillingText(point.name)]);
+    pointNames.set(key, pointNames.has(key) ? null : point.id);
+  }
+  const groups = new Map<string, LocationBillingTotal>();
+  for (const invoice of invoices) {
+    // Recover the stable point ID for invoices saved before deliveryPointId was stored.
+    const pointId = invoice.deliveryPointId || sources.get(JSON.stringify([invoice.sourceOrderId, invoice.sourceDeliveryId])) || pointNames.get(JSON.stringify([invoice.operationId, normalizeBillingText(invoice.destination)]));
+    const key = JSON.stringify([invoice.operationId, pointId ? ['id', pointId] : ['name', normalizeBillingText(invoice.destination)]]);
+    const row = groups.get(key) || {
+      key, operation: invoice.operation, destination: invoice.destination,
+      count: 0, complementCount: 0, base: 0, complement: 0, total: 0, invoices: [],
+    };
+    const field = invoice.parentId ? 'complement' : 'base';
+    row[field] = Math.round((row[field] + invoiceTotal(invoice)) * 100) / 100;
+    row[invoice.parentId ? 'complementCount' : 'count']++;
+    row.total = Math.round((row.base + row.complement) * 100) / 100;
+    row.invoices.push(invoice);
+    groups.set(key, row);
+  }
+  return [...groups.values()].sort((a, b) => a.operation.localeCompare(b.operation, 'pt-BR') || a.destination.localeCompare(b.destination, 'pt-BR'));
 }
