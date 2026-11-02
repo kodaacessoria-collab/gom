@@ -1,3 +1,5 @@
+import { getOrderControlNumber } from './orderControlNumber.ts';
+
 export const BILLING_PREFIX = 'gom_igeve_invoice_';
 export const SOURCE_KEYS = ['gom_delivery_operations', 'gom_delivery_points', 'gom_delivery_operation_orders', 'gom_delivery_product_prices'];
 export interface BillingOperation { id: string; name: string; city: string }
@@ -8,7 +10,7 @@ export interface BillingOrder {
   deliveries: { id: string; deliveryPointId: string; items: { product: string; unit: string; quantity: number }[] }[];
 }
 export interface BillingInvoice {
-  id: string; parentId?: string; deliveryPointId?: string; sourceOrderId: string; sourceDeliveryId: string;
+  id: string; parentId?: string; deliveryPointId?: string; deliveryDate?: string; sourceOrderId: string; sourceDeliveryId: string;
   control: string; operationId: string; operation: string; destination: string; category: string;
   company: string; cnpj: string; date: string; notes: string; items: BillingItem[];
 }
@@ -95,4 +97,56 @@ export function locationTotals(invoices: BillingInvoice[], orders: BillingOrder[
     groups.set(key, row);
   }
   return [...groups.values()].sort((a, b) => a.operation.localeCompare(b.operation, 'pt-BR') || a.destination.localeCompare(b.destination, 'pt-BR'));
+}
+
+type BillingPrices = Record<string, { salePrice: number }>;
+export function createDeliveryBillingInvoice(order: BillingOrder, delivery: BillingOrder['deliveries'][number], operation: BillingOperation | undefined, point: BillingPoint | undefined, prices: BillingPrices, date: string): BillingInvoice {
+  return {
+    id: `${BILLING_PREFIX}${order.id}_${delivery.id}`, sourceOrderId: order.id, sourceDeliveryId: delivery.id,
+    deliveryPointId: delivery.deliveryPointId, deliveryDate: order.deliveryDate,
+    control: getOrderControlNumber(order.importedAt), operationId: order.operationId,
+    operation: operation?.name || order.operationId, destination: point?.name || delivery.deliveryPointId,
+    category: order.category, company: '', cnpj: '', date, notes: '',
+    items: delivery.items.map((item, index) => ({ ...item, id: `${delivery.id}_${index}`, price: prices[billingPriceKey(item.product, item.unit)]?.salePrice || 0 })),
+  };
+}
+
+interface LocationBillingSource {
+  orders: BillingOrder[]; operations: BillingOperation[]; points: BillingPoint[];
+  prices: BillingPrices; invoices: BillingInvoice[]; start: string; end: string; draftDate: string;
+  operationId?: string; category?: string; company?: string;
+}
+export function locationBillingInvoices({ orders, operations, points, prices, invoices, start, end, draftDate, operationId = '', category = '', company = '' }: LocationBillingSource): BillingInvoice[] {
+  if (start && end && start > end) return [];
+  const operationMap = new Map(operations.filter(isIgeveOperation).map(operation => [operation.id, operation]));
+  const pointMap = new Map(points.map(point => [point.id, point]));
+  const orderMap = new Map(orders.map(order => [order.id, order]));
+  const sourceKey = (invoice: Pick<BillingInvoice, 'sourceOrderId' | 'sourceDeliveryId'>) => JSON.stringify([invoice.sourceOrderId, invoice.sourceDeliveryId]);
+  const savedBases = new Map(invoices.filter(invoice => !invoice.parentId).map(invoice => [sourceKey(invoice), invoice]));
+  const matches = (invoice: BillingInvoice) => (!operationId || invoice.operationId === operationId) && (!category || invoice.category === category) && (!company || invoice.company === company);
+  const result: BillingInvoice[] = [];
+  const coveredSources = new Set<string>();
+  for (const order of orders) {
+    if (!operationMap.has(order.operationId) || (operationId && order.operationId !== operationId) || !billingDateInRange(order.deliveryDate, start, end)) continue;
+    for (const delivery of order.deliveries) {
+      const key = JSON.stringify([order.id, delivery.id]);
+      coveredSources.add(key);
+      const existing = savedBases.get(key);
+      // Prefer the saved copy; never count both the source and its saved billing.
+      const invoice = existing ? { ...existing, deliveryDate: order.deliveryDate, deliveryPointId: existing.deliveryPointId || delivery.deliveryPointId }
+        : createDeliveryBillingInvoice(order, delivery, operationMap.get(order.operationId), pointMap.get(delivery.deliveryPointId), prices, draftDate);
+      if (matches(invoice)) result.push(invoice);
+    }
+  }
+  for (const invoice of invoices) {
+    const order = orderMap.get(invoice.sourceOrderId);
+    // Complements follow the delivery period of their source, even if billed later.
+    // A saved snapshot can still be reported if its source was removed and it has a delivery date.
+    if (!invoice.parentId && coveredSources.has(sourceKey(invoice))) continue;
+    const deliveryDate = order?.deliveryDate || invoice.deliveryDate;
+    if (!deliveryDate || !operationMap.has(invoice.operationId) || !matches(invoice) || !billingDateInRange(deliveryDate, start, end)) continue;
+    const pointId = invoice.deliveryPointId || order?.deliveries.find(delivery => delivery.id === invoice.sourceDeliveryId)?.deliveryPointId;
+    result.push({ ...invoice, deliveryDate, deliveryPointId: pointId });
+  }
+  return result;
 }

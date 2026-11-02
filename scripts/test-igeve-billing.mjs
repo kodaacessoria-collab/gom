@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { isIgeveOperation, billingDateInRange, invoiceTotal, lineTotal, companyTotals, validateInvoice, sortBillingRows, locationTotals } from '../src/lib/igeveBilling.ts';
+import { isIgeveOperation, billingDateInRange, invoiceTotal, lineTotal, companyTotals, validateInvoice, sortBillingRows, locationTotals, locationBillingInvoices, billingPriceKey } from '../src/lib/igeveBilling.ts';
 for (const city of ['Maceió', 'Gauianases', 'Guaianases', 'Guaianazes', 'Boituva', 'Mongaguá', 'Rio de Janeiro']) {
   assert.equal(isIgeveOperation({ id: city, name: `Operação ${city}`, city }), true, city);
 }
@@ -78,3 +78,48 @@ assert.equal(filteredByCategory[0].total, 30, 'Consolida somente os faturamentos
 assert.equal(sortBillingRows(locations, { column: 'total', direction: 'desc' }, row => row.total)[0].total, 47.65);
 assert.equal(locations.reduce((sum, row) => sum + Math.round(row.total * 100), 0), locationInput.reduce((sum, invoice) => sum + Math.round(invoiceTotal(invoice) * 100), 0), 'Total agrupado corresponde à soma de todos os romaneios e complementos');
 console.log('OK: faturamento por operação/local, múltiplos romaneios, complementos, filtros, centavos e compatibilidade com registros antigos.');
+
+// Regression: the local report must find source deliveries even when no billing was saved.
+const reportOperations = [
+  { id: 'maceio', name: 'Operação Maceió', city: 'Maceió' },
+  { id: 'boituva', name: 'Operação Boituva', city: 'Boituva' },
+  { id: 'other', name: 'Outra operação', city: 'São Paulo' },
+];
+const reportPoints = [point, { id: 'point-2', name: 'Outra escola', operationId: 'maceio' }];
+const delivery = { id: 'delivery', deliveryPointId: point.id, items: [{ product: 'Arroz', unit: 'KG', quantity: 3 }] };
+const octoberOrder = { ...source, deliveryDate: '2026-10-28', importedAt: '2026-10-27T22:23:00Z', deliveries: [delivery] };
+const reportSource = {
+  orders: [octoberOrder, { ...octoberOrder, id: 'monthly', deliveryDate: '2026-10', deliveries: [{ ...delivery, deliveryPointId: 'point-2' }] }, { ...octoberOrder, id: 'september', deliveryDate: '2026-09-30' }, { ...octoberOrder, id: 'november', deliveryDate: '2026-11-01' }, { ...octoberOrder, id: 'outside', operationId: 'other' }],
+  operations: reportOperations, points: reportPoints,
+  prices: { [billingPriceKey('Arroz', 'KG')]: { salePrice: 2.55 } }, invoices: [],
+  start: '2026-10-01', end: '2026-10-31', draftDate: '2026-11-02',
+};
+const reportSnapshot = structuredClone(reportSource);
+const unsavedOctober = locationBillingInvoices(reportSource);
+assert.equal(unsavedOctober.length, 2, 'Retorna romaneios diários e mensais sem faturamentos salvos');
+assert.equal(unsavedOctober[0].deliveryDate, '2026-10-28');
+assert.equal(unsavedOctober[0].date, '2026-11-02', 'Data de preparação não muda o período de entrega');
+assert.equal(invoiceTotal(unsavedOctober[0]), 7.65);
+assert.equal(unsavedOctober[0].control, '27102026-1923');
+assert.equal(locationTotals(unsavedOctober, reportSource.orders, reportPoints).length, 2);
+const billedInNovember = { ...base, date: '2026-11-02', items: [{ ...base.items[0], price: 20 }] };
+const complementInNovember = { ...extra, date: '2026-11-03' };
+const withSaved = locationBillingInvoices({ ...reportSource, invoices: [billedInNovember, complementInNovember] });
+assert.equal(withSaved.length, 3, 'Substitui a origem pelo salvo e inclui o complemento sem duplicação');
+assert.equal(withSaved.find(invoice => invoice.id === base.id).items[0].price, 20, 'Preserva preços editados no faturamento salvo');
+assert.equal(withSaved.filter(invoice => invoice.sourceOrderId === base.sourceOrderId && !invoice.parentId).length, 1);
+assert.equal(withSaved.find(invoice => invoice.parentId).deliveryDate, '2026-10-28', 'Complementos seguem a entrega de origem');
+assert.equal(locationTotals(withSaved, reportSource.orders, reportPoints).find(row => row.destination === 'Escola').total, 70);
+assert.equal(locationBillingInvoices({ ...reportSource, invoices: [billedInNovember, complementInNovember], company: base.company }).length, 2, 'Empresa filtra salvos; romaneios sem empresa ficam fora da seleção específica');
+assert.equal(locationBillingInvoices({ ...reportSource, category: 'DIETA' }).length, 0);
+assert.equal(locationBillingInvoices({ ...reportSource, operationId: 'boituva' }).length, 0);
+assert.equal(locationBillingInvoices({ ...reportSource, start: '2026-10-29', end: '2026-10-15' }).length, 0);
+assert.equal(locationBillingInvoices({ ...reportSource, prices: {} }).length, 2, 'Falta de preço não oculta os romaneios');
+assert.equal(invoiceTotal(locationBillingInvoices({ ...reportSource, prices: {} })[0]), 0);
+const novemberResult = locationBillingInvoices({ ...reportSource, start: '2026-11-01', end: '2026-11-30', invoices: [billedInNovember, complementInNovember] });
+assert.equal(novemberResult.length, 1, 'Não puxa entregas de outubro pela data de faturamento de novembro');
+assert.equal(novemberResult[0].sourceOrderId, 'november');
+const removedSource = { ...billedInNovember, sourceOrderId: 'deleted', deliveryDate: '2026-10-12' };
+assert.ok(locationBillingInvoices({ ...reportSource, invoices: [removedSource] }).some(invoice => invoice.sourceOrderId === 'deleted'), 'Preserva o histórico com data de entrega quando a origem foi removida');
+assert.deepEqual(reportSource, reportSnapshot, 'Consultar não grava nem altera pedidos, preços ou faturamentos');
+console.log('OK: regressão do período de entrega, origem sem faturamento, preços salvos, complementos e ausência de duplicações.');
