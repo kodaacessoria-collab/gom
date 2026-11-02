@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { isIgeveOperation, billingDateInRange, invoiceTotal, lineTotal, companyTotals, validateInvoice, sortBillingRows, locationTotals, locationBillingInvoices, billingPriceKey } from '../src/lib/igeveBilling.ts';
+import { isIgeveOperation, billingDateInRange, invoiceTotal, lineTotal, companyTotals, validateInvoice, sortBillingRows, locationTotals, locationBillingInvoices, billingPriceKey, createLocationBillingInvoice, locationInvoiceConflict, effectiveBillingInvoices } from '../src/lib/igeveBilling.ts';
 for (const city of ['Maceió', 'Gauianases', 'Guaianases', 'Guaianazes', 'Boituva', 'Mongaguá', 'Rio de Janeiro']) {
   assert.equal(isIgeveOperation({ id: city, name: `Operação ${city}`, city }), true, city);
 }
@@ -123,3 +123,35 @@ const removedSource = { ...billedInNovember, sourceOrderId: 'deleted', deliveryD
 assert.ok(locationBillingInvoices({ ...reportSource, invoices: [removedSource] }).some(invoice => invoice.sourceOrderId === 'deleted'), 'Preserva o histórico com data de entrega quando a origem foi removida');
 assert.deepEqual(reportSource, reportSnapshot, 'Consultar não grava nem altera pedidos, preços ou faturamentos');
 console.log('OK: regressão do período de entrega, origem sem faturamento, preços salvos, complementos e ausência de duplicações.');
+
+const rawSecond = { ...octoberOrder, id: 'order-two', deliveries: [{ ...delivery, id: 'delivery-two', items: [{ product: ' arroz ', unit: 'kg', quantity: 7 }, { product: 'Arroz', unit: 'UN', quantity: 2 }] }] };
+const localOrders = [octoberOrder, rawSecond];
+const localSource = locationBillingInvoices({ ...reportSource, orders: localOrders, invoices: [billedInNovember] });
+const localGroup = locationTotals(localSource, localOrders, reportPoints)[0];
+const localSnapshot = structuredClone({ localGroup, localOrders });
+const consolidated = createLocationBillingInvoice(localGroup, localOrders, reportSource.prices, reportSource.start, reportSource.end, '', reportSource.draftDate);
+assert.equal(consolidated.items.length, 2, 'Agrupa produto/unidade sem misturar unidades distintas');
+const riceKg = consolidated.items.find(item => item.unit === 'KG');
+assert.equal(riceKg.quantity, 10, 'Quantidade entregue soma a origem, independente da edição individual');
+assert.equal(riceKg.billedQuantity, 10, 'Ajuste inicial usa a quantidade entregue');
+assert.equal(riceKg.price, 2.55);
+assert.equal(consolidated.location.count, 2);
+const adjusted = { ...consolidated, company: 'Empresa de teste', items: consolidated.items.map(item => item.id === riceKg.id ? { ...item, billedQuantity: 8, price: 6 } : { ...item, billedQuantity: 0, price: 100 }) };
+assert.equal(invoiceTotal(adjusted), 48, 'Total usa ajuste faturamento vezes preço, sem cobrar quantidade entregue');
+assert.equal(lineTotal({ ...riceKg, billedQuantity: 0, price: 100 }), 0, 'Ajuste zero não volta à quantidade entregue');
+assert.equal(validateInvoice(adjusted), '');
+for (const badQuantity of [-1, NaN, Infinity, undefined]) {
+  assert.ok(validateInvoice({ ...adjusted, items: [{ ...riceKg, billedQuantity: badQuantity }] }), `Rejeita ajuste inválido: ${badQuantity}`);
+}
+assert.equal(invoiceTotal(JSON.parse(JSON.stringify(adjusted))), 48, 'Quantidade ajustada e preço sobrevivem ao salvamento e à reabertura');
+assert.equal(createLocationBillingInvoice(localGroup, localOrders, {}, reportSource.start, reportSource.end, '', reportSource.draftDate).id, consolidated.id, 'Mesmo local/período reabre a mesma chave');
+const otherScope = createLocationBillingInvoice(localGroup, localOrders, {}, '2026-10-15', reportSource.end, '', reportSource.draftDate);
+assert.equal(locationInvoiceConflict(otherScope, [adjusted]), true, 'Não cria outro consolidado incluindo os mesmos romaneios');
+assert.equal(locationInvoiceConflict(adjusted, [adjusted]), false, 'Permite editar o consolidado existente');
+assert.equal(locationInvoiceConflict(base, [adjusted]), false);
+assert.deepEqual(effectiveBillingInvoices([billedInNovember, adjusted]), [adjusted], 'Relatório não soma consolidado e sua origem duas vezes');
+assert.equal(companyTotals(effectiveBillingInvoices([billedInNovember, adjusted]))[0].base, 48);
+assert.equal(locationBillingInvoices({ ...reportSource, orders: localOrders, invoices: [billedInNovember, adjusted] }).length, 2, 'Não trata o consolidado como outro romaneio de origem');
+assert.deepEqual({ localGroup, localOrders }, localSnapshot, 'Consolidação preserva as entregas originais');
+assert.throws(() => createLocationBillingInvoice({ ...localGroup, invoices: [] }, [], {}, '', '', '', reportSource.draftDate));
+console.log('OK: produtos somados por unidade, quantidade entregue preservada, ajuste zero, totais, persistência e ausência de dupla cobrança.');

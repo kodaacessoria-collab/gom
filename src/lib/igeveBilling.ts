@@ -4,13 +4,18 @@ export const BILLING_PREFIX = 'gom_igeve_invoice_';
 export const SOURCE_KEYS = ['gom_delivery_operations', 'gom_delivery_points', 'gom_delivery_operation_orders', 'gom_delivery_product_prices'];
 export interface BillingOperation { id: string; name: string; city: string }
 export interface BillingPoint { id: string; name: string; operationId: string }
-export interface BillingItem { id: string; product: string; unit: string; quantity: number; price: number }
+export interface BillingItem { id: string; product: string; unit: string; quantity: number; price: number; billedQuantity?: number }
 export interface BillingOrder {
   id: string; operationId: string; category: string; deliveryDate: string; importedAt: string;
   deliveries: { id: string; deliveryPointId: string; items: { product: string; unit: string; quantity: number }[] }[];
 }
+export interface LocationInvoiceContext {
+  groupKey: string; start: string; end: string; category: string;
+  sourceIds: string[]; deliveryKeys: string[]; count: number;
+}
 export interface BillingInvoice {
   id: string; parentId?: string; deliveryPointId?: string; deliveryDate?: string; sourceOrderId: string; sourceDeliveryId: string;
+  location?: LocationInvoiceContext;
   control: string; operationId: string; operation: string; destination: string; category: string;
   company: string; cnpj: string; date: string; notes: string; items: BillingItem[];
 }
@@ -20,12 +25,13 @@ export const isIgeveOperation = (operation: BillingOperation) =>
   ['MACEIO', 'GUAIANASES', 'GAUIANASES', 'GUAIANAZES', 'BOITUVA', 'MONGAGUA', 'RIO DE JANEIRO'].some(city =>
     (` ${normalizeBillingText(`${operation.name} ${operation.city}`)} `).includes(` ${city} `));
 export const billingPriceKey = (product: string, unit: string) => `${normalizeBillingText(product)}|${normalizeBillingText(unit || 'UN')}`;
-export const lineTotal = (item: BillingItem) => Math.round(item.quantity * item.price * 100) / 100;
-export const invoiceTotal = (invoice: BillingInvoice) => invoice.items.reduce((sum, item) => sum + lineTotal(item), 0);
+export const lineTotal = (item: BillingItem) => Math.round((item.billedQuantity ?? item.quantity) * item.price * 100) / 100;
+export const invoiceTotal = (invoice: BillingInvoice) => Math.round(invoice.items.reduce((sum, item) => sum + lineTotal(item), 0) * 100) / 100;
 export const validateInvoice = (invoice: BillingInvoice) => {
   if (!invoice.company.trim()) return 'Informe a empresa para faturamento.';
   if (!/^\d{4}-\d{2}-\d{2}$/.test(invoice.date)) return 'Informe a data do faturamento.';
   if (!invoice.items.length) return 'Adicione pelo menos um produto.';
+  if (invoice.location && invoice.items.some(item => !Number.isFinite(item.billedQuantity) || item.billedQuantity! < 0)) return 'Informe um ajuste faturamento maior ou igual a zero em todos os itens.';
   if (invoice.items.some(item => !item.product.trim() || !item.unit.trim() || !Number.isFinite(item.quantity) || item.quantity <= 0 || !Number.isFinite(item.price) || item.price < 0)) return 'Preencha produto, unidade, quantidade maior que zero e preço válido em todos os itens.';
   return '';
 };
@@ -117,6 +123,7 @@ interface LocationBillingSource {
   operationId?: string; category?: string; company?: string;
 }
 export function locationBillingInvoices({ orders, operations, points, prices, invoices, start, end, draftDate, operationId = '', category = '', company = '' }: LocationBillingSource): BillingInvoice[] {
+  invoices = invoices.filter(invoice => !invoice.location);
   if (start && end && start > end) return [];
   const operationMap = new Map(operations.filter(isIgeveOperation).map(operation => [operation.id, operation]));
   const pointMap = new Map(points.map(point => [point.id, point]));
@@ -149,4 +156,51 @@ export function locationBillingInvoices({ orders, operations, points, prices, in
     result.push({ ...invoice, deliveryDate, deliveryPointId: pointId });
   }
   return result;
+}
+
+export function createLocationBillingInvoice(group: LocationBillingTotal, orders: BillingOrder[], prices: BillingPrices, start: string, end: string, category: string, date: string): BillingInvoice {
+  if (!group.invoices.length) throw new Error('Nenhum romaneio disponível para faturar este local.');
+  const sources = new Map(orders.flatMap(order => order.deliveries.map(delivery => [JSON.stringify([order.id, delivery.id]), delivery] as const)));
+  const items = new Map<string, BillingItem>();
+  const deliveryKeys = new Set<string>();
+  for (const invoice of group.invoices) {
+    const sourceKey = JSON.stringify([invoice.sourceOrderId, invoice.sourceDeliveryId]);
+    // Delivered quantities come from the source, independently of individual billing edits.
+    if (!invoice.parentId && deliveryKeys.has(sourceKey)) continue;
+    if (!invoice.parentId) deliveryKeys.add(sourceKey);
+    const sourceItems = !invoice.parentId ? sources.get(sourceKey)?.items || invoice.items : invoice.items;
+    for (const sourceItem of sourceItems) {
+      const key = JSON.stringify([normalizeBillingText(sourceItem.product), normalizeBillingText(sourceItem.unit || 'UN')]);
+      const savedItem = invoice.items.find(item => billingPriceKey(item.product, item.unit) === billingPriceKey(sourceItem.product, sourceItem.unit));
+      const row = items.get(key) || { id: key, product: sourceItem.product, unit: sourceItem.unit || 'UN', quantity: 0, billedQuantity: 0, price: prices[billingPriceKey(sourceItem.product, sourceItem.unit)]?.salePrice ?? savedItem?.price ?? 0 };
+      row.quantity = Math.round((row.quantity + sourceItem.quantity) * 1e6) / 1e6;
+      row.billedQuantity = row.quantity;
+      items.set(key, row);
+    }
+  }
+  const first = group.invoices[0];
+  const categories = [...new Set(group.invoices.map(invoice => invoice.category))];
+  const context = { groupKey: group.key, start, end, category, sourceIds: group.invoices.map(invoice => invoice.id), deliveryKeys: [...deliveryKeys], count: deliveryKeys.size };
+  return {
+    id: `${BILLING_PREFIX}local_${encodeURIComponent(JSON.stringify([group.key, start, end, category]))}`,
+    location: context, sourceOrderId: '', sourceDeliveryId: '', operationId: first.operationId,
+    deliveryPointId: first.deliveryPointId, operation: group.operation, destination: group.destination,
+    control: `LOCAL ${start || 'início'} a ${end || 'fim'}`, category: category || (categories.length === 1 ? categories[0] : 'Várias categorias'),
+    company: '', cnpj: '', date, notes: '',
+    items: [...items.values()].sort((a, b) => a.product.localeCompare(b.product, 'pt-BR') || a.unit.localeCompare(b.unit, 'pt-BR')),
+  };
+}
+
+export function locationInvoiceConflict(invoice: BillingInvoice, saved: BillingInvoice[]): boolean {
+  if (!invoice.location) return false;
+  const keys = new Set(invoice.location.deliveryKeys);
+  const ids = new Set(invoice.location.sourceIds);
+  return saved.some(other => other.id !== invoice.id && other.location &&
+    (other.location.deliveryKeys.some(key => keys.has(key)) || other.location.sourceIds.some(id => ids.has(id))));
+}
+
+// A consolidated local invoice replaces its source invoices in financial reports.
+export function effectiveBillingInvoices(invoices: BillingInvoice[]): BillingInvoice[] {
+  const covered = new Set(invoices.flatMap(invoice => invoice.location?.sourceIds || []));
+  return invoices.filter(invoice => invoice.location || !covered.has(invoice.id));
 }
