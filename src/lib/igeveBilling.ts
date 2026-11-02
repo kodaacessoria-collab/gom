@@ -10,7 +10,7 @@ export interface BillingOrder {
   deliveries: { id: string; deliveryPointId: string; items: { product: string; unit: string; quantity: number }[] }[];
 }
 export interface LocationInvoiceContext {
-  groupKey: string; start: string; end: string; category: string;
+  groupKey: string; start: string; end: string; category: string; categories?: string[];
   sourceIds: string[]; deliveryKeys: string[]; count: number;
 }
 export interface BillingInvoice {
@@ -24,6 +24,16 @@ export const normalizeBillingText = (value: string) => value.normalize('NFD').re
 export const isIgeveOperation = (operation: BillingOperation) =>
   ['MACEIO', 'GUAIANASES', 'GAUIANASES', 'GUAIANAZES', 'BOITUVA', 'MONGAGUA', 'RIO DE JANEIRO'].some(city =>
     (` ${normalizeBillingText(`${operation.name} ${operation.city}`)} `).includes(` ${city} `));
+export type BillingCategorySelection = string | string[];
+export const selectedBillingCategories = (selection: BillingCategorySelection) => [...new Set((Array.isArray(selection) ? selection : [selection]).filter(Boolean))].sort();
+export const billingCategoryMatches = (category: string, selection: BillingCategorySelection) => {
+  const selected = selectedBillingCategories(selection);
+  return !selected.length || selected.includes(category);
+};
+export const billingInvoiceCategoryMatches = (invoice: BillingInvoice, selection: BillingCategorySelection) => {
+  const categories = invoice.location?.categories || [invoice.category];
+  return categories.some(category => billingCategoryMatches(category, selection));
+};
 export const billingPriceKey = (product: string, unit: string) => `${normalizeBillingText(product)}|${normalizeBillingText(unit || 'UN')}`;
 export const lineTotal = (item: BillingItem) => Math.round((item.billedQuantity ?? item.quantity) * item.price * 100) / 100;
 export const invoiceTotal = (invoice: BillingInvoice) => Math.round(invoice.items.reduce((sum, item) => sum + lineTotal(item), 0) * 100) / 100;
@@ -120,7 +130,7 @@ export function createDeliveryBillingInvoice(order: BillingOrder, delivery: Bill
 interface LocationBillingSource {
   orders: BillingOrder[]; operations: BillingOperation[]; points: BillingPoint[];
   prices: BillingPrices; invoices: BillingInvoice[]; start: string; end: string; draftDate: string;
-  operationId?: string; category?: string; company?: string;
+  operationId?: string; category?: BillingCategorySelection; company?: string;
 }
 export function locationBillingInvoices({ orders, operations, points, prices, invoices, start, end, draftDate, operationId = '', category = '', company = '' }: LocationBillingSource): BillingInvoice[] {
   invoices = invoices.filter(invoice => !invoice.location);
@@ -130,7 +140,7 @@ export function locationBillingInvoices({ orders, operations, points, prices, in
   const orderMap = new Map(orders.map(order => [order.id, order]));
   const sourceKey = (invoice: Pick<BillingInvoice, 'sourceOrderId' | 'sourceDeliveryId'>) => JSON.stringify([invoice.sourceOrderId, invoice.sourceDeliveryId]);
   const savedBases = new Map(invoices.filter(invoice => !invoice.parentId).map(invoice => [sourceKey(invoice), invoice]));
-  const matches = (invoice: BillingInvoice) => (!operationId || invoice.operationId === operationId) && (!category || invoice.category === category) && (!company || invoice.company === company);
+  const matches = (invoice: BillingInvoice) => (!operationId || invoice.operationId === operationId) && billingCategoryMatches(invoice.category, category) && (!company || invoice.company === company);
   const result: BillingInvoice[] = [];
   const coveredSources = new Set<string>();
   for (const order of orders) {
@@ -158,7 +168,7 @@ export function locationBillingInvoices({ orders, operations, points, prices, in
   return result;
 }
 
-export function createLocationBillingInvoice(group: LocationBillingTotal, orders: BillingOrder[], prices: BillingPrices, start: string, end: string, category: string, date: string): BillingInvoice {
+export function createLocationBillingInvoice(group: LocationBillingTotal, orders: BillingOrder[], prices: BillingPrices, start: string, end: string, category: BillingCategorySelection, date: string): BillingInvoice {
   if (!group.invoices.length) throw new Error('Nenhum romaneio disponível para faturar este local.');
   const sources = new Map(orders.flatMap(order => order.deliveries.map(delivery => [JSON.stringify([order.id, delivery.id]), delivery] as const)));
   const items = new Map<string, BillingItem>();
@@ -179,13 +189,16 @@ export function createLocationBillingInvoice(group: LocationBillingTotal, orders
     }
   }
   const first = group.invoices[0];
-  const categories = [...new Set(group.invoices.map(invoice => invoice.category))];
-  const context = { groupKey: group.key, start, end, category, sourceIds: group.invoices.map(invoice => invoice.id), deliveryKeys: [...deliveryKeys], count: deliveryKeys.size };
+  const categories = [...new Set(group.invoices.map(invoice => invoice.category))].sort();
+  const selection = selectedBillingCategories(category);
+  // Preserve existing keys for all-category and single-category invoices.
+  const categoryScope = selection.length > 1 ? selection : selection[0] || '';
+  const context = { groupKey: group.key, start, end, category: selection.join(', '), categories, sourceIds: group.invoices.map(invoice => invoice.id), deliveryKeys: [...deliveryKeys], count: deliveryKeys.size };
   return {
-    id: `${BILLING_PREFIX}local_${encodeURIComponent(JSON.stringify([group.key, start, end, category]))}`,
+    id: `${BILLING_PREFIX}local_${encodeURIComponent(JSON.stringify([group.key, start, end, categoryScope]))}`,
     location: context, sourceOrderId: '', sourceDeliveryId: '', operationId: first.operationId,
     deliveryPointId: first.deliveryPointId, operation: group.operation, destination: group.destination,
-    control: `LOCAL ${start || 'início'} a ${end || 'fim'}`, category: category || (categories.length === 1 ? categories[0] : 'Várias categorias'),
+    control: `LOCAL ${start || 'início'} a ${end || 'fim'}`, category: categories.join(', '),
     company: '', cnpj: '', date, notes: '',
     items: [...items.values()].sort((a, b) => a.product.localeCompare(b.product, 'pt-BR') || a.unit.localeCompare(b.unit, 'pt-BR')),
   };

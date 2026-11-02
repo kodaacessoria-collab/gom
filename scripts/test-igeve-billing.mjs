@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { isIgeveOperation, billingDateInRange, invoiceTotal, lineTotal, companyTotals, validateInvoice, sortBillingRows, locationTotals, locationBillingInvoices, billingPriceKey, createLocationBillingInvoice, locationInvoiceConflict, effectiveBillingInvoices } from '../src/lib/igeveBilling.ts';
+import { isIgeveOperation, billingDateInRange, invoiceTotal, lineTotal, companyTotals, validateInvoice, sortBillingRows, locationTotals, locationBillingInvoices, billingPriceKey, createLocationBillingInvoice, locationInvoiceConflict, effectiveBillingInvoices, billingCategoryMatches, billingInvoiceCategoryMatches } from '../src/lib/igeveBilling.ts';
 for (const city of ['Maceió', 'Gauianases', 'Guaianases', 'Guaianazes', 'Boituva', 'Mongaguá', 'Rio de Janeiro']) {
   assert.equal(isIgeveOperation({ id: city, name: `Operação ${city}`, city }), true, city);
 }
@@ -155,3 +155,27 @@ assert.equal(locationBillingInvoices({ ...reportSource, orders: localOrders, inv
 assert.deepEqual({ localGroup, localOrders }, localSnapshot, 'Consolidação preserva as entregas originais');
 assert.throws(() => createLocationBillingInvoice({ ...localGroup, invoices: [] }, [], {}, '', '', '', reportSource.draftDate));
 console.log('OK: produtos somados por unidade, quantidade entregue preservada, ajuste zero, totais, persistência e ausência de dupla cobrança.');
+
+assert.equal(billingCategoryMatches('DIETA', ['DIETA', 'Estocáveis']), true);
+assert.equal(billingCategoryMatches('Estocáveis', ['DIETA', 'Estocáveis']), true);
+assert.equal(billingCategoryMatches('LIMPEZA', ['DIETA', 'Estocáveis']), false);
+assert.equal(billingCategoryMatches('DIETA', []), true, 'Sem seleção aplica todas as categorias');
+const dietOrder = { ...octoberOrder, id: 'diet-order', category: 'DIETA' };
+const cleaningOrder = { ...octoberOrder, id: 'cleaning-order', category: 'LIMPEZA' };
+const multiOrders = [octoberOrder, dietOrder, cleaningOrder];
+const multiInvoices = locationBillingInvoices({ ...reportSource, orders: multiOrders, category: ['Estocáveis', 'DIETA'] });
+assert.deepEqual(multiInvoices.map(invoice => invoice.category), ['Estocáveis', 'DIETA']);
+assert.equal(locationBillingInvoices({ ...reportSource, orders: multiOrders, category: [] }).length, 3);
+const multiGroup = locationTotals(multiInvoices, multiOrders, reportPoints)[0];
+const makeMulti = selection => createLocationBillingInvoice(multiGroup, multiOrders, reportSource.prices, reportSource.start, reportSource.end, selection, reportSource.draftDate);
+const multiLocal = makeMulti(['DIETA', 'Estocáveis']);
+assert.equal(multiLocal.items[0].quantity, 6, 'Soma somente as entregas das categorias escolhidas');
+assert.equal(multiLocal.id, makeMulti(['Estocáveis', 'DIETA', 'DIETA']).id, 'Ordem de seleção e repetições não criam outro faturamento');
+assert.deepEqual(multiLocal.location.categories, ['DIETA', 'Estocáveis']);
+assert.equal(billingInvoiceCategoryMatches(multiLocal, ['LIMPEZA']), false);
+assert.equal(billingInvoiceCategoryMatches(multiLocal, ['DIETA', 'Estocáveis']), true);
+assert.equal(billingInvoiceCategoryMatches(base, ['DIETA', 'Estocáveis']), true);
+assert.equal(makeMulti([]).id, makeMulti('').id, 'Preserva faturamentos antigos de todas as categorias');
+assert.equal(makeMulti(['DIETA']).id, makeMulti('DIETA').id, 'Preserva faturamentos antigos de categoria única');
+assert.deepEqual(JSON.parse(JSON.stringify(multiLocal)).location.categories, multiLocal.location.categories);
+console.log('OK: seleção de múltiplas categorias, soma filtrada e compatibilidade das chaves de faturamentos salvos.');

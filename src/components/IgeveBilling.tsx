@@ -7,7 +7,7 @@ import * as XLSX from 'xlsx';
 import { supabase } from '../lib/supabase';
 import { getOrderControlNumber } from '../lib/orderControlNumber';
 import { addPdfHeader } from '../lib/pdfBranding';
-import { BILLING_PREFIX, SOURCE_KEYS, sortBillingRows, createLocationBillingInvoice, locationInvoiceConflict, effectiveBillingInvoices, createDeliveryBillingInvoice, locationBillingInvoices, locationTotals, companyTotals, billingDateInRange, invoiceTotal, isIgeveOperation, lineTotal, validateInvoice } from '../lib/igeveBilling';
+import { BILLING_PREFIX, SOURCE_KEYS, billingCategoryMatches, billingInvoiceCategoryMatches, sortBillingRows, createLocationBillingInvoice, locationInvoiceConflict, effectiveBillingInvoices, createDeliveryBillingInvoice, locationBillingInvoices, locationTotals, companyTotals, billingDateInRange, invoiceTotal, isIgeveOperation, lineTotal, validateInvoice } from '../lib/igeveBilling';
 import type { BillingInvoice, BillingOperation, BillingOrder, BillingPoint, SavedInvoice, BillingSort } from '../lib/igeveBilling';
 import type { Company } from '../types';
 import './IgeveBilling.css';
@@ -51,7 +51,7 @@ export default function IgeveBilling() {
   const [message, setMessage] = useState('');
   const [operationId, setOperationId] = useState('');
   const [companyFilter, setCompanyFilter] = useState('');
-  const [categoryFilter, setCategoryFilter] = useState('');
+  const [categoryFilter, setCategoryFilter] = useState<string[]>([]);
   const [locationFilter, setLocationFilter] = useState('');
   const [expandedLocation, setExpandedLocation] = useState('');
   const [sorts, setSorts] = useState<Record<string, BillingSort>>({});
@@ -85,8 +85,8 @@ export default function IgeveBilling() {
   }, []);
 
   const validPeriod = !start || !end || start <= end;
-  const filteredOrders = orders.filter(order => validPeriod && operations.some(op => op.id === order.operationId) && (!operationId || order.operationId === operationId) && (!categoryFilter || order.category === categoryFilter) && billingDateInRange(order.deliveryDate, start, end));
-  const filteredInvoices = effectiveBillingInvoices(saved.map(row => row.invoice)).filter(invoice => validPeriod && (!operationId || invoice.operationId === operationId) && (!companyFilter || invoice.company === companyFilter) && (!categoryFilter || invoice.category === categoryFilter) && billingDateInRange(invoice.date, start, end));
+  const filteredOrders = orders.filter(order => validPeriod && operations.some(op => op.id === order.operationId) && (!operationId || order.operationId === operationId) && billingCategoryMatches(order.category, categoryFilter) && billingDateInRange(order.deliveryDate, start, end));
+  const filteredInvoices = effectiveBillingInvoices(saved.map(row => row.invoice)).filter(invoice => validPeriod && (!operationId || invoice.operationId === operationId) && (!companyFilter || invoice.company === companyFilter) && billingInvoiceCategoryMatches(invoice, categoryFilter) && billingDateInRange(invoice.date, start, end));
   const categories = [...new Set([
     ...orders.filter(order => operations.some(op => op.id === order.operationId)).map(order => order.category),
     ...saved.filter(row => !row.invoice.location).map(row => row.invoice.category),
@@ -218,7 +218,10 @@ export default function IgeveBilling() {
     <nav className="igeve-actions" aria-label="Faturamento IGEVE">{[['romaneios', 'Faturamento por romaneio'], ['saved', 'Romaneios de faturamento'], ['locations', 'Faturamento por operação/local'], ['report', 'Relatório por empresas']].map(([id, label]) => <button key={id} className={`button ${tab !== id ? 'button-outline' : ''}`} onClick={() => setTab(id)}>{label}</button>)}</nav>
     <div className="card igeve-panel"><div className="igeve-filters">
       <label>Operação<select className="input-field" value={operationId} onChange={event => { setOperationId(event.target.value); setLocationFilter(''); }}><option value="">Todas as operações IGEVE</option>{operations.map(op => <option key={op.id} value={op.id}>{op.name}</option>)}</select></label>
-      <label>Categoria<select className="input-field" value={categoryFilter} onChange={event => setCategoryFilter(event.target.value)}><option value="">Todas as categorias</option>{categories.map(category => <option key={category} value={category}>{category}</option>)}</select></label>
+      <div className="igeve-category-filter"><span id="igeve-category-label">Categoria</span><details onKeyDown={event => { if (event.key === 'Escape') { event.currentTarget.open = false; event.currentTarget.querySelector('summary')?.focus(); } }}><summary className="input-field" aria-labelledby="igeve-category-label igeve-category-selection"><span id="igeve-category-selection">{categoryFilter.length ? categoryFilter.join(', ') : 'Todas as categorias'}</span></summary><div className="igeve-category-options" role="group" aria-label="Selecionar categorias">
+        <label><input type="checkbox" checked={!categoryFilter.length} onChange={() => setCategoryFilter([])} />Todas as categorias</label>
+        {categories.map(category => <label key={category}><input type="checkbox" checked={categoryFilter.includes(category)} onChange={event => setCategoryFilter(current => event.target.checked ? [...current, category].sort() : current.filter(value => value !== category))} />{category}</label>)}
+      </div></details></div>
       <label>{tab === 'romaneios' || tab === 'locations' ? 'Entrega de' : 'Faturamento de'}<input className="input-field" type="date" value={start} onChange={event => setStart(event.target.value)} /></label>
       <label>Até<input className="input-field" type="date" value={end} onChange={event => setEnd(event.target.value)} /></label>
       {tab !== 'romaneios' && tab !== 'locations' && <label>Empresa<select className="input-field" value={companyFilter} onChange={event => setCompanyFilter(event.target.value)}><option value="">Todas as empresas</option>{[...new Set(saved.map(row => row.invoice.company))].sort().map(name => <option key={name}>{name}</option>)}</select></label>}
