@@ -802,6 +802,7 @@ label {
   box-shadow: 0 24px 80px rgba(0, 0, 0, 0.45);
 }
 
+.operations-menu-layout[data-active-module="monthly-location-report"] .module-monthly-location-report,
 .operations-menu-layout[data-active-module="period-report"] .module-period-report,
 .operations-menu-layout[data-active-module="romaneio-products-report"] .module-romaneio-products-report,
 .operations-menu-layout[data-active-module="purchase-period-report"] .module-purchase-period-report,
@@ -921,3 +922,12 @@ label {
 }
 
 .module-products-by-date-report .period-report-actions { grid-column: 1 / -1; flex-wrap: wrap; }
+
+.monthly-location-selection { margin: 1rem 0; padding: 1rem; border: 1px solid var(--border); border-radius: 0.6rem; }
+.monthly-location-actions { display: flex; gap: 0.6rem; flex-wrap: wrap; align-items: center; }
+.monthly-location-actions .input-field { flex: 1; min-width: 160px; }
+.monthly-location-options { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 0.4rem; max-height: 220px; overflow-y: auto; margin-top: 0.8rem; }
+.monthly-location-result { margin-top: 1.25rem; padding-top: 1rem; border-top: 1px solid var(--border); }
+.monthly-location-actions .button { width: auto; gap: 0.35rem; }
+.monthly-location-result .view-header { gap: 1rem; flex-wrap: wrap; }
+.monthly-location-result .table-container { max-width: 100%; overflow-x: auto; }

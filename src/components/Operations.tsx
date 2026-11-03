@@ -1,3 +1,4 @@
+import MonthlyLocationReport from './MonthlyLocationReport';
 import { buildOperationBillingSummary, buildOperationBillingWorkbook, buildPeriodBillingArchive, selectOperationBillingOrders } from '../lib/operationBillingExcel';
 import { resolveDeliveryPointSectors } from '../lib/deliveryPointSectors';
 import { readAllRows } from '../lib/readAllRows';
@@ -48,7 +49,7 @@ const basketDocuments = new WeakSet<jsPDF>();
 
 type SourceType = 'Manual' | 'Excel' | 'PDF';
 type DeliveryCategory = 'Hortifrutigranjeiro' | 'Estocáveis' | 'Dietas e Fórmulas' | 'Proteínas' | 'Limpeza' | 'CESTA BASICA';
-type OperationsModule = 'operations' | 'locations' | 'order-entry' | 'orders' | 'history' | 'orders-summary-report' | 'deliveries-summary-report' | 'period-report' | 'romaneio-products-report' | 'purchase-period-report' | 'products-by-date-report';
+type OperationsModule = 'monthly-location-report' | 'operations' | 'locations' | 'order-entry' | 'orders' | 'history' | 'orders-summary-report' | 'deliveries-summary-report' | 'period-report' | 'romaneio-products-report' | 'purchase-period-report' | 'products-by-date-report';
 
 interface OperationContract {
   id: string;
@@ -2983,6 +2984,7 @@ const Operations: React.FC = () => {
           <button type="button" className="operations-module-button" onClick={() => setActiveModule('history')}><History size={22} /><span><strong>Histórico</strong><small>Consultar entregas anteriores</small></span></button>
           <button type="button" className="operations-module-button" onClick={() => setActiveModule('orders-summary-report')}><FileSpreadsheet size={22} /><span><strong>Relatório de pedidos</strong><small>Resumo sintético dos pedidos</small></span></button>
           <button type="button" className="operations-module-button" onClick={() => setActiveModule('deliveries-summary-report')}><FileText size={22} /><span><strong>Relatório de entregas</strong><small>Sintético por operação e categoria</small></span></button>
+          <button type="button" className="operations-module-button" onClick={() => setActiveModule('monthly-location-report')}><Calendar size={22} /><span><strong>Produtos por local e mês</strong><small>Mês completo: um, vários ou todos os locais</small></span></button>
           <button type="button" className="operations-module-button" onClick={() => setActiveModule('period-report')}><Search size={22} /><span><strong>Produtos por categoria e período</strong><small>Filtrar categoria e datas</small></span></button>
           <button type="button" className="operations-module-button" onClick={() => setActiveModule('romaneio-products-report')}><FileText size={22} /><span><strong>Produtos por romaneio</strong><small>Sintético, sem misturar pedidos</small></span></button>
           <button type="button" className="operations-module-button" onClick={() => setActiveModule('products-by-date-report')}><FileSpreadsheet size={22} /><span><strong>Faturamento de entregas</strong><small>Custos, vendas e margem</small></span></button>
@@ -3805,6 +3807,13 @@ const Operations: React.FC = () => {
               </table>
             </div>
           </div>
+
+          {activeModule === 'monthly-location-report' && activeOperation && <div className="card operations-module-window module-monthly-location-report" style={{ maxWidth: 'none', padding: '1.5rem' }}>
+            <MonthlyLocationReport key={activeOperation.id} operation={activeOperation} orders={operationOrders} points={operationPoints} savePdf={async (doc, fileName) => {
+              const writer = await preparePdfWriter(activeOperation, fileName);
+              await savePdf(doc, fileName, writer);
+            }} />
+          </div>}
 
           <div className="card operations-module-window module-period-report" style={{ maxWidth: 'none', padding: '1.5rem' }}>
             <div className="view-header" style={{ marginBottom: '1rem', gap: '1rem' }}>
