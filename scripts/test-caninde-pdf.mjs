@@ -32,7 +32,7 @@ try {
   const data = {
     location: 'Garça Torta', address: 'Vila Santa Maria, 149 - Garça Torta - Maceió/AL - CEP 57017-186',
     competence: 'SETEMBRO DE 2026', control: 'TESTE-43', deliveryDate: '2026-10-12',
-    receiverCnpj: '28.413.401/0041-80', invoice: { number: '1159', series: '001', issuedAt: '2026-10-12', collaborationTerm: '01/2026' },
+    receiverCnpj: '28.413.401/0041-80', collaborationTerm: '01/2026',
     items: [{ product: 'CESTA BASICA', unit: 'UN', quantity: 40 }, { product: 'CESTA BASICA', unit: 'UN', quantity: 3 }],
   };
   const textOf = async doc => {
@@ -47,12 +47,13 @@ try {
   await addCanindeDelivery(doc, data);
   assert.equal(doc.getNumberOfPages(), 1, 'O modelo normal cabe em uma página A4');
   const text = (await textOf(doc)).join(' ');
-  for (const expected of ['Garça Torta', '1159', '28.413.401/0041-80', '129 kg', '86 un.', 'Assinatura do representante', 'TESTE-43']) assert.ok(text.includes(expected), expected);
+  for (const expected of ['Garça Torta', '28.413.401/0041-80', '129 kg', '86 un.', 'Assinatura', 'TESTE-43']) assert.ok(text.includes(expected), expected);
   assert.ok(!text.includes('OLIVEIRA MENDES'));
+  for (const removed of ['NF-e', 'Série', 'Emissão', 'CESTAS NA NF', 'Assinatura do representante']) assert.ok(!text.includes(removed), `Removido: ${removed}`);
   await mkdir(new URL('../tmp/pdfs/', import.meta.url), { recursive: true });
   await writeFile(new URL('../tmp/pdfs/caninde-romaneio.pdf', import.meta.url), Buffer.from(doc.output('arraybuffer')));
   const blank = new jsPDF();
-  await addCanindeDelivery(blank, { ...data, invoice: undefined, receiverCnpj: undefined });
+  await addCanindeDelivery(blank, { ...data, collaborationTerm: undefined, receiverCnpj: undefined });
   const blankText = (await textOf(blank)).join(' ');
   assert.ok(!blankText.includes('1159'), 'Não reutiliza a NF do exemplo');
   assert.ok(!blankText.includes('28.413.401/0041-80'), 'Não reutiliza CNPJ de outra unidade');

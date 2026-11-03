@@ -42,8 +42,7 @@ import type { OperationPdfFolder } from '../lib/operationPdfFolders';
 GlobalWorkerOptions.workerSrc = new URL('pdfjs-dist/build/pdf.worker.mjs', import.meta.url).toString();
 
 import { addBasicBasketComposition, isMaceioBasicBasket } from '../lib/basicBasket';
-import { addCanindeDelivery, addCanindeHeader, emptyBasketInvoice } from '../lib/canindePdf';
-import type { BasketInvoice } from '../lib/canindePdf';
+import { addCanindeDelivery, addCanindeHeader } from '../lib/canindePdf';
 
 const basketDocuments = new WeakSet<jsPDF>();
 
@@ -101,7 +100,8 @@ interface OperationOrder {
   deliveryDate: string;
   consumptionPeriod: string;
   generalNotes?: string;
-  basketInvoice?: BasketInvoice;
+  collaborationTerm?: string;
+  basketInvoice?: { collaborationTerm?: string }; // Compatibilidade com pedidos antigos.
   importedAt: string;
   deliveries: OrderDelivery[];
 }
@@ -439,7 +439,7 @@ const Operations: React.FC = () => {
     deliveryDate: todayIso(),
     consumptionPeriod: '',
     generalNotes: '',
-    basketInvoice: { ...emptyBasketInvoice },
+    collaborationTerm: '',
     deliveryPointId: '',
     product: '',
     unit: 'UN',
@@ -1100,7 +1100,7 @@ const Operations: React.FC = () => {
       deliveryDate: order.deliveryDate,
       consumptionPeriod: order.consumptionPeriod || '',
       generalNotes: order.generalNotes || '',
-      basketInvoice: { ...emptyBasketInvoice, ...order.basketInvoice },
+      collaborationTerm: order.collaborationTerm ?? order.basketInvoice?.collaborationTerm ?? '',
       deliveryPointId: order.deliveries[0]?.deliveryPointId || operationPoints[0]?.id || '',
       product: '',
       unit: 'UN',
@@ -1244,7 +1244,7 @@ const Operations: React.FC = () => {
         deliveryDate: orderForm.deliveryDate,
         consumptionPeriod: displayText(orderForm.consumptionPeriod),
         generalNotes: displayText(orderForm.generalNotes),
-        basketInvoice: isMaceioBasicBasket(activeOperation, orderForm) ? { ...orderForm.basketInvoice } : undefined,
+        collaborationTerm: isMaceioBasicBasket(activeOperation, orderForm) ? displayText(orderForm.collaborationTerm) : undefined,
         deliveries: normalizeOrderDeliveries(draftDeliveries),
       };
       try {
@@ -1259,13 +1259,13 @@ const Operations: React.FC = () => {
         deliveryDate: orderForm.deliveryDate,
         consumptionPeriod: displayText(orderForm.consumptionPeriod),
         generalNotes: displayText(orderForm.generalNotes),
-        basketInvoice: isMaceioBasicBasket(activeOperation, orderForm) ? { ...orderForm.basketInvoice } : undefined,
+        collaborationTerm: isMaceioBasicBasket(activeOperation, orderForm) ? displayText(orderForm.collaborationTerm) : undefined,
         deliveries: normalizeOrderDeliveries(draftDeliveries),
       } : order));
       setEditingOrderId(null);
       setEditingDraftItem(null);
       setDraftDeliveries([]);
-      setOrderForm(prev => ({ ...prev, product: '', quantity: 0, notes: '', basketInvoice: { ...emptyBasketInvoice } }));
+      setOrderForm(prev => ({ ...prev, product: '', quantity: 0, notes: '', collaborationTerm: '' }));
       alert('Pedido de entrega atualizado.');
       return;
     }
@@ -1279,7 +1279,7 @@ const Operations: React.FC = () => {
       deliveryDate: orderForm.deliveryDate,
       consumptionPeriod: displayText(orderForm.consumptionPeriod),
       generalNotes: displayText(orderForm.generalNotes),
-      basketInvoice: isMaceioBasicBasket(activeOperation, orderForm) ? { ...orderForm.basketInvoice } : undefined,
+      collaborationTerm: isMaceioBasicBasket(activeOperation, orderForm) ? displayText(orderForm.collaborationTerm) : undefined,
       importedAt: new Date().toISOString(),
       deliveries: normalizeOrderDeliveries(draftDeliveries),
     };
@@ -1292,7 +1292,7 @@ const Operations: React.FC = () => {
     persistOrders([order, ...orders]);
     setEditingDraftItem(null);
     setDraftDeliveries([]);
-    setOrderForm(prev => ({ ...prev, product: '', quantity: 0, notes: '', generalNotes: '', basketInvoice: { ...emptyBasketInvoice } }));
+    setOrderForm(prev => ({ ...prev, product: '', quantity: 0, notes: '', generalNotes: '', collaborationTerm: '' }));
     alert('Pedido do cliente lançado na operação.');
   };
 
@@ -1308,7 +1308,7 @@ const Operations: React.FC = () => {
       quantity: 0,
       notes: '',
       generalNotes: '',
-      basketInvoice: { ...emptyBasketInvoice },
+      collaborationTerm: '',
     }));
   };
 
@@ -1746,7 +1746,7 @@ const Operations: React.FC = () => {
       control: getOrderControlNumber(order.importedAt),
       deliveryDate: order.deliveryDate.length === 10 ? order.deliveryDate : '',
       notes: order.generalNotes,
-      invoice: order.basketInvoice,
+      collaborationTerm: order.collaborationTerm ?? order.basketInvoice?.collaborationTerm,
       items: aggregateDeliveryItems(delivery.items),
     });
   };
@@ -3286,9 +3286,8 @@ const Operations: React.FC = () => {
                 <input className="input-field" placeholder="Observação que será exibida em todos os PDFs deste pedido" value={orderForm.generalNotes} onChange={event => setOrderForm({ ...orderForm, generalNotes: event.target.value })} />
               </div>
             </div>
-            {isMaceioBasicBasket(activeOperation, orderForm) && <div className="card" style={{ marginBottom: '1rem', display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: '0.75rem' }}>
-              <p style={{ gridColumn: '1 / -1', margin: 0 }}>Dados da nota fiscal para este pedido (opcionais). Deixe em branco para preencher no recebimento. O CNPJ é informado no cadastro de cada local.</p>
-              {([['number', 'Número da NF-e'], ['series', 'Série'], ['issuedAt', 'Emissão da NF-e'], ['collaborationTerm', 'Termo de colaboração']] as const).map(([field, label]) => <label key={field}>{label}<input className="input-field" type={field === 'issuedAt' ? 'date' : 'text'} value={orderForm.basketInvoice[field]} onChange={event => setOrderForm({ ...orderForm, basketInvoice: { ...orderForm.basketInvoice, [field]: event.target.value } })} /></label>)}
+            {isMaceioBasicBasket(activeOperation, orderForm) && <div style={{ marginBottom: '1rem' }}>
+              <label>Termo de colaboração (opcional)<input className="input-field" value={orderForm.collaborationTerm} onChange={event => setOrderForm({ ...orderForm, collaborationTerm: event.target.value })} /></label>
             </div>}
             <form ref={draftItemFormRef} onSubmit={addDraftItem} style={{ display: 'grid', gridTemplateColumns: '1.2fr 1.5fr 0.5fr 0.5fr 1fr auto', gap: '0.75rem', alignItems: 'end' }}>
               <div>

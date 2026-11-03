@@ -39,19 +39,10 @@ export async function addCanindeHeader(doc: jsPDF, options: { title: string; sub
   doc.setTextColor(31, 41, 55);
 }
 
-export interface BasketInvoice {
-  number: string;
-  series: string;
-  issuedAt: string;
-  collaborationTerm: string;
-}
-
-export const emptyBasketInvoice: BasketInvoice = { number: '', series: '', issuedAt: '', collaborationTerm: '' };
-
 export async function addCanindeDelivery(doc: jsPDF, data: {
   location: string; address: string; competence: string; control: string;
   deliveryDate: string; receiverCnpj?: string; notes?: string;
-  invoice?: BasketInvoice;
+  collaborationTerm?: string;
   items: { product: string; unit: string; quantity: number; notes?: string }[];
 }) {
   await addCanindeHeader(doc, { title: 'ROMANEIO DE ENTREGA' });
@@ -69,33 +60,32 @@ export async function addCanindeDelivery(doc: jsPDF, data: {
   doc.text(addressLines, 14, 51 + locationExtra);
   const offset = locationExtra + (addressLines.length - 1) * 4;
   doc.setFillColor(243, 244, 247);
-  doc.roundedRect(14, 61 + offset, 182, 25, 2, 2, 'F');
+  doc.roundedRect(14, 61 + offset, 182, 18, 2, 2, 'F');
   doc.setFont('helvetica', 'bold');
-  doc.text(`NF-e: ${data.invoice?.number || '________'} | Série: ${data.invoice?.series || '____'} | Emissão: ${date(data.invoice?.issuedAt)}`, 17, 67 + offset);
-  doc.text(`CNPJ RECEBEDOR - IGEVE: ${data.receiverCnpj || '________________________'}`, 17, 74 + offset);
-  doc.text(`TERMO DE COLABORAÇÃO: ${data.invoice?.collaborationTerm || '________________________'}`, 17, 81 + offset);
+  doc.text(`CNPJ RECEBEDOR - IGEVE: ${data.receiverCnpj || '________________________'}`, 17, 67 + offset);
+  doc.text(`TERMO DE COLABORAÇÃO: ${data.collaborationTerm || '________________________'}`, 17, 74 + offset);
   const baskets = data.items.reduce((sum, item) => sum + item.quantity, 0);
-  const labels = ['DATA DA ENTREGA', 'HORÁRIO', 'CESTAS NA NF', 'CESTAS NO ROMANEIO'];
-  const values = [date(data.deliveryDate), '____:____', '________', quantity(baskets)];
+  const labels = ['DATA DA ENTREGA', 'HORÁRIO', 'CESTAS NO ROMANEIO'];
+  const values = [date(data.deliveryDate), '____:____', quantity(baskets)];
   labels.forEach((label, index) => {
-    const x = 14 + index * 46;
+    const x = 14 + index * (184 / 3);
     doc.setFillColor(241, 245, 247);
-    doc.roundedRect(x, 90 + offset, 44, 16, 1.5, 1.5, 'F');
+    doc.roundedRect(x, 82 + offset, 178 / 3, 16, 1.5, 1.5, 'F');
     doc.setFontSize(7);
     doc.setFont('helvetica', 'bold');
-    doc.text(label, x + 3, 95 + offset);
+    doc.text(label, x + 3, 87 + offset);
     doc.setFont('helvetica', 'normal');
     doc.setFontSize(9);
-    doc.text(values[index], x + 3, 102 + offset);
+    doc.text(values[index], x + 3, 94 + offset);
   });
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(10);
-  doc.text('COMPOSIÇÃO DA CESTA E QUANTITATIVO RECEBIDO', 14, 114 + offset);
+  doc.text('COMPOSIÇÃO DA CESTA E QUANTITATIVO RECEBIDO', 14, 106 + offset);
   doc.setFont('helvetica', 'normal');
   doc.setFontSize(8);
-  doc.text(`Quantidade do romaneio: ${quantity(baskets)} cesta(s) | Controle: ${data.control}`, 14, 120 + offset);
+  doc.text(`Quantidade do romaneio: ${quantity(baskets)} cesta(s) | Controle: ${data.control}`, 14, 112 + offset);
   autoTable(doc, {
-    startY: 124 + offset,
+    startY: 116 + offset,
     head: [['ITEM', 'PRODUTO / APRESENTAÇÃO', 'POR CESTA', 'TOTAL RECEBIDO']],
     body: BASIC_BASKET_COMPOSITION.map(([product, count], index) => [
       index + 1, product, `${count} ${index === 0 ? 'kg' : 'un.'}`,
@@ -126,7 +116,7 @@ export async function addCanindeDelivery(doc: jsPDF, data: {
   doc.setDrawColor(150, 150, 150);
   doc.line(50, y + 40, 160, y + 40);
   doc.setFont('helvetica', 'bold');
-  doc.text('Assinatura do representante do IGEVE', 105, y + 45, { align: 'center' });
+  doc.text('Assinatura', 105, y + 45, { align: 'center' });
   doc.setFont('helvetica', 'normal');
   doc.text('Data da assinatura: ____/____/________', 14, y + 53);
 }
