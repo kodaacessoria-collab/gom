@@ -47,9 +47,9 @@ try {
   await addCanindeDelivery(doc, data);
   assert.equal(doc.getNumberOfPages(), 1, 'O modelo normal cabe em uma página A4');
   const text = (await textOf(doc)).join(' ');
-  for (const expected of ['Garça Torta', '28.413.401/0041-80', '129 kg', '86 un.', 'Assinatura', 'TESTE-43']) assert.ok(text.includes(expected), expected);
+  for (const expected of ['Garça Torta', '129 kg', '86 un.', 'Assinatura', 'TESTE-43']) assert.ok(text.includes(expected), expected);
   assert.ok(!text.includes('OLIVEIRA MENDES'));
-  for (const removed of ['NF-e', 'Série', 'Emissão', 'CESTAS NA NF', 'Assinatura do representante']) assert.ok(!text.includes(removed), `Removido: ${removed}`);
+  for (const removed of ['NF-e', 'Série', 'Emissão', 'CESTAS NA NF', 'Assinatura do representante', 'CNPJ RECEBEDOR', 'TERMO DE COLABORAÇÃO', '28.413.401/0041-80', '01/2026']) assert.ok(!text.includes(removed), `Removido: ${removed}`);
   await mkdir(new URL('../tmp/pdfs/', import.meta.url), { recursive: true });
   await writeFile(new URL('../tmp/pdfs/caninde-romaneio.pdf', import.meta.url), Buffer.from(doc.output('arraybuffer')));
   const blank = new jsPDF();

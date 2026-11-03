@@ -41,8 +41,7 @@ export async function addCanindeHeader(doc: jsPDF, options: { title: string; sub
 
 export async function addCanindeDelivery(doc: jsPDF, data: {
   location: string; address: string; competence: string; control: string;
-  deliveryDate: string; receiverCnpj?: string; notes?: string;
-  collaborationTerm?: string;
+  deliveryDate: string; notes?: string;
   items: { product: string; unit: string; quantity: number; notes?: string }[];
 }) {
   await addCanindeHeader(doc, { title: 'ROMANEIO DE ENTREGA' });
@@ -59,33 +58,28 @@ export async function addCanindeDelivery(doc: jsPDF, data: {
   const addressLines = doc.splitTextToSize(data.address || 'Endereço: não cadastrado', 180) as string[];
   doc.text(addressLines, 14, 51 + locationExtra);
   const offset = locationExtra + (addressLines.length - 1) * 4;
-  doc.setFillColor(243, 244, 247);
-  doc.roundedRect(14, 61 + offset, 182, 18, 2, 2, 'F');
-  doc.setFont('helvetica', 'bold');
-  doc.text(`CNPJ RECEBEDOR - IGEVE: ${data.receiverCnpj || '________________________'}`, 17, 67 + offset);
-  doc.text(`TERMO DE COLABORAÇÃO: ${data.collaborationTerm || '________________________'}`, 17, 74 + offset);
   const baskets = data.items.reduce((sum, item) => sum + item.quantity, 0);
   const labels = ['DATA DA ENTREGA', 'HORÁRIO', 'CESTAS NO ROMANEIO'];
   const values = [date(data.deliveryDate), '____:____', quantity(baskets)];
   labels.forEach((label, index) => {
     const x = 14 + index * (184 / 3);
     doc.setFillColor(241, 245, 247);
-    doc.roundedRect(x, 82 + offset, 178 / 3, 16, 1.5, 1.5, 'F');
+    doc.roundedRect(x, 61 + offset, 178 / 3, 16, 1.5, 1.5, 'F');
     doc.setFontSize(7);
     doc.setFont('helvetica', 'bold');
-    doc.text(label, x + 3, 87 + offset);
+    doc.text(label, x + 3, 66 + offset);
     doc.setFont('helvetica', 'normal');
     doc.setFontSize(9);
-    doc.text(values[index], x + 3, 94 + offset);
+    doc.text(values[index], x + 3, 73 + offset);
   });
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(10);
-  doc.text('COMPOSIÇÃO DA CESTA E QUANTITATIVO RECEBIDO', 14, 106 + offset);
+  doc.text('COMPOSIÇÃO DA CESTA E QUANTITATIVO RECEBIDO', 14, 85 + offset);
   doc.setFont('helvetica', 'normal');
   doc.setFontSize(8);
-  doc.text(`Quantidade do romaneio: ${quantity(baskets)} cesta(s) | Controle: ${data.control}`, 14, 112 + offset);
+  doc.text(`Quantidade do romaneio: ${quantity(baskets)} cesta(s) | Controle: ${data.control}`, 14, 91 + offset);
   autoTable(doc, {
-    startY: 116 + offset,
+    startY: 95 + offset,
     head: [['ITEM', 'PRODUTO / APRESENTAÇÃO', 'POR CESTA', 'TOTAL RECEBIDO']],
     body: BASIC_BASKET_COMPOSITION.map(([product, count], index) => [
       index + 1, product, `${count} ${index === 0 ? 'kg' : 'un.'}`,

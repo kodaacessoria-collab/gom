@@ -82,7 +82,6 @@ interface DeliveryPoint {
   name: string;
   address: string;
   neighborhood: string;
-  receiverCnpj?: string;
 }
 
 interface OrderDelivery {
@@ -100,8 +99,6 @@ interface OperationOrder {
   deliveryDate: string;
   consumptionPeriod: string;
   generalNotes?: string;
-  collaborationTerm?: string;
-  basketInvoice?: { collaborationTerm?: string }; // Compatibilidade com pedidos antigos.
   importedAt: string;
   deliveries: OrderDelivery[];
 }
@@ -429,9 +426,9 @@ const Operations: React.FC = () => {
   const [newSector, setNewSector] = useState('Setor 01');
   const [editingSectorId, setEditingSectorId] = useState<string | null>(null);
   const [sectorEditName, setSectorEditName] = useState('');
-  const [newPoint, setNewPoint] = useState({ sectorId: '', code: '', name: '', address: '', neighborhood: '', receiverCnpj: '' });
+  const [newPoint, setNewPoint] = useState({ sectorId: '', code: '', name: '', address: '', neighborhood: '' });
   const [editingPointId, setEditingPointId] = useState<string | null>(null);
-  const [pointEditForm, setPointEditForm] = useState({ sectorId: '', code: '', name: '', address: '', neighborhood: '', receiverCnpj: '' });
+  const [pointEditForm, setPointEditForm] = useState({ sectorId: '', code: '', name: '', address: '', neighborhood: '' });
   const [editingOrderId, setEditingOrderId] = useState<string | null>(null);
   const [monthlyDelivery, setMonthlyDelivery] = useState(false);
   const [orderForm, setOrderForm] = useState({
@@ -439,7 +436,6 @@ const Operations: React.FC = () => {
     deliveryDate: todayIso(),
     consumptionPeriod: '',
     generalNotes: '',
-    collaborationTerm: '',
     deliveryPointId: '',
     product: '',
     unit: 'UN',
@@ -939,10 +935,9 @@ const Operations: React.FC = () => {
       name: displayText(newPoint.name),
       address: displayText(newPoint.address),
       neighborhood: displayText(newPoint.neighborhood),
-      receiverCnpj: displayText(newPoint.receiverCnpj),
     };
     persistDeliveryPoints([...deliveryPoints, point]);
-    setNewPoint({ ...newPoint, code: '', name: '', address: '', neighborhood: '', receiverCnpj: '' });
+    setNewPoint({ ...newPoint, code: '', name: '', address: '', neighborhood: '' });
     if (!orderForm.deliveryPointId) setOrderForm({ ...orderForm, deliveryPointId: point.id });
   };
 
@@ -1071,7 +1066,6 @@ const Operations: React.FC = () => {
       name: point.name,
       address: point.address,
       neighborhood: point.neighborhood,
-      receiverCnpj: point.receiverCnpj || '',
     });
   };
 
@@ -1084,7 +1078,6 @@ const Operations: React.FC = () => {
       name: displayText(pointEditForm.name),
       address: displayText(pointEditForm.address),
       neighborhood: displayText(pointEditForm.neighborhood),
-      receiverCnpj: displayText(pointEditForm.receiverCnpj),
     } : point));
     setEditingPointId(null);
   };
@@ -1100,7 +1093,6 @@ const Operations: React.FC = () => {
       deliveryDate: order.deliveryDate,
       consumptionPeriod: order.consumptionPeriod || '',
       generalNotes: order.generalNotes || '',
-      collaborationTerm: order.collaborationTerm ?? order.basketInvoice?.collaborationTerm ?? '',
       deliveryPointId: order.deliveries[0]?.deliveryPointId || operationPoints[0]?.id || '',
       product: '',
       unit: 'UN',
@@ -1244,7 +1236,6 @@ const Operations: React.FC = () => {
         deliveryDate: orderForm.deliveryDate,
         consumptionPeriod: displayText(orderForm.consumptionPeriod),
         generalNotes: displayText(orderForm.generalNotes),
-        collaborationTerm: isMaceioBasicBasket(activeOperation, orderForm) ? displayText(orderForm.collaborationTerm) : undefined,
         deliveries: normalizeOrderDeliveries(draftDeliveries),
       };
       try {
@@ -1259,13 +1250,12 @@ const Operations: React.FC = () => {
         deliveryDate: orderForm.deliveryDate,
         consumptionPeriod: displayText(orderForm.consumptionPeriod),
         generalNotes: displayText(orderForm.generalNotes),
-        collaborationTerm: isMaceioBasicBasket(activeOperation, orderForm) ? displayText(orderForm.collaborationTerm) : undefined,
         deliveries: normalizeOrderDeliveries(draftDeliveries),
       } : order));
       setEditingOrderId(null);
       setEditingDraftItem(null);
       setDraftDeliveries([]);
-      setOrderForm(prev => ({ ...prev, product: '', quantity: 0, notes: '', collaborationTerm: '' }));
+      setOrderForm(prev => ({ ...prev, product: '', quantity: 0, notes: '' }));
       alert('Pedido de entrega atualizado.');
       return;
     }
@@ -1279,7 +1269,6 @@ const Operations: React.FC = () => {
       deliveryDate: orderForm.deliveryDate,
       consumptionPeriod: displayText(orderForm.consumptionPeriod),
       generalNotes: displayText(orderForm.generalNotes),
-      collaborationTerm: isMaceioBasicBasket(activeOperation, orderForm) ? displayText(orderForm.collaborationTerm) : undefined,
       importedAt: new Date().toISOString(),
       deliveries: normalizeOrderDeliveries(draftDeliveries),
     };
@@ -1292,7 +1281,7 @@ const Operations: React.FC = () => {
     persistOrders([order, ...orders]);
     setEditingDraftItem(null);
     setDraftDeliveries([]);
-    setOrderForm(prev => ({ ...prev, product: '', quantity: 0, notes: '', generalNotes: '', collaborationTerm: '' }));
+    setOrderForm(prev => ({ ...prev, product: '', quantity: 0, notes: '', generalNotes: '' }));
     alert('Pedido do cliente lançado na operação.');
   };
 
@@ -1308,7 +1297,6 @@ const Operations: React.FC = () => {
       quantity: 0,
       notes: '',
       generalNotes: '',
-      collaborationTerm: '',
     }));
   };
 
@@ -1741,12 +1729,10 @@ const Operations: React.FC = () => {
     await addCanindeDelivery(doc, {
       location: point?.name || 'Local de entrega',
       address: [point?.address, point?.neighborhood, 'Maceió/AL'].filter(Boolean).join(' - '),
-      receiverCnpj: point?.receiverCnpj,
       competence: order.consumptionPeriod,
       control: getOrderControlNumber(order.importedAt),
       deliveryDate: order.deliveryDate.length === 10 ? order.deliveryDate : '',
       notes: order.generalNotes,
-      collaborationTerm: order.collaborationTerm ?? order.basketInvoice?.collaborationTerm,
       items: aggregateDeliveryItems(delivery.items),
     });
   };
@@ -3156,7 +3142,6 @@ const Operations: React.FC = () => {
                 <div>
                   <label>Bairro</label>
                   <input className="input-field" placeholder="Bairro" value={newPoint.neighborhood} onChange={event => setNewPoint({ ...newPoint, neighborhood: event.target.value })} />
-                  <input className="input-field" aria-label="CNPJ recebedor IGEVE" placeholder="CNPJ recebedor IGEVE (opcional)" value={newPoint.receiverCnpj} onChange={event => setNewPoint({ ...newPoint, receiverCnpj: event.target.value })} />
                 </div>
                 <div style={{ gridColumn: '1 / -1' }}>
                   <label>Endereço</label>
@@ -3210,7 +3195,6 @@ const Operations: React.FC = () => {
                           <td>
                             <input className="input-field" placeholder="Endereço" value={pointEditForm.address} onChange={event => setPointEditForm({ ...pointEditForm, address: event.target.value })} />
                             <input className="input-field" placeholder="Bairro" value={pointEditForm.neighborhood} onChange={event => setPointEditForm({ ...pointEditForm, neighborhood: event.target.value })} />
-                            <input className="input-field" aria-label="CNPJ recebedor IGEVE" placeholder="CNPJ recebedor IGEVE (opcional)" value={pointEditForm.receiverCnpj} onChange={event => setPointEditForm({ ...pointEditForm, receiverCnpj: event.target.value })} />
                           </td>
                           <td>
                             <div style={{ display: 'flex', gap: '0.4rem' }}>
@@ -3286,9 +3270,6 @@ const Operations: React.FC = () => {
                 <input className="input-field" placeholder="Observação que será exibida em todos os PDFs deste pedido" value={orderForm.generalNotes} onChange={event => setOrderForm({ ...orderForm, generalNotes: event.target.value })} />
               </div>
             </div>
-            {isMaceioBasicBasket(activeOperation, orderForm) && <div style={{ marginBottom: '1rem' }}>
-              <label>Termo de colaboração (opcional)<input className="input-field" value={orderForm.collaborationTerm} onChange={event => setOrderForm({ ...orderForm, collaborationTerm: event.target.value })} /></label>
-            </div>}
             <form ref={draftItemFormRef} onSubmit={addDraftItem} style={{ display: 'grid', gridTemplateColumns: '1.2fr 1.5fr 0.5fr 0.5fr 1fr auto', gap: '0.75rem', alignItems: 'end' }}>
               <div>
                 <label>Local de entrega</label>
