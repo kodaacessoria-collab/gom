@@ -26,14 +26,14 @@ const safeName = (value: string) => value.replace(/[<>:"/\\|?*]+/g, ' ').replace
 
 export default function MonthlyLocationReport({ operation, orders, points, savePdf }: Props) {
   const [month, setMonth] = useState(previousMonth);
-  const [category, setCategory] = useState('Todas');
+  const [selectedCategories, setSelectedCategories] = useState<string[] | null>(null);
   const [selectedIds, setSelectedIds] = useState<string[] | null>(null);
   const [search, setSearch] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const period = getReportMonth(month);
   const categories = useMemo(() => [...new Set(orders.filter(order => order.operationId === operation.id).map(order => order.category))].sort((a, b) => a.localeCompare(b, 'pt-BR')), [orders, operation.id]);
-  const allGroups = useMemo(() => buildMonthlyLocationReport(orders, points, operation.id, month, category), [orders, points, operation.id, month, category]);
+  const allGroups = useMemo(() => buildMonthlyLocationReport(orders, points, operation.id, month, selectedCategories), [orders, points, operation.id, month, selectedCategories]);
   const groups = selectedIds === null ? allGroups : allGroups.filter(group => selectedIds.includes(group.id));
   const locations = useMemo(() => {
     const names = new Map(points.filter(point => point.operationId === operation.id).map(point => [point.id, point.name]));
@@ -45,7 +45,13 @@ export default function MonthlyLocationReport({ operation, orders, points, saveP
     const ids = current ?? locations.map(point => point.id);
     return ids.includes(id) ? ids.filter(value => value !== id) : [...ids, id];
   });
-  const categoryLabel = category === 'Todas' ? 'Todas as categorias' : category;
+  const toggleCategory = (category: string) => setSelectedCategories(current => {
+    const selected = current ?? categories;
+    const next = selected.includes(category) ? selected.filter(value => value !== category) : [...selected, category];
+    return next.length === categories.length ? null : next;
+  });
+  const categoryLabel = selectedCategories === null ? 'Todas as categorias' : selectedCategories.join(', ') || 'Nenhuma categoria';
+  const categorySummary = selectedCategories === null ? 'Todas as categorias' : selectedCategories.length === 1 ? selectedCategories[0] : `${selectedCategories.length} categorias selecionadas`;
 
   const exportReport = async (format: 'pdf' | 'xlsx', selectedGroups = groups) => {
     if (!period || !selectedGroups.length || busy) return;
@@ -87,7 +93,19 @@ export default function MonthlyLocationReport({ operation, orders, points, saveP
     <p className="report-description">{operation.name}. Soma as entregas do primeiro ao último dia do mês, separando local, categoria, produto e unidade.</p>
     <div className="period-report-filters">
       <label>Mês/ano<input type="month" className="input-field" value={month} onChange={event => setMonth(event.target.value)} /></label>
-      <label>Categoria<select aria-label="Categoria" className="input-field" value={category} onChange={event => setCategory(event.target.value)}><option value="Todas">Todas as categorias</option>{categories.map(value => <option key={value}>{value}</option>)}</select></label>
+      <div>
+        <label>Categorias</label>
+        <details className="operation-multiselect">
+          <summary className="input-field" aria-label="Selecionar categorias" title={categoryLabel}>{categorySummary}</summary>
+          <div className="operation-multiselect-options" role="group" aria-label="Categorias">
+            <div className="monthly-location-actions">
+              <button type="button" className="button button-outline" disabled={busy} onClick={() => setSelectedCategories(null)}>Todas as categorias</button>
+              <button type="button" className="button button-outline" disabled={busy} onClick={() => setSelectedCategories([])}>Desmarcar categorias</button>
+            </div>
+            {categories.map(value => <label className="operation-checkbox-option" key={value}><input type="checkbox" disabled={busy} checked={selectedCategories === null || selectedCategories.includes(value)} onChange={() => toggleCategory(value)} /><span>{value}</span></label>)}
+          </div>
+        </details>
+      </div>
     </div>
     <fieldset className="monthly-location-selection" disabled={busy}>
       <legend>Locais de entrega</legend>
@@ -100,9 +118,9 @@ export default function MonthlyLocationReport({ operation, orders, points, saveP
       {!visibleLocations.length && <p>Nenhum local encontrado.</p>}
     </fieldset>
     <div className="monthly-location-actions">{exportButtons()}<span>{busy ? 'Gerando relatório...' : `${groups.length} local(is) com entregas · ${period?.label || 'Selecione o mês'}`}</span></div>
-    <p className="report-description">O PDF separa cada local em uma nova página. Para gerar somente um local, use os botões no quadro correspondente. Locais sem entregas no mês e na categoria escolhidos não geram páginas vazias.</p>
+    <p className="report-description">O PDF separa cada local em uma nova página. Para gerar somente um local, use os botões no quadro correspondente. Locais sem entregas no mês e nas categorias escolhidas não geram páginas vazias.</p>
     {error && <p role="alert">{error}</p>}
-    {!groups.length && <p role="status">{selectedIds?.length === 0 ? 'Selecione pelo menos um local para gerar o relatório.' : 'Nenhum produto encontrado para o mês, a categoria e os locais selecionados.'}</p>}
+    {!groups.length && <p role="status">{selectedCategories?.length === 0 ? 'Selecione pelo menos uma categoria para gerar o relatório.' : selectedIds?.length === 0 ? 'Selecione pelo menos um local para gerar o relatório.' : 'Nenhum produto encontrado para o mês, as categorias e os locais selecionados.'}</p>}
     {groups.map(group => <section className="monthly-location-result" key={group.id}>
       <div className="view-header"><div><h3>{group.name}</h3><p className="report-description">{group.orderCount} pedido(s) · {group.deliveryCount} entrega(s) · {period?.label}</p></div><div className="monthly-location-actions">{exportButtons([group])}</div></div>
       <div className="table-container"><table className="data-table"><thead><tr><th>Categoria</th><th>Produto</th><th>Unidade</th><th>Quantidade no mês</th></tr></thead><tbody>{group.rows.map((row, index) => <tr key={index}><td>{row.category}</td><td>{row.product}</td><td>{row.unit}</td><td>{row.quantity.toLocaleString('pt-BR', { maximumFractionDigits: 3 })}</td></tr>)}</tbody></table></div>

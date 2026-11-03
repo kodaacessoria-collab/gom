@@ -42,10 +42,11 @@ export function getReportMonth(month: string) {
 /** Consolida o mês inteiro pela data de entrega, incluindo pedidos cadastrados só com mês/ano. */
 export function buildMonthlyLocationReport(
   orders: MonthlyReportOrder[], points: MonthlyReportPoint[], operationId: string,
-  month: string, category = 'Todas', selectedIds: string[] | null = null,
+  month: string, category: string | string[] | null = 'Todas', selectedIds: string[] | null = null,
 ): MonthlyLocationGroup[] {
   const period = getReportMonth(month);
   if (!period) return [];
+  const selectedCategories = category === null || category === 'Todas' ? null : new Set((Array.isArray(category) ? category : [category]).map(normalize));
   const selected = selectedIds === null ? null : new Set(selectedIds);
   const pointsById = new Map(points.filter(point => point.operationId === operationId).map(point => [point.id, point]));
   const groups = new Map<string, {
@@ -55,7 +56,7 @@ export function buildMonthlyLocationReport(
     deliveries: Set<string>;
   }>();
   for (const order of orders) {
-    if (order.operationId !== operationId || (category !== 'Todas' && normalize(order.category) !== normalize(category))) continue;
+    if (order.operationId !== operationId || (selectedCategories && !selectedCategories.has(normalize(order.category)))) continue;
     const date = order.deliveryDate;
     if (date !== month && !(new RegExp(`^${month}-\\d{2}$`).test(date) && date >= period.start && date <= period.end)) continue;
     for (const delivery of order.deliveries) {
