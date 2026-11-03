@@ -42,6 +42,8 @@ import type { OperationPdfFolder } from '../lib/operationPdfFolders';
 GlobalWorkerOptions.workerSrc = new URL('pdfjs-dist/build/pdf.worker.mjs', import.meta.url).toString();
 
 import { addBasicBasketComposition, isMaceioBasicBasket } from '../lib/basicBasket';
+import { addCanindeDelivery, addCanindeHeader, emptyBasketInvoice } from '../lib/canindePdf';
+import type { BasketInvoice } from '../lib/canindePdf';
 
 const basketDocuments = new WeakSet<jsPDF>();
 
@@ -81,6 +83,7 @@ interface DeliveryPoint {
   name: string;
   address: string;
   neighborhood: string;
+  receiverCnpj?: string;
 }
 
 interface OrderDelivery {
@@ -98,6 +101,7 @@ interface OperationOrder {
   deliveryDate: string;
   consumptionPeriod: string;
   generalNotes?: string;
+  basketInvoice?: BasketInvoice;
   importedAt: string;
   deliveries: OrderDelivery[];
 }
@@ -321,8 +325,12 @@ const getPdfHeader = (operation: OperationContract, order: OperationOrder) =>
   `ROMANEIO - ${order.category.toUpperCase()} - ${getOperationTitle(operation).toUpperCase()} - ${formatDate(order.deliveryDate)}`;
 
 const addHeader = async (doc: jsPDF, operation: OperationContract, order: OperationOrder, subtitle?: string) => {
-  if (isMaceioBasicBasket(operation, order)) basketDocuments.add(doc);
-  else basketDocuments.delete(doc);
+  if (isMaceioBasicBasket(operation, order)) {
+    basketDocuments.add(doc);
+    await addCanindeHeader(doc, { title: getPdfHeader(operation, order), subtitle: order.consumptionPeriod ? `Competência: ${order.consumptionPeriod}` : undefined, footer: subtitle });
+    return;
+  }
+  basketDocuments.delete(doc);
   const details = [
     operation.bidNumber ? `Ata: ${operation.bidNumber}` : '',
     operation.supplyAuthorization ? `Autorizacao: ${operation.supplyAuthorization}` : '',
@@ -421,9 +429,9 @@ const Operations: React.FC = () => {
   const [newSector, setNewSector] = useState('Setor 01');
   const [editingSectorId, setEditingSectorId] = useState<string | null>(null);
   const [sectorEditName, setSectorEditName] = useState('');
-  const [newPoint, setNewPoint] = useState({ sectorId: '', code: '', name: '', address: '', neighborhood: '' });
+  const [newPoint, setNewPoint] = useState({ sectorId: '', code: '', name: '', address: '', neighborhood: '', receiverCnpj: '' });
   const [editingPointId, setEditingPointId] = useState<string | null>(null);
-  const [pointEditForm, setPointEditForm] = useState({ sectorId: '', code: '', name: '', address: '', neighborhood: '' });
+  const [pointEditForm, setPointEditForm] = useState({ sectorId: '', code: '', name: '', address: '', neighborhood: '', receiverCnpj: '' });
   const [editingOrderId, setEditingOrderId] = useState<string | null>(null);
   const [monthlyDelivery, setMonthlyDelivery] = useState(false);
   const [orderForm, setOrderForm] = useState({
@@ -431,6 +439,7 @@ const Operations: React.FC = () => {
     deliveryDate: todayIso(),
     consumptionPeriod: '',
     generalNotes: '',
+    basketInvoice: { ...emptyBasketInvoice },
     deliveryPointId: '',
     product: '',
     unit: 'UN',
@@ -598,10 +607,21 @@ const Operations: React.FC = () => {
     (reportCategory === 'Todas' || order.category === reportCategory) &&
     deliveryDateInRange(order.deliveryDate, reportStartDate, reportEndDate);
 
-  const appendBasketReportComposition = (doc: jsPDF, reportOrders: OperationOrder[]) => {
+  const onlyMaceioBaskets = (reportOrders: OperationOrder[]) => reportOrders.length > 0 && reportOrders.every(order =>
+    isMaceioBasicBasket(operations.find(operation => operation.id === order.operationId), order));
+
+  const addOperationReportHeader = async (doc: jsPDF, options: Parameters<typeof addPdfHeader>[1], reportOrders: OperationOrder[]) => {
+    if (onlyMaceioBaskets(reportOrders)) await addCanindeHeader(doc, options);
+    else await addPdfHeader(doc, options);
+  };
+
+  const appendBasketReportComposition = async (doc: jsPDF, reportOrders: OperationOrder[]) => {
     if (!reportOrders.some(order => isMaceioBasicBasket(operations.find(operation => operation.id === order.operationId), order))) return;
     doc.addPage();
-    addBasicBasketComposition(doc, 20);
+    if (onlyMaceioBaskets(reportOrders)) {
+      await addCanindeHeader(doc, { title: 'COMPOSIÇÃO DA CESTA BÁSICA', subtitle: 'Operação Maceió | Canindé Distribuidora' });
+      addBasicBasketComposition(doc, 44);
+    } else addBasicBasketComposition(doc, 20);
   };
 
   const savePdf = async (doc: jsPDF, fileName: string, writer: FileSystemWritableFileStream | null) => {
@@ -919,9 +939,10 @@ const Operations: React.FC = () => {
       name: displayText(newPoint.name),
       address: displayText(newPoint.address),
       neighborhood: displayText(newPoint.neighborhood),
+      receiverCnpj: displayText(newPoint.receiverCnpj),
     };
     persistDeliveryPoints([...deliveryPoints, point]);
-    setNewPoint({ ...newPoint, code: '', name: '', address: '', neighborhood: '' });
+    setNewPoint({ ...newPoint, code: '', name: '', address: '', neighborhood: '', receiverCnpj: '' });
     if (!orderForm.deliveryPointId) setOrderForm({ ...orderForm, deliveryPointId: point.id });
   };
 
@@ -1050,6 +1071,7 @@ const Operations: React.FC = () => {
       name: point.name,
       address: point.address,
       neighborhood: point.neighborhood,
+      receiverCnpj: point.receiverCnpj || '',
     });
   };
 
@@ -1062,6 +1084,7 @@ const Operations: React.FC = () => {
       name: displayText(pointEditForm.name),
       address: displayText(pointEditForm.address),
       neighborhood: displayText(pointEditForm.neighborhood),
+      receiverCnpj: displayText(pointEditForm.receiverCnpj),
     } : point));
     setEditingPointId(null);
   };
@@ -1077,6 +1100,7 @@ const Operations: React.FC = () => {
       deliveryDate: order.deliveryDate,
       consumptionPeriod: order.consumptionPeriod || '',
       generalNotes: order.generalNotes || '',
+      basketInvoice: { ...emptyBasketInvoice, ...order.basketInvoice },
       deliveryPointId: order.deliveries[0]?.deliveryPointId || operationPoints[0]?.id || '',
       product: '',
       unit: 'UN',
@@ -1220,6 +1244,7 @@ const Operations: React.FC = () => {
         deliveryDate: orderForm.deliveryDate,
         consumptionPeriod: displayText(orderForm.consumptionPeriod),
         generalNotes: displayText(orderForm.generalNotes),
+        basketInvoice: isMaceioBasicBasket(activeOperation, orderForm) ? { ...orderForm.basketInvoice } : undefined,
         deliveries: normalizeOrderDeliveries(draftDeliveries),
       };
       try {
@@ -1234,12 +1259,13 @@ const Operations: React.FC = () => {
         deliveryDate: orderForm.deliveryDate,
         consumptionPeriod: displayText(orderForm.consumptionPeriod),
         generalNotes: displayText(orderForm.generalNotes),
+        basketInvoice: isMaceioBasicBasket(activeOperation, orderForm) ? { ...orderForm.basketInvoice } : undefined,
         deliveries: normalizeOrderDeliveries(draftDeliveries),
       } : order));
       setEditingOrderId(null);
       setEditingDraftItem(null);
       setDraftDeliveries([]);
-      setOrderForm(prev => ({ ...prev, product: '', quantity: 0, notes: '' }));
+      setOrderForm(prev => ({ ...prev, product: '', quantity: 0, notes: '', basketInvoice: { ...emptyBasketInvoice } }));
       alert('Pedido de entrega atualizado.');
       return;
     }
@@ -1253,6 +1279,7 @@ const Operations: React.FC = () => {
       deliveryDate: orderForm.deliveryDate,
       consumptionPeriod: displayText(orderForm.consumptionPeriod),
       generalNotes: displayText(orderForm.generalNotes),
+      basketInvoice: isMaceioBasicBasket(activeOperation, orderForm) ? { ...orderForm.basketInvoice } : undefined,
       importedAt: new Date().toISOString(),
       deliveries: normalizeOrderDeliveries(draftDeliveries),
     };
@@ -1265,7 +1292,7 @@ const Operations: React.FC = () => {
     persistOrders([order, ...orders]);
     setEditingDraftItem(null);
     setDraftDeliveries([]);
-    setOrderForm(prev => ({ ...prev, product: '', quantity: 0, notes: '', generalNotes: '' }));
+    setOrderForm(prev => ({ ...prev, product: '', quantity: 0, notes: '', generalNotes: '', basketInvoice: { ...emptyBasketInvoice } }));
     alert('Pedido do cliente lançado na operação.');
   };
 
@@ -1281,6 +1308,7 @@ const Operations: React.FC = () => {
       quantity: 0,
       notes: '',
       generalNotes: '',
+      basketInvoice: { ...emptyBasketInvoice },
     }));
   };
 
@@ -1708,6 +1736,21 @@ const Operations: React.FC = () => {
     }
   };
 
+  const addBasketDelivery = async (doc: jsPDF, order: OperationOrder, delivery: OrderDelivery) => {
+    const point = pointById(delivery.deliveryPointId);
+    await addCanindeDelivery(doc, {
+      location: point?.name || 'Local de entrega',
+      address: [point?.address, point?.neighborhood, 'Maceió/AL'].filter(Boolean).join(' - '),
+      receiverCnpj: point?.receiverCnpj,
+      competence: order.consumptionPeriod,
+      control: getOrderControlNumber(order.importedAt),
+      deliveryDate: order.deliveryDate.length === 10 ? order.deliveryDate : '',
+      notes: order.generalNotes,
+      invoice: order.basketInvoice,
+      items: aggregateDeliveryItems(delivery.items),
+    });
+  };
+
   const generateDeliveryPdf = async (order: OperationOrder, delivery: OrderDelivery) => {
     const reportOperation = operationByOrder(order);
     if (!reportOperation) return;
@@ -1717,6 +1760,11 @@ const Operations: React.FC = () => {
     const sector = sectorById(point?.sectorId);
     const items = aggregateDeliveryItems(delivery.items);
     const doc = new jsPDF();
+    if (isMaceioBasicBasket(reportOperation, order)) {
+      await addBasketDelivery(doc, order, delivery);
+      await savePdf(doc, fileName, writer);
+      return;
+    }
     doc.setFont(REPORT_FONT, 'normal');
     doc.setFontSize(REPORT_FONT_SIZE);
     await addHeader(doc, reportOperation, order, `${sector?.name || 'Sem setor'} | ${point?.name || 'Local de entrega'}`);
@@ -1792,6 +1840,10 @@ const Operations: React.FC = () => {
     for (const { delivery, sector, displayCode } of orderedDeliveries) {
       doc.addPage('a4', 'portrait');
       const point = pointById(delivery.deliveryPointId);
+      if (isMaceioBasicBasket(reportOperation, order)) {
+        await addBasketDelivery(doc, order, delivery);
+        continue;
+      }
       const items = aggregateDeliveryItems(delivery.items);
 
       doc.setFont(REPORT_FONT, 'normal');
@@ -2208,12 +2260,12 @@ const Operations: React.FC = () => {
     const fileName = `${sanitizeFileName(`RELATORIO SINTETICO POR ROMANEIO - ${activeOperation.name} - ${categoryLabel} - ${formatDate(reportStartDate)} a ${formatDate(reportEndDate)}`)}.pdf`;
     const writer = await preparePdfWriter(activeOperation, fileName);
     const doc = new jsPDF({ orientation: 'landscape' });
-    await addPdfHeader(doc, {
+    await addOperationReportHeader(doc, {
       title: `PRODUTOS ENTREGUES - SINTETICO POR ROMANEIO - ${getOperationTitle(activeOperation).toUpperCase()}`,
       subtitle: `Categoria: ${categoryLabel} | Produto: ${productLabel} | Periodo: ${formatDate(reportStartDate)} a ${formatDate(reportEndDate)}`,
       footer: `${romaneioProductsReport.columns.length} romaneio(s) | ${romaneioProductsReport.deliveryCount} entrega(s) somadas`,
       logoVariant: activeOperation.logoVariant || DEFAULT_LOGO_VARIANT,
-    });
+    }, romaneioProductsReport.columns);
     autoTable(doc, {
       startY: 36,
       head: [[
@@ -2241,7 +2293,7 @@ const Operations: React.FC = () => {
       horizontalPageBreak: true,
       horizontalPageBreakRepeat: [0, 1],
     });
-    appendBasketReportComposition(doc, romaneioProductsReport.columns);
+    await appendBasketReportComposition(doc, romaneioProductsReport.columns);
     await savePdf(doc, fileName, writer);
   };
 
@@ -2360,12 +2412,12 @@ const Operations: React.FC = () => {
         : `${selectedOperations.length} operacoes selecionadas`;
     const fileName = `${sanitizeFileName(`RELATORIO DE COMPRA - ${operationLabel} - ${categoryLabel} - ${formatDate(reportStartDate)} a ${formatDate(reportEndDate)}`)}.pdf`;
     const doc = new jsPDF();
-    await addPdfHeader(doc, {
+    await addOperationReportHeader(doc, {
       title: 'RELATORIO GERAL DE COMPRA POR PERIODO',
       subtitle: `Operacoes: ${operationLabel} | Categoria: ${categoryLabel} | Periodo: ${formatDate(reportStartDate)} a ${formatDate(reportEndDate)}`,
       footer: `${purchasePeriodReport.operationCount} operacao(oes) | ${purchasePeriodReport.orderCount} pedido(s) | Sem desconto de estoque`,
       logoVariant: DEFAULT_LOGO_VARIANT,
-    });
+    }, orders.filter(order => (purchaseOperationIds.length === 0 || purchaseOperationIds.includes(order.operationId)) && matchesBasketReportFilters(order)));
     autoTable(doc, {
       startY: 36,
       head: [['Produto', 'UND', 'Quantidade a comprar']],
@@ -2377,7 +2429,7 @@ const Operations: React.FC = () => {
       footStyles: { font: REPORT_FONT, fontStyle: 'bold', fillColor: [226, 232, 240], textColor: [0, 0, 0] },
       columnStyles: { 0: { cellWidth: 120 }, 1: { cellWidth: 25, halign: 'center' }, 2: { cellWidth: 40, halign: 'right' } },
     });
-    appendBasketReportComposition(doc, orders.filter(order => (purchaseOperationIds.length === 0 || purchaseOperationIds.includes(order.operationId)) && matchesBasketReportFilters(order)));
+    await appendBasketReportComposition(doc, orders.filter(order => (purchaseOperationIds.length === 0 || purchaseOperationIds.includes(order.operationId)) && matchesBasketReportFilters(order)));
     await savePdf(doc, fileName, null);
   };
 
@@ -2480,13 +2532,9 @@ const Operations: React.FC = () => {
     const pageCount = doc.getNumberOfPages();
     for (let pageNumber = 1; pageNumber <= pageCount; pageNumber += 1) {
       doc.setPage(pageNumber);
-      await addCompanyLetterhead(doc, {
-        title: letterheadTitle,
-        subtitle: letterheadSubtitle,
-        // O faturamento é um documento comercial da Oliveira Mendes e deve
-        // usar sempre a identidade da empresa, não a do cliente/operação.
-        logoVariant: 'gom',
-      });
+      if (onlyMaceioBaskets(billingOrders.filter(order => !billingOrderId || order.id === billingOrderId))) {
+        await addCanindeHeader(doc, { title: letterheadTitle, subtitle: letterheadSubtitle });
+      } else await addCompanyLetterhead(doc, { title: letterheadTitle, subtitle: letterheadSubtitle, logoVariant: 'gom' });
       doc.setFont('helvetica', 'normal');
       doc.setFontSize(8);
       doc.setTextColor(71, 85, 105);
@@ -2498,7 +2546,7 @@ const Operations: React.FC = () => {
       );
     }
 
-    appendBasketReportComposition(doc, billingOrders.filter(order => !billingOrderId || order.id === billingOrderId));
+    await appendBasketReportComposition(doc, billingOrders.filter(order => !billingOrderId || order.id === billingOrderId));
     await savePdf(doc, fileName, writer);
   };
 
@@ -2513,12 +2561,12 @@ const Operations: React.FC = () => {
     const categoryLabel = reportCategory === 'Todas' ? 'Todas as categorias' : reportCategory;
     const productLabel = selectedReportProduct ? `${selectedReportProduct.product} (${selectedReportProduct.unit})` : 'Todos os produtos';
     const pointLabel = selectedReportPoint?.name || 'Todos os locais';
-    await addPdfHeader(doc, {
+    await addOperationReportHeader(doc, {
       title: `RELATORIO DE PRODUTOS ENTREGUES - ${getOperationTitle(activeOperation).toUpperCase()}`,
       subtitle: `Categoria: ${categoryLabel} | Produto: ${productLabel} | Local: ${pointLabel} | Periodo: ${formatDate(reportStartDate)} a ${formatDate(reportEndDate)}`,
       footer: `${periodReport.orderCount} pedido(s) | ${periodReport.dates.length} data(s) | ${periodReport.locations.length} local(is)`,
       logoVariant: activeOperation.logoVariant || DEFAULT_LOGO_VARIANT,
-    });
+    }, operationOrders.filter(order => matchesBasketReportFilters(order) && order.deliveries.some(delivery => (reportDeliveryPointId === 'Todos' || delivery.deliveryPointId === reportDeliveryPointId) && delivery.items.some(item => item.quantity > 0 && (reportProduct === 'Todos' || stockKey(item.product, item.unit) === reportProduct)))));
     const deliveryColumnWidth = Math.min(28, 190 / Math.min(Math.max(periodReport.columns.length, 1), 10));
     const totalColumnIndex = periodReport.columns.length + 2;
     const columnStyles = periodReport.columns.reduce<Record<number, any>>((acc, _, index) => {
@@ -2559,7 +2607,7 @@ const Operations: React.FC = () => {
         }
       },
     });
-    appendBasketReportComposition(doc, operationOrders.filter(order => matchesBasketReportFilters(order) && order.deliveries.some(delivery => (reportDeliveryPointId === 'Todos' || delivery.deliveryPointId === reportDeliveryPointId) && delivery.items.some(item => item.quantity > 0 && (reportProduct === 'Todos' || stockKey(item.product, item.unit) === reportProduct)))));
+    await appendBasketReportComposition(doc, operationOrders.filter(order => matchesBasketReportFilters(order) && order.deliveries.some(delivery => (reportDeliveryPointId === 'Todos' || delivery.deliveryPointId === reportDeliveryPointId) && delivery.items.some(item => item.quantity > 0 && (reportProduct === 'Todos' || stockKey(item.product, item.unit) === reportProduct)))));
     await savePdf(doc, fileName, writer);
   };
 
@@ -2655,12 +2703,12 @@ const Operations: React.FC = () => {
     const writer = await preparePdfWriter(activeOperation, fileName);
     const categoryLabel = reportCategory === 'Todas' ? 'Todas as categorias' : reportCategory;
     const doc = new jsPDF({ orientation: 'landscape' });
-    await addPdfHeader(doc, {
+    await addOperationReportHeader(doc, {
       title: `RELATORIO SINTETICO DE PEDIDOS - ${getOperationTitle(activeOperation).toUpperCase()}`,
       subtitle: `Categoria: ${categoryLabel} | Periodo de entrega: ${formatDate(reportStartDate)} a ${formatDate(reportEndDate)}`,
       footer: `${ordersSummaryReport.rows.length} pedido(s) | ${ordersSummaryReport.locationCount} local(is)`,
       logoVariant: activeOperation.logoVariant || DEFAULT_LOGO_VARIANT,
-    });
+    }, ordersSummaryReport.rows.map(row => row.order));
     autoTable(doc, {
       startY: 36,
       head: [['Entrega', 'Controle', 'Inserido em', 'Categoria', 'Origem', 'Locais', 'Itens', 'Qtd. total']],
@@ -2680,7 +2728,7 @@ const Operations: React.FC = () => {
       headStyles: { font: REPORT_FONT, fontStyle: 'bold', fillColor: [79, 70, 229] },
       footStyles: { font: REPORT_FONT, fontStyle: 'bold', fillColor: [226, 232, 240], textColor: [0, 0, 0] },
     });
-    appendBasketReportComposition(doc, ordersSummaryReport.rows.map(row => row.order));
+    await appendBasketReportComposition(doc, ordersSummaryReport.rows.map(row => row.order));
     await savePdf(doc, fileName, writer);
   };
 
@@ -2812,12 +2860,12 @@ const Operations: React.FC = () => {
       : summaryOperationIds.map(id => operations.find(operation => operation.id === id)?.name).filter(Boolean).join(', ');
     const categoryLabel = reportCategory === 'Todas' ? 'Todas as categorias' : reportCategory;
     const doc = new jsPDF({ orientation: 'landscape' });
-    await addPdfHeader(doc, {
+    await addOperationReportHeader(doc, {
       title: 'RELATORIO SINTETICO DE ENTREGAS',
       subtitle: `Operacao: ${operationLabel} | Categoria: ${categoryLabel} | Periodo: ${formatDate(reportStartDate)} a ${formatDate(reportEndDate)}`,
       footer: `${deliveriesSummaryReport.deliveryCount} entrega(s) | ${deliveriesSummaryReport.orderCount} pedido(s)`,
       logoVariant: selectedOperation?.logoVariant || DEFAULT_LOGO_VARIANT,
-    });
+    }, orders.filter(order => deliveriesSummaryReport.rows.some(row => row.orderIds.has(order.id))));
     autoTable(doc, {
       startY: 36,
       head: [['Operação', 'Data entrega', 'Categoria', 'Observação', 'Pedidos', 'Entregas', 'Locais', 'Itens', 'Qtd. total']],
@@ -2844,7 +2892,7 @@ const Operations: React.FC = () => {
         8: { cellWidth: 22, halign: 'right' },
       },
     });
-    appendBasketReportComposition(doc, orders.filter(order => deliveriesSummaryReport.rows.some(row => row.orderIds.has(order.id))));
+    await appendBasketReportComposition(doc, orders.filter(order => deliveriesSummaryReport.rows.some(row => row.orderIds.has(order.id))));
     await savePdf(doc, fileName, writer);
   };
 
@@ -3108,6 +3156,7 @@ const Operations: React.FC = () => {
                 <div>
                   <label>Bairro</label>
                   <input className="input-field" placeholder="Bairro" value={newPoint.neighborhood} onChange={event => setNewPoint({ ...newPoint, neighborhood: event.target.value })} />
+                  <input className="input-field" aria-label="CNPJ recebedor IGEVE" placeholder="CNPJ recebedor IGEVE (opcional)" value={newPoint.receiverCnpj} onChange={event => setNewPoint({ ...newPoint, receiverCnpj: event.target.value })} />
                 </div>
                 <div style={{ gridColumn: '1 / -1' }}>
                   <label>Endereço</label>
@@ -3161,6 +3210,7 @@ const Operations: React.FC = () => {
                           <td>
                             <input className="input-field" placeholder="Endereço" value={pointEditForm.address} onChange={event => setPointEditForm({ ...pointEditForm, address: event.target.value })} />
                             <input className="input-field" placeholder="Bairro" value={pointEditForm.neighborhood} onChange={event => setPointEditForm({ ...pointEditForm, neighborhood: event.target.value })} />
+                            <input className="input-field" aria-label="CNPJ recebedor IGEVE" placeholder="CNPJ recebedor IGEVE (opcional)" value={pointEditForm.receiverCnpj} onChange={event => setPointEditForm({ ...pointEditForm, receiverCnpj: event.target.value })} />
                           </td>
                           <td>
                             <div style={{ display: 'flex', gap: '0.4rem' }}>
@@ -3236,6 +3286,10 @@ const Operations: React.FC = () => {
                 <input className="input-field" placeholder="Observação que será exibida em todos os PDFs deste pedido" value={orderForm.generalNotes} onChange={event => setOrderForm({ ...orderForm, generalNotes: event.target.value })} />
               </div>
             </div>
+            {isMaceioBasicBasket(activeOperation, orderForm) && <div className="card" style={{ marginBottom: '1rem', display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: '0.75rem' }}>
+              <p style={{ gridColumn: '1 / -1', margin: 0 }}>Dados da nota fiscal para este pedido (opcionais). Deixe em branco para preencher no recebimento. O CNPJ é informado no cadastro de cada local.</p>
+              {([['number', 'Número da NF-e'], ['series', 'Série'], ['issuedAt', 'Emissão da NF-e'], ['collaborationTerm', 'Termo de colaboração']] as const).map(([field, label]) => <label key={field}>{label}<input className="input-field" type={field === 'issuedAt' ? 'date' : 'text'} value={orderForm.basketInvoice[field]} onChange={event => setOrderForm({ ...orderForm, basketInvoice: { ...orderForm.basketInvoice, [field]: event.target.value } })} /></label>)}
+            </div>}
             <form ref={draftItemFormRef} onSubmit={addDraftItem} style={{ display: 'grid', gridTemplateColumns: '1.2fr 1.5fr 0.5fr 0.5fr 1fr auto', gap: '0.75rem', alignItems: 'end' }}>
               <div>
                 <label>Local de entrega</label>
