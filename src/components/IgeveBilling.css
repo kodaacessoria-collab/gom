@@ -52,3 +52,6 @@
 .igeve-rubric-status.exceeded { border-color: #ef4444; background: #ef444418; }
 .igeve-rubric-status.near { border-color: #f59e0b; background: #f59e0b18; }
 .igeve-rubric-status.matched { border-color: #22c55e; background: #22c55e18; }
+
+.igeve-freight { min-width: 0; border: 1px solid var(--border); border-radius: 8px; padding: 1rem; }
+.igeve-freight legend { padding: 0 .5rem; font-weight: 600; }

@@ -16,6 +16,7 @@ export interface LocationInvoiceContext {
 }
 export interface BillingInvoice {
   id: string; parentId?: string; deliveryPointId?: string; deliveryDate?: string; sourceOrderId: string; sourceDeliveryId: string;
+  freight?: { operationId: string; category: string; amount: number };
   location?: LocationInvoiceContext;
   rubric?: RubricInvoiceContext;
   control: string; operationId: string; operation: string; destination: string; category: string;
@@ -75,13 +76,44 @@ export const billingPricesFromEntries = (entries: BillingPriceEntry[]): BillingP
 export const billingUnitPrice = (prices: BillingPrices, operationId: string, category: string, product: string, unit: string) =>
   prices[billingOperationPriceKey(operationId, category, product, unit)]?.salePrice ?? 0;
 export const lineTotal = (item: BillingItem) => Math.round((item.billedQuantity ?? item.quantity) * item.price * 100) / 100;
-export const invoiceTotal = (invoice: BillingInvoice) => Math.round(invoice.items.reduce((sum, item) => sum + lineTotal(item), 0) * 100) / 100;
+// Allocate integer cents by largest remainder so the freight is charged exactly once.
+export function billingCostLines(invoice: BillingInvoice) {
+  const rows = invoice.items.map(item => ({ item, subtotal: lineTotal(item), freight: 0, total: lineTotal(item), unitCost: item.price }));
+  const freight = invoice.freight;
+  if (!freight || freight.operationId !== invoice.operationId || !Number.isFinite(freight.amount) || freight.amount <= 0) return rows;
+  const eligible = rows.filter(row => (!freight.category || (row.item.category || invoice.category) === freight.category) && (row.item.billedQuantity ?? row.item.quantity) > 0);
+  const base = eligible.reduce((sum, row) => sum + Math.round((row.item.billedQuantity ?? row.item.quantity) * 1000), 0);
+  if (!base) return rows;
+  const amount = Math.round(freight.amount * 100);
+  const shares = eligible.map(row => {
+    const exact = amount * Math.round((row.item.billedQuantity ?? row.item.quantity) * 1000) / base;
+    return { row, cents: Math.floor(exact), remainder: exact - Math.floor(exact) };
+  });
+  let remaining = amount - shares.reduce((sum, share) => sum + share.cents, 0);
+  for (const share of [...shares].sort((a, b) => b.remainder - a.remainder)) {
+    if (remaining-- > 0) share.cents++;
+  }
+  for (const share of shares) {
+    share.row.freight = share.cents / 100;
+    share.row.total = (Math.round(share.row.subtotal * 100) + share.cents) / 100;
+    share.row.unitCost = share.row.total / (share.row.item.billedQuantity ?? share.row.item.quantity);
+  }
+  return rows;
+}
+export const invoiceTotal = (invoice: BillingInvoice) => Math.round(billingCostLines(invoice).reduce((sum, row) => sum + row.total, 0) * 100) / 100;
 export const validateInvoice = (invoice: BillingInvoice) => {
   if (!invoice.company.trim()) return 'Informe a empresa para faturamento.';
   if (!/^\d{4}-\d{2}-\d{2}$/.test(invoice.date)) return 'Informe a data do faturamento.';
   if (!invoice.items.length) return 'Adicione pelo menos um produto.';
   if (invoice.items.some(item => (invoice.location || item.billedQuantity !== undefined) && (!Number.isFinite(item.billedQuantity) || item.billedQuantity! < 0))) return 'Informe um ajuste faturamento maior ou igual a zero em todos os itens.';
   if (invoice.items.some(item => !item.product.trim() || !item.unit.trim() || !Number.isFinite(item.quantity) || item.quantity <= 0 || !Number.isFinite(item.price) || item.price < 0)) return 'Preencha produto, unidade, quantidade maior que zero e preço válido em todos os itens.';
+  if (invoice.freight) {
+    const { amount, operationId, category } = invoice.freight;
+    if (operationId !== invoice.operationId) return 'A operação do frete deve ser a mesma do faturamento.';
+    if (!Number.isFinite(amount) || amount < 0 || !Number.isSafeInteger(Math.round(amount * 100)) || Math.abs(amount * 100 - Math.round(amount * 100)) > 1e-6) return 'Informe um frete maior ou igual a zero, com até duas casas decimais.';
+    if (category && !invoice.items.some(item => (item.category || invoice.category) === category)) return 'Selecione uma categoria presente nos produtos do faturamento.';
+    if (amount > 0 && !billingCostLines(invoice).some(row => row.freight > 0)) return 'O frete precisa de produtos com quantidade faturada positiva na categoria selecionada.';
+  }
   return '';
 };
 export const companyTotals = (invoices: BillingInvoice[]) => {

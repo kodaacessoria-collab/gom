@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { isIgeveOperation, billingDateInRange, invoiceTotal, lineTotal, companyTotals, validateInvoice, sortBillingRows, locationTotals, locationBillingInvoices, billingOperationPriceKey, billingPriceCatalog, billingPricesFromEntries, parseBillingPrice, billingUnitPrice, createDeliveryBillingInvoice, createLocationBillingInvoice, locationInvoiceConflict, effectiveBillingInvoices, billingCategoryMatches, billingInvoiceCategoryMatches, billingCategoryOptions } from '../src/lib/igeveBilling.ts';
+import { isIgeveOperation, billingCostLines, billingDateInRange, invoiceTotal, lineTotal, companyTotals, validateInvoice, sortBillingRows, locationTotals, locationBillingInvoices, billingOperationPriceKey, billingPriceCatalog, billingPricesFromEntries, parseBillingPrice, billingUnitPrice, createDeliveryBillingInvoice, createLocationBillingInvoice, locationInvoiceConflict, effectiveBillingInvoices, billingCategoryMatches, billingInvoiceCategoryMatches, billingCategoryOptions } from '../src/lib/igeveBilling.ts';
 for (const city of ['Maceió', 'Gauianases', 'Guaianases', 'Guaianazes', 'Boituva', 'Mongaguá', 'Rio de Janeiro']) {
   assert.equal(isIgeveOperation({ id: city, name: `Operação ${city}`, city }), true, city);
 }
@@ -225,3 +225,32 @@ assert.deepEqual(priceOrders, priceSnapshot, 'Montar o catálogo não altera os 
 console.log('OK: catálogo automático, preços por operação/categoria/unidade, preço zero, campos pendentes e preenchimento dos faturamentos.');
 
 assert.equal(billingUnitPrice({ 'ARROZ|KG': { salePrice: 999 } }, 'maceio', 'Estocáveis', 'Arroz', 'KG'), 0, 'Nunca busca preço global para uma operação/categoria sem preço cadastrado');
+
+// Freight follows total units, regardless of how many different products or their prices.
+const freightInvoice = { ...structuredClone(base), freight: { operationId: base.operationId, category: '', amount: 200 }, items: Array.from({ length: 15 }, (_, index) => ({ id: `freight-${index}`, product: `Produto ${index + 1}`, unit: 'UN', quantity: index === 14 ? 300 : 50, price: index + 1, category: index < 7 ? 'Estocáveis' : 'Proteínas' })) };
+const freightSnapshot = structuredClone(freightInvoice);
+const freightLines = billingCostLines(freightInvoice);
+assert.equal(freightInvoice.items.reduce((sum, item) => sum + item.quantity, 0), 1000);
+assert.equal(freightLines[0].freight, 10);
+assert.equal(freightLines[14].freight, 60);
+assert.ok(freightLines.every(row => Math.abs(row.unitCost - row.item.price - .2) < 1e-9), 'Cada um dos 1000 itens recebe R$ 0,20, independente do preço');
+assert.equal(freightLines.reduce((sum, row) => sum + Math.round(row.freight * 100), 0), 20000);
+assert.equal(invoiceTotal(freightInvoice), freightInvoice.items.reduce((sum, item) => sum + lineTotal(item), 0) + 200);
+assert.equal(validateInvoice(freightInvoice), '');
+assert.deepEqual(freightInvoice, freightSnapshot, 'Calcular não altera preços ou quantidades originais');
+assert.deepEqual(billingCostLines(JSON.parse(JSON.stringify(freightInvoice))), freightLines, 'Salvar e reabrir mantém o rateio');
+const categoryFreight = { ...freightInvoice, freight: { ...freightInvoice.freight, category: 'Estocáveis', amount: 35 } };
+assert.ok(billingCostLines(categoryFreight).slice(0, 7).every(row => row.freight === 5));
+assert.ok(billingCostLines(categoryFreight).slice(7).every(row => row.freight === 0), 'Não inclui produtos de outra categoria');
+const splitCents = { ...freightInvoice, freight: { ...freightInvoice.freight, amount: .01 }, items: freightInvoice.items.slice(0, 3) };
+assert.deepEqual(billingCostLines(splitCents).map(row => row.freight), [.01, 0, 0], 'Centavo residual distribuído uma única vez e de forma estável');
+const fractional = { ...splitCents, freight: { ...splitCents.freight, amount: 1 }, items: [{ ...base.items[0], quantity: .5, price: 0 }, { ...base.items[0], id: '2', quantity: 1.5, billedQuantity: 1, price: 10 }, { ...base.items[0], id: '3', billedQuantity: 0 }] };
+assert.deepEqual(billingCostLines(fractional).map(row => row.freight), [.33, .67, 0], 'Respeita quantidade fracionada, ajuste zero e produto de preço zero');
+assert.equal(validateInvoice(fractional), '');
+assert.equal(billingCostLines({ ...freightInvoice, freight: undefined }).reduce((sum, row) => sum + row.freight, 0), 0, 'Remover frete restaura os totais originais');
+for (const amount of [-1, NaN, Infinity, 1.234]) assert.ok(validateInvoice({ ...freightInvoice, freight: { ...freightInvoice.freight, amount } }));
+assert.ok(validateInvoice({ ...freightInvoice, freight: { ...freightInvoice.freight, operationId: 'outra' } }));
+assert.ok(validateInvoice({ ...freightInvoice, freight: { ...freightInvoice.freight, category: 'inexistente' } }));
+assert.ok(validateInvoice({ ...freightInvoice, items: freightInvoice.items.map(item => ({ ...item, billedQuantity: 0 })) }), 'Impede frete sem quantidade para ratear');
+assert.equal(companyTotals([freightInvoice])[0].base, invoiceTotal(freightInvoice), 'Relatórios financeiros incluem frete exatamente uma vez');
+console.log('OK: frete em 15 produtos/1000 itens, rateio por quantidade, categorias, centavos, frações, ajuste zero, validação e persistência.');
