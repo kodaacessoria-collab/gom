@@ -43,3 +43,12 @@
 .igeve-filter-panel.card { position: relative; z-index: 2; overflow: visible; }
 .igeve-billing .igeve-price-input { min-width: 140px; max-width: 200px; margin: 0; }
 .igeve-price-table .igeve-heading { margin-bottom: 1rem; }
+.igeve-rubrics { display: grid; gap: 1rem; }
+.igeve-rubrics form { display: grid; gap: .75rem; }
+.igeve-rubric-summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 1rem; }
+.igeve-rubric-summary > div { border: 1px solid var(--border); border-radius: 8px; padding: 1rem; }
+.igeve-rubric-summary strong { display: block; margin-top: .5rem; font-size: 1.3rem; }
+.igeve-rubric-status { border-left: 4px solid var(--primary, #818cf8); padding: 1rem; background: #818cf812; }
+.igeve-rubric-status.exceeded { border-color: #ef4444; background: #ef444418; }
+.igeve-rubric-status.near { border-color: #f59e0b; background: #f59e0b18; }
+.igeve-rubric-status.matched { border-color: #22c55e; background: #22c55e18; }

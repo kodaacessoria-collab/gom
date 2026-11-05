@@ -1,3 +1,4 @@
+import type { RubricInvoiceContext } from './igeveRubrics.ts';
 import { getOrderControlNumber } from './orderControlNumber.ts';
 
 export const BILLING_PREFIX = 'gom_igeve_invoice_';
@@ -16,9 +17,11 @@ export interface LocationInvoiceContext {
 export interface BillingInvoice {
   id: string; parentId?: string; deliveryPointId?: string; deliveryDate?: string; sourceOrderId: string; sourceDeliveryId: string;
   location?: LocationInvoiceContext;
+  rubric?: RubricInvoiceContext;
   control: string; operationId: string; operation: string; destination: string; category: string;
   company: string; cnpj: string; date: string; notes: string; items: BillingItem[];
 }
+export const billingInvoiceType = (invoice: BillingInvoice) => invoice.location ? 'Por local' : invoice.rubric?.kind === 'carry' ? 'Aproveitamento anterior' : invoice.rubric?.kind === 'complement' ? 'Complemento de rubrica' : invoice.parentId ? 'Complemento' : 'Romaneio';
 export interface SavedInvoice { invoice: BillingInvoice; version: string }
 export const normalizeBillingText = (value: string) => value.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toUpperCase().replace(/\s+/g, ' ').trim();
 export const isIgeveOperation = (operation: BillingOperation) =>
@@ -33,7 +36,7 @@ export const billingCategoryMatches = (category: string, selection: BillingCateg
   return !selected.length || selected.includes(category);
 };
 export const billingInvoiceCategoryMatches = (invoice: BillingInvoice, selection: BillingCategorySelection) => {
-  const categories = invoice.location?.categories || [invoice.category];
+  const categories = invoice.location?.categories || (invoice.rubric ? invoice.items.map(item => item.category || invoice.category) : [invoice.category]);
   return categories.some(category => billingCategoryMatches(category, selection));
 };
 export const billingPriceKey = (product: string, unit: string) => `${normalizeBillingText(product)}|${normalizeBillingText(unit || 'UN')}`;
@@ -77,7 +80,7 @@ export const validateInvoice = (invoice: BillingInvoice) => {
   if (!invoice.company.trim()) return 'Informe a empresa para faturamento.';
   if (!/^\d{4}-\d{2}-\d{2}$/.test(invoice.date)) return 'Informe a data do faturamento.';
   if (!invoice.items.length) return 'Adicione pelo menos um produto.';
-  if (invoice.location && invoice.items.some(item => !Number.isFinite(item.billedQuantity) || item.billedQuantity! < 0)) return 'Informe um ajuste faturamento maior ou igual a zero em todos os itens.';
+  if (invoice.items.some(item => (invoice.location || item.billedQuantity !== undefined) && (!Number.isFinite(item.billedQuantity) || item.billedQuantity! < 0))) return 'Informe um ajuste faturamento maior ou igual a zero em todos os itens.';
   if (invoice.items.some(item => !item.product.trim() || !item.unit.trim() || !Number.isFinite(item.quantity) || item.quantity <= 0 || !Number.isFinite(item.price) || item.price < 0)) return 'Preencha produto, unidade, quantidade maior que zero e preço válido em todos os itens.';
   return '';
 };
@@ -86,7 +89,7 @@ export const companyTotals = (invoices: BillingInvoice[]) => {
   for (const invoice of invoices) {
     const key = invoice.cnpj.replace(/\D/g, '') || normalizeBillingText(invoice.company);
     const row = groups.get(key) || { company: invoice.company, cnpj: invoice.cnpj, base: 0, complement: 0, count: 0 };
-    row[invoice.parentId ? 'complement' : 'base'] += invoiceTotal(invoice);
+    row[invoice.parentId || (invoice.rubric && invoice.rubric.kind !== 'reduction') ? 'complement' : 'base'] += invoiceTotal(invoice);
     row.count++;
     groups.set(key, row);
   }
@@ -176,7 +179,7 @@ export function locationBillingInvoices({ orders, operations, points, prices, in
   const orderMap = new Map(orders.map(order => [order.id, order]));
   const sourceKey = (invoice: Pick<BillingInvoice, 'sourceOrderId' | 'sourceDeliveryId'>) => JSON.stringify([invoice.sourceOrderId, invoice.sourceDeliveryId]);
   const savedBases = new Map(invoices.filter(invoice => !invoice.parentId).map(invoice => [sourceKey(invoice), invoice]));
-  const matches = (invoice: BillingInvoice) => (!operationId || invoice.operationId === operationId) && billingCategoryMatches(invoice.category, category) && (!company || invoice.company === company);
+  const matches = (invoice: BillingInvoice) => (!operationId || invoice.operationId === operationId) && billingInvoiceCategoryMatches(invoice, category) && (!company || invoice.company === company);
   const result: BillingInvoice[] = [];
   const coveredSources = new Set<string>();
   for (const order of orders) {
@@ -214,17 +217,18 @@ export function createLocationBillingInvoice(group: LocationBillingTotal, orders
     // Delivered quantities come from the source, independently of individual billing edits.
     if (!invoice.parentId && deliveryKeys.has(sourceKey)) continue;
     if (!invoice.parentId) deliveryKeys.add(sourceKey);
-    const sourceItems = !invoice.parentId ? sources.get(sourceKey)?.items || invoice.items : invoice.items;
+    const sourceItems = invoice.rubric ? invoice.items : !invoice.parentId ? sources.get(sourceKey)?.items || invoice.items : invoice.items;
     for (const sourceItem of sourceItems) {
-      const key = JSON.stringify([normalizeBillingText(invoice.category), normalizeBillingText(sourceItem.product), normalizeBillingText(sourceItem.unit || 'UN')]);
-      const row = items.get(key) || { id: key, product: sourceItem.product, unit: sourceItem.unit || 'UN', quantity: 0, billedQuantity: 0, category: invoice.category, price: billingUnitPrice(prices, invoice.operationId, invoice.category, sourceItem.product, sourceItem.unit) };
+      const itemCategory = ('category' in sourceItem ? sourceItem.category as string : '') || invoice.category;
+      const key = JSON.stringify([normalizeBillingText(itemCategory), normalizeBillingText(sourceItem.product), normalizeBillingText(sourceItem.unit || 'UN')]);
+      const row = items.get(key) || { id: key, product: sourceItem.product, unit: sourceItem.unit || 'UN', quantity: 0, billedQuantity: 0, category: itemCategory, price: billingUnitPrice(prices, invoice.operationId, itemCategory, sourceItem.product, sourceItem.unit) };
       row.quantity = Math.round((row.quantity + sourceItem.quantity) * 1e6) / 1e6;
-      row.billedQuantity = row.quantity;
+      row.billedQuantity = Math.round(((row.billedQuantity || 0) + (invoice.rubric && 'billedQuantity' in sourceItem && typeof sourceItem.billedQuantity === 'number' ? sourceItem.billedQuantity : sourceItem.quantity)) * 1e6) / 1e6;
       items.set(key, row);
     }
   }
   const first = group.invoices[0];
-  const categories = [...new Set(group.invoices.map(invoice => invoice.category))].sort();
+  const categories = [...new Set(group.invoices.flatMap(invoice => invoice.rubric ? invoice.items.map(item => item.category || invoice.category) : [invoice.category]))].sort();
   const selection = selectedBillingCategories(category);
   // Preserve existing keys for all-category and single-category invoices.
   const categoryScope = selection.length > 1 ? selection : selection[0] || '';
