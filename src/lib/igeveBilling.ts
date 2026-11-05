@@ -76,6 +76,19 @@ export const billingPricesFromEntries = (entries: BillingPriceEntry[]): BillingP
   .map(entry => [entry.key, { salePrice: entry.salePrice! }]));
 export const billingUnitPrice = (prices: BillingPrices, operationId: string, category: string, product: string, unit: string) =>
   prices[billingOperationPriceKey(operationId, category, product, unit)]?.salePrice ?? 0;
+export const billingTablePrice = (prices: BillingPrices, invoice: BillingInvoice, item: BillingItem) =>
+  prices[billingOperationPriceKey(invoice.operationId, item.category || invoice.category, item.product, item.unit)]?.salePrice;
+export function applyBillingTablePrices(invoice: BillingInvoice, prices: BillingPrices) {
+  let updated = 0;
+  let missing = 0;
+  const items = invoice.items.map(item => {
+    const price = billingTablePrice(prices, invoice, item);
+    if (price === undefined) { missing++; return { ...item }; }
+    updated++;
+    return { ...item, price };
+  });
+  return { invoice: { ...invoice, items }, updated, missing };
+}
 export const lineTotal = (item: BillingItem) => Math.round((item.billedQuantity ?? item.quantity) * item.price * 100) / 100;
 // Allocate integer cents by largest remainder so the freight is charged exactly once.
 export function billingCostLines(invoice: BillingInvoice) {

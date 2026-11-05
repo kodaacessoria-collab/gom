@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { isIgeveOperation, billingCostLines, billingDateInRange, invoiceTotal, lineTotal, companyTotals, validateInvoice, sortBillingRows, locationTotals, locationBillingInvoices, billingOperationPriceKey, billingPriceCatalog, billingPricesFromEntries, parseBillingPrice, billingUnitPrice, createDeliveryBillingInvoice, createLocationBillingInvoice, locationInvoiceConflict, effectiveBillingInvoices, billingCategoryMatches, billingInvoiceCategoryMatches, billingCategoryOptions } from '../src/lib/igeveBilling.ts';
+import { isIgeveOperation, billingTablePrice, applyBillingTablePrices, billingCostLines, billingDateInRange, invoiceTotal, lineTotal, companyTotals, validateInvoice, sortBillingRows, locationTotals, locationBillingInvoices, billingOperationPriceKey, billingPriceCatalog, billingPricesFromEntries, parseBillingPrice, billingUnitPrice, createDeliveryBillingInvoice, createLocationBillingInvoice, locationInvoiceConflict, effectiveBillingInvoices, billingCategoryMatches, billingInvoiceCategoryMatches, billingCategoryOptions } from '../src/lib/igeveBilling.ts';
 for (const city of ['Maceió', 'Gauianases', 'Guaianases', 'Guaianazes', 'Boituva', 'Mongaguá', 'Rio de Janeiro']) {
   assert.equal(isIgeveOperation({ id: city, name: `Operação ${city}`, city }), true, city);
 }
@@ -254,3 +254,20 @@ assert.ok(validateInvoice({ ...freightInvoice, freight: { ...freightInvoice.frei
 assert.ok(validateInvoice({ ...freightInvoice, items: freightInvoice.items.map(item => ({ ...item, billedQuantity: 0 })) }), 'Impede frete sem quantidade para ratear');
 assert.equal(companyTotals([freightInvoice])[0].base, invoiceTotal(freightInvoice), 'Relatórios financeiros incluem frete exatamente uma vez');
 console.log('OK: frete em 15 produtos/1000 itens, rateio por quantidade, categorias, centavos, frações, ajuste zero, validação e persistência.');
+
+const tableDraft = { ...structuredClone(repricedLocal), items: repricedLocal.items.map(item => ({ ...item, price: 0 })) };
+const tableSnapshot = structuredClone(tableDraft);
+const refreshed = applyBillingTablePrices(tableDraft, operationPrices);
+assert.equal(refreshed.updated, 2);
+assert.equal(refreshed.missing, 0);
+assert.equal(invoiceTotal(refreshed.invoice), 36, 'Busca o preço de cada categoria do consolidado, independente do valor antigo');
+assert.deepEqual(tableDraft, tableSnapshot, 'Revisar preços não altera a cópia salva antes da confirmação');
+const priceZero = { ...operationPrices, [billingOperationPriceKey(tableDraft.operationId, tableDraft.items[0].category, tableDraft.items[0].product, tableDraft.items[0].unit)]: { salePrice: 0 } };
+assert.equal(billingTablePrice(priceZero, tableDraft, tableDraft.items[0]), 0, 'Preço zero cadastrado é encontrado');
+assert.equal(billingTablePrice({}, tableDraft, tableDraft.items[0]), undefined, 'Ausência é diferente de zero cadastrado');
+const manualPriceDraft = { ...tableDraft, items: tableDraft.items.map(item => ({ ...item, price: 12 })) };
+assert.ok(applyBillingTablePrices(manualPriceDraft, {}).invoice.items.every(item => item.price === 12), 'Preserva valor informado quando o produto não tem preço na tabela');
+assert.equal(applyBillingTablePrices(manualPriceDraft, {}).missing, 2);
+assert.equal(billingTablePrice(operationPrices, { ...tableDraft, operationId: 'outra' }, tableDraft.items[0]), undefined);
+assert.equal(billingTablePrice(operationPrices, tableDraft, { ...tableDraft.items[0], unit: 'PACOTE' }), undefined);
+console.log('OK: atualização explícita dos preços salvos, consolidados com múltiplas categorias, zero cadastrado, pendências e preservação de valores sem correspondência.');

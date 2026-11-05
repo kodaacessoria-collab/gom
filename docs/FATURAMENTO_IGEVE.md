@@ -55,3 +55,10 @@ O frete é salvo uma única vez em `app_shared_state`, com prefixo `gom_igeve_fr
 Para alterar ou remover o frete, volte aos mesmos filtros e use **Atualizar rateio dos romaneios filtrados** ou **Remover frete deste conjunto**. Conjuntos com categorias e períodos sobrepostos na mesma operação são rejeitados para evitar duplicação; remova o anterior antes de ampliar ou trocar seu período. Fretes individuais antigos continuam compatíveis e são substituídos pelo rateio do conjunto enquanto ele estiver ativo. Nenhuma migração adicional é necessária.
 
 Validação específica: `node scripts/test-igeve-freight.mjs`.
+
+
+## Conferência e busca dos preços no editor
+
+No editor de faturamento, cada preço indica **Tabela: R$ ...** quando existe cadastro correspondente à operação, categoria, produto e unidade, ou **Sem preço cadastrado na tabela** quando está pendente. Um preço zero cadastrado é válido e aparece como cadastrado. Itens com preço zero e sem cadastro exibem um aviso com os produtos pendentes; nesses casos, o custo final contém somente o frete até informar o preço.
+
+Use **Buscar preços na tabela** para consultar novamente os valores salvos no banco e aplicar os preços encontrados ao faturamento aberto, inclusive um faturamento antigo que tenha sido salvo antes do cadastro dos preços. Os valores sem correspondência são mantidos. Revise e salve o faturamento para confirmar; cancelar preserva o registro anterior. Alterações ainda não salvas na Tabela de preços precisam ser salvas antes desta busca. O botão não busca preços de outra operação, categoria ou unidade e não inventa valores para itens pendentes.

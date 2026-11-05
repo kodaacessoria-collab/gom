@@ -7,7 +7,7 @@ import * as XLSX from 'xlsx';
 import { supabase } from '../lib/supabase';
 import { getOrderControlNumber } from '../lib/orderControlNumber';
 import { addPdfHeader } from '../lib/pdfBranding';
-import { billingInvoiceType, BILLING_PREFIX, BILLING_PRICE_PREFIX, billingPriceCatalog, billingPricesFromEntries, billingOperationPriceKey, parseBillingPrice, SOURCE_KEYS, billingCategoryOptions, billingCategoryMatches, billingInvoiceCategoryMatches, sortBillingRows, createLocationBillingInvoice, locationInvoiceConflict, effectiveBillingInvoices, createDeliveryBillingInvoice, locationBillingInvoices, locationTotals, companyTotals, billingDateInRange, invoiceTotal, isIgeveOperation, billingCostLines, validateInvoice } from '../lib/igeveBilling';
+import { billingInvoiceType, BILLING_PREFIX, BILLING_PRICE_PREFIX, billingPriceCatalog, billingPricesFromEntries, billingOperationPriceKey, parseBillingPrice, SOURCE_KEYS, billingCategoryOptions, billingCategoryMatches, billingInvoiceCategoryMatches, sortBillingRows, createLocationBillingInvoice, locationInvoiceConflict, effectiveBillingInvoices, createDeliveryBillingInvoice, locationBillingInvoices, locationTotals, companyTotals, billingDateInRange, invoiceTotal, isIgeveOperation, billingCostLines, billingTablePrice, applyBillingTablePrices, validateInvoice } from '../lib/igeveBilling';
 import type { BillingInvoice, BillingOperation, BillingOrder, BillingPoint, SavedInvoice, BillingSort, SavedBillingPrice, BillingPriceEntry } from '../lib/igeveBilling';
 import type { Company } from '../types';
 import IgeveFreight from './IgeveFreight';
@@ -278,6 +278,24 @@ export default function IgeveBilling() {
   const draftMonth = draft?.rubric?.month || draft?.deliveryDate?.slice(0, 7) || draft?.location?.start.slice(0, 7);
   const draftRubric = rubrics.find(({ rubric }) => draft && (draft.rubric ? rubric.key === draft.rubric.key : rubric.operationId === draft.operationId && rubric.month === draftMonth && (!rubric.pointId || rubricScopeInvoices([draft], rubric, orders, points).length > 0)))?.rubric;
   const draftBalance = draft && draftRubric ? rubricBalance(draftRubric, rubricScopeInvoices(rubricMonthInvoices(orders, operations, points, prices, [...saved.filter(row => row.invoice.id !== draft.id).map(row => row.invoice), draft], draftRubric.month).map(applyFreight), draftRubric, orders, points)) : null;
+  const draftMissingPrices = draft?.items.filter(item => item.price === 0 && billingTablePrice(prices, draft, item) === undefined) || [];
+  async function refreshDraftPrices() {
+    if (!draft || busy) return;
+    if (Object.keys(priceEdits).length) {
+      setMessage('Há alterações não salvas na Tabela de preços. Cancele este editor, salve os preços na tabela e reabra o faturamento para buscá-los.'); return;
+    }
+    setBusy(true); setMessage('');
+    try {
+      const rows = await loadInvoices(BILLING_PRICE_PREFIX);
+      const entries = rows.map(row => ({ entry: row.value as BillingPriceEntry, version: row.updated_at }));
+      const latestPrices = billingPricesFromEntries(entries.map(row => row.entry));
+      const result = applyBillingTablePrices(draft, latestPrices);
+      setSavedPrices(entries);
+      setDraft(current => current ? applyBillingTablePrices(current, latestPrices).invoice : current);
+      setMessage(`${result.updated} produto(s) atualizado(s) com os preços salvos da operação e categoria. ${result.missing ? `${result.missing} produto(s) sem preço cadastrado na tabela; os valores desses itens foram mantidos.` : 'Confira o custo com frete e salve o faturamento para confirmar.'}`);
+    } catch { setMessage('Não foi possível buscar os preços. Os valores do faturamento foram mantidos. Tente novamente.'); }
+    finally { setBusy(false); }
+  }
   async function save(event: FormEvent) {
     event.preventDefault(); if (!draft || busy || !ready) return;
     if (draft.rubric?.kind === 'reduction' && saved.some(row => row.invoice.rubric?.kind === 'carry' && row.invoice.rubric.sourceId === draft.id)) return setMessage('Estes itens já foram aproveitados no mês seguinte. A redução original fica preservada; ajustes adicionais devem ser feitos no faturamento de aproveitamento.');
@@ -373,6 +391,9 @@ export default function IgeveBilling() {
       <label>Data do faturamento<input required type="date" className="input-field" value={draft.date} onChange={event => setDraft({ ...draft, date: event.target.value })} /></label>
     </div>
     <p>O frete é informado em <strong>Frete</strong> ou <strong>Faturamento por romaneio</strong>, nos filtros de operação, categorias e período de entrega. O rateio considera a soma das quantidades de todos os romaneios filtrados e aparece no custo final abaixo.</p>
+    <div className="igeve-actions"><button type="button" className="button button-outline" disabled={busy} onClick={() => void refreshDraftPrices()}><RefreshCw size={16} /> Buscar preços na tabela</button></div>
+    <small>Busca os preços salvos para a operação, categoria, produto e unidade de cada linha. Revise os valores antes de salvar o faturamento.</small>
+    {draftMissingPrices.length > 0 && <div role="alert" className="igeve-price-warning">{draftMissingPrices.length} produto(s) sem preço cadastrado na Tabela de preços e com valor zero neste faturamento: {draftMissingPrices.map(item => item.product).join(', ')}. Cadastre e salve os preços na tabela, ou informe-os abaixo. O custo final desses itens contém somente o frete enquanto o preço estiver zerado.</div>}
     {draftBalance && <p role="status" className={`igeve-rubric-status ${draftBalance.status}`}>Rubrica do mês: {money(draftRubric!.amount)} · Total previsto com este faturamento e ajuste anterior: {money(draftBalance.used)} · {draftBalance.remaining < 0 ? 'Ultrapassa em' : 'Saldo'}: {money(Math.abs(draftBalance.remaining))}. {draftBalance.remaining < 0 && 'Revise as quantidades antes de concluir.'}</p>}
     {draft.rubric?.kind === 'reduction' && <p>As quantidades retiradas em Ajuste faturamento serão guardadas para aproveitamento no mês seguinte. As entregas originais são preservadas.</p>}
     {draft.location && <p>Entregas de {dateLabel(draft.location.start) || 'início'} a {dateLabel(draft.location.end) || 'fim'} · {draft.location.count} romaneio(s). Informe em Ajuste faturamento a quantidade que será cobrada. Use zero para não faturar um item.</p>}
@@ -385,7 +406,7 @@ export default function IgeveBilling() {
           if (entry) updated.price = entry.salePrice;
         }
         return updated;
-      }) })} />{(draft.location || draft.rubric) && field === 'product' && (draft.rubric && !adjustableDraft ? <select aria-label={`Categoria ${index + 1}`} className="input-field" value={item.category || ''} onChange={event => setDraft({ ...draft, items: draft.items.map(row => row.id === item.id ? { ...row, category: event.target.value, price: prices[billingOperationPriceKey(draft.operationId, event.target.value, row.product, row.unit)]?.salePrice ?? 0 } : row) })}>{categories.map(category => <option key={category}>{category}</option>)}</select> : <small>{item.category || draft.category}</small>)}</td>)}
+      }) })} />{field === 'price' && <small className={billingTablePrice(prices, draft, item) === undefined ? 'igeve-price-missing' : ''}>{billingTablePrice(prices, draft, item) === undefined ? 'Sem preço cadastrado na tabela' : `Tabela: ${money(billingTablePrice(prices, draft, item)!)}`}</small>}{(draft.location || draft.rubric) && field === 'product' && (draft.rubric && !adjustableDraft ? <select aria-label={`Categoria ${index + 1}`} className="input-field" value={item.category || ''} onChange={event => setDraft({ ...draft, items: draft.items.map(row => row.id === item.id ? { ...row, category: event.target.value, price: prices[billingOperationPriceKey(draft.operationId, event.target.value, row.product, row.unit)]?.salePrice ?? 0 } : row) })}>{categories.map(category => <option key={category}>{category}</option>)}</select> : <small>{item.category || draft.category}</small>)}</td>)}
       <td>{money(draftCosts[index].freight)}</td><td>{draftCosts[index].unitCost.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL', maximumFractionDigits: 6 })}</td><td>{money(draftCosts[index].total)}</td>{!adjustableDraft && <td><button type="button" className="button button-outline" aria-label={`Remover produto ${index + 1}`} onClick={() => setDraft({ ...draft, items: draft.items.filter(row => row.id !== item.id) })}><Trash2 size={16} /></button></td>}
     </tr>)}</tbody></table></div>
       {!adjustableDraft && <button type="button" className="button button-outline" onClick={() => setDraft({ ...draft, items: [...draft.items, { ...newItem(), category: draft.rubric ? 'Estocáveis' : undefined }] })}><Plus size={16} /> Adicionar produto</button>}
