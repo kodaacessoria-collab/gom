@@ -10,6 +10,9 @@ import { addPdfHeader } from '../lib/pdfBranding';
 import { billingInvoiceType, BILLING_PREFIX, BILLING_PRICE_PREFIX, billingPriceCatalog, billingPricesFromEntries, billingOperationPriceKey, parseBillingPrice, SOURCE_KEYS, billingCategoryOptions, billingCategoryMatches, billingInvoiceCategoryMatches, sortBillingRows, createLocationBillingInvoice, locationInvoiceConflict, effectiveBillingInvoices, createDeliveryBillingInvoice, locationBillingInvoices, locationTotals, companyTotals, billingDateInRange, invoiceTotal, isIgeveOperation, billingCostLines, validateInvoice } from '../lib/igeveBilling';
 import type { BillingInvoice, BillingOperation, BillingOrder, BillingPoint, SavedInvoice, BillingSort, SavedBillingPrice, BillingPriceEntry } from '../lib/igeveBilling';
 import type { Company } from '../types';
+import IgeveFreight from './IgeveFreight';
+import { FREIGHT_PREFIX, billingFreightApplier, freightScopesOverlap } from '../lib/igeveFreight';
+import type { BillingFreight, SavedFreight } from '../lib/igeveFreight';
 import IgevePriceTable from './IgevePriceTable';
 import IgeveRubrics from './IgeveRubrics';
 import { RUBRIC_PREFIX, withDeferredItems, rubricBalance, rubricMonthInvoices, rubricScopeInvoices } from '../lib/igeveRubrics';
@@ -49,7 +52,8 @@ export default function IgeveBilling() {
   const [priceEdits, setPriceEdits] = useState<Record<string, string>>({});
   const prices = billingPricesFromEntries(savedPrices.map(row => row.entry));
   const [companies, setCompanies] = useState<Company[]>([]);
-  const [saved, setSaved] = useState<SavedInvoice[]>([]);
+  const [rawSaved, setSaved] = useState<SavedInvoice[]>([]);
+  const [freights, setFreights] = useState<SavedFreight[]>([]);
   const [rubrics, setRubrics] = useState<SavedRubric[]>([]);
   const [draft, setDraft] = useState<BillingInvoice | null>(null);
   const [version, setVersion] = useState<string | null>(null);
@@ -68,20 +72,44 @@ export default function IgeveBilling() {
   const [start, setStart] = useState(`${today().slice(0, 7)}-01`);
   const [end, setEnd] = useState(today());
 
+  const freightSource = { orders, operations, points, prices, date: today(), invoices: draft ? [...rawSaved.filter(row => row.invoice.id !== draft.id).map(row => row.invoice), draft] : rawSaved.map(row => row.invoice) };
+  const applyFreight = billingFreightApplier(freightSource, freights.map(row => row.freight));
+  const saved = rawSaved.map(row => ({ ...row, invoice: applyFreight(row.invoice) }));
+  async function saveFreight(freight: BillingFreight, previousVersion: string | null) {
+    if (busy || !ready) return false;
+    if (freights.some(row => freightScopesOverlap(row.freight, freight))) {
+      setMessage('Já existe frete para parte destas categorias e datas. Reabra os filtros do rateio anterior e remova-o antes de salvar um conjunto sobreposto.'); return false;
+    }
+    setBusy(true); setMessage('');
+    try {
+      const row = { key: freight.key, value: freight, updated_at: new Date().toISOString() };
+      const result = previousVersion
+        ? await supabase.from('app_shared_state').update(row).eq('key', freight.key).eq('updated_at', previousVersion).select('updated_at').single()
+        : await supabase.from('app_shared_state').insert(row).select('updated_at').single();
+      if (result.error || !result.data) throw new Error('Não foi possível salvar o frete. Atualize os dados antes de tentar novamente.');
+      setFreights(current => [...current.filter(item => item.freight.key !== freight.key), { freight, version: result.data.updated_at }]);
+      setMessage(freight.amount ? 'Frete salvo e rateado entre todos os romaneios filtrados.' : 'Frete removido deste conjunto de romaneios.');
+      return true;
+    } catch (error) { setMessage(error instanceof Error ? error.message : 'Falha ao salvar frete.'); return false; }
+    finally { setBusy(false); }
+  }
+
   async function load() {
     setBusy(true); setMessage(''); setReady(false);
     try {
-      const [source, invoices, companyResult, priceRows, rubricRows] = await Promise.all([
+      const [source, invoices, companyResult, priceRows, rubricRows, freightRows] = await Promise.all([
         supabase.from('app_shared_state').select('key,value').in('key', SOURCE_KEYS),
         loadInvoices(),
         supabase.from('companies').select('*').order('legal_name'),
         loadInvoices(BILLING_PRICE_PREFIX),
         loadInvoices(RUBRIC_PREFIX),
+        loadInvoices(FREIGHT_PREFIX),
       ]);
       if (source.error) throw source.error;
       const map = new Map((source.data || []).map(row => [row.key, row.value]));
       setOperations(((map.get(SOURCE_KEYS[0]) || []) as BillingOperation[]).filter(isIgeveOperation));
       setPoints(map.get(SOURCE_KEYS[1]) || []); setOrders(map.get(SOURCE_KEYS[2]) || []);
+      setFreights(freightRows.map(row => ({ freight: row.value as BillingFreight, version: row.updated_at })));
       setRubrics(rubricRows.map(row => ({ rubric: row.value as MonthlyRubric, version: row.updated_at })));
       setSavedPrices(priceRows.map(row => ({ entry: row.value as BillingPriceEntry, version: row.updated_at })));
       setSaved(invoices.map(row => ({ invoice: row.value as BillingInvoice, version: row.updated_at })));
@@ -194,12 +222,12 @@ export default function IgeveBilling() {
     }
   });
   const savedIds = new Set(saved.map(row => row.invoice.id));
-  const locationSource = locationBillingInvoices({ orders, operations, points, prices, invoices: saved.map(row => row.invoice), start, end, draftDate: today(), operationId, category: categoryFilter, company: '' });
+  const locationSource = locationBillingInvoices({ orders, operations, points, prices, invoices: saved.map(row => row.invoice), start, end, draftDate: today(), operationId, category: categoryFilter, company: '' }).map(applyFreight);
   const locationGroups = locationTotals(locationSource, orders, points);
   const preparedLocations = locationGroups.map(group => {
     const preview = createLocationBillingInvoice(group, orders, prices, start, end, categoryFilter, today());
     const stored = saved.find(row => row.invoice.id === preview.id);
-    const invoice = stored?.invoice || preview;
+    const invoice = applyFreight(stored?.invoice || preview);
     return { ...group, count: invoice.location?.count ?? group.count, total: invoiceTotal(invoice), products: invoice.items.length, invoice, stored };
   });
   const visibleLocations = sortBillingRows(preparedLocations.filter(row => !locationFilter || row.key === locationFilter), sorts.locations, (row, column) => {
@@ -218,7 +246,7 @@ export default function IgeveBilling() {
   const locationGrandTotal = Math.round(visibleLocations.reduce((sum, row) => sum + row.total, 0) * 100) / 100;
   const pendingLocationCount = visibleLocations.filter(row => !row.stored).length;
   const expandedGroup = visibleLocations.find(row => row.key === expandedLocation);
-  const open = (invoice: BillingInvoice, savedVersion: string | null) => { setDraft(structuredClone(invoice)); setVersion(savedVersion); setMessage(''); };
+  const open = (invoice: BillingInvoice, savedVersion: string | null) => { setDraft(structuredClone(applyFreight(invoice))); setVersion(savedVersion); setMessage(''); };
   function importDelivery(order: BillingOrder, delivery: BillingOrder['deliveries'][number]) {
     const id = `${BILLING_PREFIX}${order.id}_${delivery.id}`;
     const existing = saved.find(row => row.invoice.id === id);
@@ -226,7 +254,7 @@ export default function IgeveBilling() {
     open(createDeliveryBillingInvoice(order, delivery, operations.find(op => op.id === order.operationId), points.find(point => point.id === delivery.deliveryPointId), prices, today()), null);
   }
   function complement(invoice: BillingInvoice) {
-    open({ ...structuredClone(invoice), id: `${BILLING_PREFIX}${crypto.randomUUID()}`, parentId: invoice.id, date: today(), notes: '', freight: undefined, items: [newItem()] }, null);
+    open({ ...structuredClone(invoice), id: `${BILLING_PREFIX}${crypto.randomUUID()}`, parentId: invoice.id, date: today(), notes: '', freight: undefined, batchFreight: undefined, items: [newItem()] }, null);
   }
   async function saveRubric(rubric: MonthlyRubric, previousVersion: string | null): Promise<boolean> {
     if (busy || !ready) return false;
@@ -245,21 +273,20 @@ export default function IgeveBilling() {
     } catch (error) { setMessage(error instanceof Error ? error.message : 'Falha ao salvar rubrica.'); return false; }
     finally { setBusy(false); }
   }
-  const draftCosts = draft ? billingCostLines(draft) : [];
-  const freightCategories = draft ? [...new Set(draft.items.map(item => item.category || draft.category))].sort() : [];
-  const freightQuantity = draft ? draft.items.filter(item => !draft.freight?.category || (item.category || draft.category) === draft.freight.category).reduce((sum, item) => sum + (item.billedQuantity ?? item.quantity), 0) : 0;
+  const draftCosts = draft ? billingCostLines(applyFreight(draft)) : [];
   const adjustableDraft = !!draft && (!!draft.location || draft.rubric?.kind === 'reduction');
   const draftMonth = draft?.rubric?.month || draft?.deliveryDate?.slice(0, 7) || draft?.location?.start.slice(0, 7);
   const draftRubric = rubrics.find(({ rubric }) => draft && (draft.rubric ? rubric.key === draft.rubric.key : rubric.operationId === draft.operationId && rubric.month === draftMonth && (!rubric.pointId || rubricScopeInvoices([draft], rubric, orders, points).length > 0)))?.rubric;
-  const draftBalance = draft && draftRubric ? rubricBalance(draftRubric, rubricScopeInvoices(rubricMonthInvoices(orders, operations, points, prices, [...saved.filter(row => row.invoice.id !== draft.id).map(row => row.invoice), draft], draftRubric.month), draftRubric, orders, points)) : null;
+  const draftBalance = draft && draftRubric ? rubricBalance(draftRubric, rubricScopeInvoices(rubricMonthInvoices(orders, operations, points, prices, [...saved.filter(row => row.invoice.id !== draft.id).map(row => row.invoice), draft], draftRubric.month).map(applyFreight), draftRubric, orders, points)) : null;
   async function save(event: FormEvent) {
     event.preventDefault(); if (!draft || busy || !ready) return;
     if (draft.rubric?.kind === 'reduction' && saved.some(row => row.invoice.rubric?.kind === 'carry' && row.invoice.rubric.sourceId === draft.id)) return setMessage('Estes itens já foram aproveitados no mês seguinte. A redução original fica preservada; ajustes adicionais devem ser feitos no faturamento de aproveitamento.');
-    const errorMessage = validateInvoice(draft); if (errorMessage) return setMessage(errorMessage);
+    const errorMessage = validateInvoice(applyFreight(draft)); if (errorMessage) return setMessage(errorMessage);
     if (locationInvoiceConflict(draft, saved.map(row => row.invoice))) return setMessage('Já existe faturamento por local incluindo um destes romaneios. Abra o registro salvo em Romaneios de faturamento para evitar cobrança duplicada.');
     setBusy(true); setMessage('');
     try {
       const invoice = withDeferredItems({ ...draft, company: draft.company.trim(), cnpj: draft.cnpj.trim() });
+      delete invoice.batchFreight;
       const row = { key: invoice.id, value: invoice, updated_at: new Date().toISOString() };
       const result = version
         ? await supabase.from('app_shared_state').update(row).eq('key', invoice.id).eq('updated_at', version).select('updated_at').single()
@@ -271,6 +298,7 @@ export default function IgeveBilling() {
     finally { setBusy(false); }
   }
   async function exportPdf(invoice?: BillingInvoice) {
+    invoice = invoice ? applyFreight(invoice) : undefined;
     try {
       const doc = new jsPDF({ orientation: 'landscape' });
       await addPdfHeader(doc, { title: invoice ? `Faturamento IGEVE - ${billingInvoiceType(invoice)}` : tab === 'locations' ? 'Faturamento IGEVE por operação/local' : 'Faturamento IGEVE por empresa', subtitle: invoice ? `${invoice.company} | CNPJ: ${invoice.cnpj || '-'} | ${dateLabel(invoice.date)}` : `Período de ${tab === 'locations' ? 'entrega' : 'faturamento'}: ${dateLabel(start) || 'início'} a ${dateLabel(end) || 'hoje'}`, footer: !invoice && tab === 'locations' && pendingLocationCount ? `${pendingLocationCount} local(is) a preparar: valores estimados; itens sem preço cadastrado valem zero.` : undefined });
@@ -280,7 +308,7 @@ export default function IgeveBilling() {
         const infoLines = doc.splitTextToSize(info, 275);
         doc.text(infoLines, 10, 42);
         const parent = saved.find(row => row.invoice.id === invoice.parentId)?.invoice;
-        const notes = [invoice.parentId ? `Complemento do controle ${parent?.control || invoice.control}` : '', invoice.notes, invoice.freight?.amount ? `Frete: ${money(invoice.freight.amount)} | Categoria: ${invoice.freight.category || 'Todas'} | Rateio pela quantidade faturada` : ''].filter(Boolean).join(' | ');
+        const notes = [invoice.parentId ? `Complemento do controle ${parent?.control || invoice.control}` : '', invoice.notes, invoice.batchFreight ? `Frete rateado do conjunto de romaneios: ${money(billingCostLines(invoice).reduce((sum, row) => sum + row.freight, 0))}` : invoice.freight?.amount ? `Frete: ${money(invoice.freight.amount)} | Categoria: ${invoice.freight.category || 'Todas'} | Rateio pela quantidade faturada` : ''].filter(Boolean).join(' | ');
         const costRows = billingCostLines(invoice);
         autoTable(doc, { startY: 45 + infoLines.length * 5, styles: { fontSize: 8 }, head: [['Produto', 'Categoria', 'Unidade', 'Qtd. entregue', 'Qtd. faturada', 'Preço unitário', 'Frete rateado', 'Custo unit. final', 'Total com frete']], body: costRows.map(({ item, freight, unitCost, total }) => [item.product, item.category || invoice.category, item.unit, item.quantity, item.billedQuantity ?? item.quantity, money(item.price), money(freight), unitCost.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 6 }), money(total)]), foot: [['TOTAL', '', '', '', '', '', money(costRows.reduce((sum, row) => sum + row.freight, 0)), '', money(invoiceTotal(invoice))]] });
         if (notes) { doc.addPage(); doc.text(doc.splitTextToSize(`Observações: ${notes}`, 275), 10, 20); }
@@ -313,21 +341,22 @@ export default function IgeveBilling() {
         <label><input type="checkbox" checked={!categoryFilter.length} onChange={() => setCategoryFilter([])} />Todas as categorias</label>
         {categories.map(category => <label key={category}><input type="checkbox" checked={categoryFilter.includes(category)} onChange={event => setCategoryFilter(current => event.target.checked ? [...current, category].sort() : current.filter(value => value !== category))} />{category}</label>)}
       </div></details></div>
-      {tab !== 'prices' && <label>{tab === 'romaneios' || tab === 'locations' ? 'Entrega de' : 'Faturamento de'}<input className="input-field" type="date" value={start} onChange={event => setStart(event.target.value)} /></label>}
+      {tab !== 'prices' && <label>{tab === 'romaneios' || tab === 'locations' || tab === 'freight' ? 'Entrega de' : 'Faturamento de'}<input className="input-field" type="date" value={start} onChange={event => setStart(event.target.value)} /></label>}
       {tab !== 'prices' && <label>Até<input className="input-field" type="date" value={end} onChange={event => setEnd(event.target.value)} /></label>}
-      {tab !== 'romaneios' && tab !== 'locations' && tab !== 'prices' && <label>Empresa<select className="input-field" value={companyFilter} onChange={event => setCompanyFilter(event.target.value)}><option value="">Todas as empresas</option>{[...new Set(saved.map(row => row.invoice.company))].sort().map(name => <option key={name}>{name}</option>)}</select></label>}
+      {tab !== 'romaneios' && tab !== 'locations' && tab !== 'prices' && tab !== 'freight' && <label>Empresa<select className="input-field" value={companyFilter} onChange={event => setCompanyFilter(event.target.value)}><option value="">Todas as empresas</option>{[...new Set(saved.map(row => row.invoice.company))].sort().map(name => <option key={name}>{name}</option>)}</select></label>}
       {tab === 'locations' && <label>Local<select className="input-field" value={locationFilter} onChange={event => setLocationFilter(event.target.value)}><option value="">Todos os locais</option>{locationFilter && !locationGroups.some(row => row.key === locationFilter) && <option value={locationFilter}>Local selecionado (sem faturamento nos filtros atuais)</option>}{locationGroups.map(row => <option key={row.key} value={row.key}>{row.operation} / {row.destination}</option>)}</select></label>}
     </div><small>Maceió, Guaianases, Boituva, Mongaguá e Rio de Janeiro. Alterações aqui são exclusivas do faturamento.</small></div>}
     {message && <div className="card igeve-panel" role="status">{message}</div>}
     {tab !== 'prices' && tab !== 'rubrics' && !validPeriod && <div role="alert">A data inicial deve ser anterior ou igual à data final.</div>}
     {busy && <p role="status">Processando...</p>}
-    {ready && tab === 'rubrics' && <IgeveRubrics operations={operations} points={points} orders={orders} invoices={saved} catalog={priceCatalog} rubrics={rubrics} busy={busy} onSave={saveRubric} onOpen={open} />}
+    {ready && tab === 'rubrics' && <IgeveRubrics operations={operations} points={points} orders={orders} invoices={saved} catalog={priceCatalog} rubrics={rubrics} busy={busy} onSave={saveRubric} onOpen={open} applyFreight={applyFreight} />}
     {ready && tab === 'prices' && <IgevePriceTable rows={visiblePrices} edits={priceEdits} busy={busy} onEdit={editPrice} onSave={event => void savePrices(event)} onCancel={() => setPriceEdits({})} header={header} />}
+    {ready && (tab === 'romaneios' || tab === 'freight') && <IgeveFreight source={freightSource} scope={{ operationId, categories: categoryFilter, start, end }} saved={freights} busy={busy} detailed={tab === 'freight'} onSave={saveFreight} />}
     {ready && tab === 'romaneios' && <div className="card igeve-panel"><h2>Romaneios disponíveis</h2><div className="table-container"><table><thead><tr>{header('operation', 'Operação / local')}{header('control', 'Controle')}{header('date', 'Entrega')}{header('category', 'Categoria')}{header('action', 'Ação')}</tr></thead><tbody>
       {availableRows.map(({ order, delivery, operation, destination, action }) => <tr key={`${order.id}-${delivery.id}`}><td>{operation}<br />{destination}</td><td>{getOrderControlNumber(order.importedAt)}</td><td>{dateLabel(order.deliveryDate)}</td><td>{order.category}</td><td><button disabled={busy} className="button button-outline" onClick={() => importDelivery(order, delivery)}>{action}</button></td></tr>)}
       {!availableRows.length && <tr><td colSpan={5}>Nenhum romaneio encontrado. Confira a categoria, o período e as operações cadastradas em Operações.</td></tr>}
     </tbody></table></div></div>}
-    {ready && (tab === 'saved' || tab === 'freight') && <div className="card igeve-panel"><h2>{tab === 'freight' ? 'Frete por operação e categoria' : 'Romaneios de faturamento'}</h2>{tab === 'freight' && <p>Selecione a operação e a categoria nos filtros. Abra o faturamento para informar o frete e distribuí-lo pela quantidade total dos produtos. Para reunir várias entregas, prepare o faturamento por operação/local.</p>}<div className="table-container"><table><thead><tr>{header('company', 'Empresa / operação')}{header('control', 'Controle / local')}{header('type', 'Tipo')}{header('date', 'Data')}{header('total', 'Total')}{header('actions', 'Ações')}</tr></thead><tbody>{visibleInvoices.map(invoice => <tr key={invoice.id}><td>{invoice.company}<br />{invoice.operation}</td><td>{invoice.control}<br />{invoice.destination}</td><td>{billingInvoiceType(invoice)}</td><td>{dateLabel(invoice.date)}</td><td>{money(invoiceTotal(invoice))}</td><td><div className="igeve-actions"><button className="button button-outline" disabled={busy} onClick={() => open(invoice, saved.find(row => row.invoice.id === invoice.id)!.version)}>{tab === 'freight' ? 'Informar / editar frete' : 'Editar'}</button>{!invoice.parentId && !invoice.location && !invoice.rubric && <button className="button button-outline" disabled={busy} onClick={() => complement(invoice)}><Plus size={16} /> Complemento</button>}<button className="button button-outline" onClick={() => void exportPdf(invoice)}><FileText size={16} /> PDF</button></div></td></tr>)}{!visibleInvoices.length && <tr><td colSpan={6}>Nenhum faturamento salvo neste período.</td></tr>}</tbody></table></div></div>}
+    {ready && tab === 'saved' && <div className="card igeve-panel"><h2>Romaneios de faturamento</h2><div className="table-container"><table><thead><tr>{header('company', 'Empresa / operação')}{header('control', 'Controle / local')}{header('type', 'Tipo')}{header('date', 'Data')}{header('total', 'Total')}{header('actions', 'Ações')}</tr></thead><tbody>{visibleInvoices.map(invoice => <tr key={invoice.id}><td>{invoice.company}<br />{invoice.operation}</td><td>{invoice.control}<br />{invoice.destination}</td><td>{billingInvoiceType(invoice)}</td><td>{dateLabel(invoice.date)}</td><td>{money(invoiceTotal(invoice))}</td><td><div className="igeve-actions"><button className="button button-outline" disabled={busy} onClick={() => open(invoice, saved.find(row => row.invoice.id === invoice.id)!.version)}>Editar</button>{!invoice.parentId && !invoice.location && !invoice.rubric && <button className="button button-outline" disabled={busy} onClick={() => complement(invoice)}><Plus size={16} /> Complemento</button>}<button className="button button-outline" onClick={() => void exportPdf(invoice)}><FileText size={16} /> PDF</button></div></td></tr>)}{!visibleInvoices.length && <tr><td colSpan={6}>Nenhum faturamento salvo neste período.</td></tr>}</tbody></table></div></div>}
     {ready && tab === 'locations' && <div className="card igeve-panel">
       <div className="igeve-heading"><div><h2>Faturamento por operação/local</h2><p>Abra o faturamento do local para conferir a soma entregue por produto, informar o ajuste faturamento e definir o preço unitário.</p></div><div className="igeve-actions"><button className="button button-outline" disabled={!visibleLocations.length} onClick={() => void exportPdf()}>Exportar PDF</button><button className="button button-outline" disabled={!visibleLocations.length} onClick={exportExcel}>Exportar Excel</button></div></div>
       {pendingLocationCount > 0 && <p role="status">{pendingLocationCount} local(is) a preparar. Os valores iniciais usam a quantidade entregue e os preços cadastrados; itens sem preço entram com valor zero.</p>}
@@ -343,15 +372,7 @@ export default function IgeveBilling() {
       <label>CNPJ<input className="input-field" value={draft.cnpj} onChange={event => setDraft({ ...draft, cnpj: event.target.value })} /></label>
       <label>Data do faturamento<input required type="date" className="input-field" value={draft.date} onChange={event => setDraft({ ...draft, date: event.target.value })} /></label>
     </div>
-    <fieldset className="igeve-freight"><legend>Frete</legend>
-      <div className="igeve-filters">
-        <label>Operação do frete<select className="input-field" value={draft.operationId} disabled><option value={draft.operationId}>{draft.operation}</option></select></label>
-        <label>Categoria do frete<select className="input-field" value={draft.freight?.category || ''} onChange={event => setDraft({ ...draft, freight: { operationId: draft.operationId, amount: draft.freight?.amount || 0, category: event.target.value } })}><option value="">Todas as categorias deste faturamento</option>{freightCategories.map(category => <option key={category}>{category}</option>)}</select></label>
-        <label>Valor do frete (R$)<input type="number" min="0" step="0.01" className="input-field" value={draft.freight?.amount ?? ''} placeholder="0,00" onChange={event => setDraft({ ...draft, freight: event.target.value === '' ? undefined : { operationId: draft.operationId, category: draft.freight?.category || '', amount: Number(event.target.value) } })} /></label>
-      </div>
-      <p>Rateio pela quantidade: {freightQuantity.toLocaleString('pt-BR', { maximumFractionDigits: 3 })} itens · Frete por unidade: {(freightQuantity > 0 ? (draft.freight?.amount || 0) / freightQuantity : 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL', maximumFractionDigits: 6 })}. O custo final soma o preço unitário e o frete por unidade. O rateio usa a quantidade faturada e ajusta os centavos para fechar o valor informado.</p>
-      {draft.freight && <button type="button" className="button button-outline" onClick={() => setDraft({ ...draft, freight: undefined })}>Remover frete</button>}
-    </fieldset>
+    <p>O frete é informado em <strong>Frete</strong> ou <strong>Faturamento por romaneio</strong>, nos filtros de operação, categorias e período de entrega. O rateio considera a soma das quantidades de todos os romaneios filtrados e aparece no custo final abaixo.</p>
     {draftBalance && <p role="status" className={`igeve-rubric-status ${draftBalance.status}`}>Rubrica do mês: {money(draftRubric!.amount)} · Total previsto com este faturamento e ajuste anterior: {money(draftBalance.used)} · {draftBalance.remaining < 0 ? 'Ultrapassa em' : 'Saldo'}: {money(Math.abs(draftBalance.remaining))}. {draftBalance.remaining < 0 && 'Revise as quantidades antes de concluir.'}</p>}
     {draft.rubric?.kind === 'reduction' && <p>As quantidades retiradas em Ajuste faturamento serão guardadas para aproveitamento no mês seguinte. As entregas originais são preservadas.</p>}
     {draft.location && <p>Entregas de {dateLabel(draft.location.start) || 'início'} a {dateLabel(draft.location.end) || 'fim'} · {draft.location.count} romaneio(s). Informe em Ajuste faturamento a quantidade que será cobrada. Use zero para não faturar um item.</p>}
@@ -368,7 +389,7 @@ export default function IgeveBilling() {
       <td>{money(draftCosts[index].freight)}</td><td>{draftCosts[index].unitCost.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL', maximumFractionDigits: 6 })}</td><td>{money(draftCosts[index].total)}</td>{!adjustableDraft && <td><button type="button" className="button button-outline" aria-label={`Remover produto ${index + 1}`} onClick={() => setDraft({ ...draft, items: draft.items.filter(row => row.id !== item.id) })}><Trash2 size={16} /></button></td>}
     </tr>)}</tbody></table></div>
       {!adjustableDraft && <button type="button" className="button button-outline" onClick={() => setDraft({ ...draft, items: [...draft.items, { ...newItem(), category: draft.rubric ? 'Estocáveis' : undefined }] })}><Plus size={16} /> Adicionar produto</button>}
-      <label>Observações<textarea className="input-field" value={draft.notes} onChange={event => setDraft({ ...draft, notes: event.target.value })} /></label><p>Produtos: {money(draftCosts.reduce((sum, row) => sum + row.subtotal, 0))} · Frete: {money(draftCosts.reduce((sum, row) => sum + row.freight, 0))}</p><strong>Total do faturamento com frete: {money(invoiceTotal(draft))}</strong>
+      <label>Observações<textarea className="input-field" value={draft.notes} onChange={event => setDraft({ ...draft, notes: event.target.value })} /></label><p>Produtos: {money(draftCosts.reduce((sum, row) => sum + row.subtotal, 0))} · Frete: {money(draftCosts.reduce((sum, row) => sum + row.freight, 0))}</p><strong>Total do faturamento com frete: {money(invoiceTotal(applyFreight(draft)))}</strong>
       <div className="igeve-actions"><button type="submit" className="button" disabled={busy}><Save size={18} /> Salvar faturamento</button>{draft.location && <button type="button" className="button button-outline" onClick={() => void exportPdf(draft)}>Exportar PDF</button>}<button type="button" className="button button-outline" disabled={busy} onClick={() => { setDraft(null); setMessage(''); }}>Cancelar</button></div>
       {message && <div role="alert">{message}</div>}
     </form></div>}

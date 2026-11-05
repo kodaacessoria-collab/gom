@@ -55,3 +55,6 @@
 
 .igeve-freight { min-width: 0; border: 1px solid var(--border); border-radius: 8px; padding: 1rem; }
 .igeve-freight legend { padding: 0 .5rem; font-weight: 600; }
+
+.igeve-freight-batch .igeve-filters strong { display: block; margin-top: .75rem; font-size: 1.25rem; }
+.igeve-freight-batch .igeve-actions { margin: .75rem 0; }

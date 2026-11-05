@@ -16,6 +16,7 @@ export interface LocationInvoiceContext {
 }
 export interface BillingInvoice {
   id: string; parentId?: string; deliveryPointId?: string; deliveryDate?: string; sourceOrderId: string; sourceDeliveryId: string;
+  batchFreight?: Record<string, number>;
   freight?: { operationId: string; category: string; amount: number };
   location?: LocationInvoiceContext;
   rubric?: RubricInvoiceContext;
@@ -79,6 +80,15 @@ export const lineTotal = (item: BillingItem) => Math.round((item.billedQuantity 
 // Allocate integer cents by largest remainder so the freight is charged exactly once.
 export function billingCostLines(invoice: BillingInvoice) {
   const rows = invoice.items.map(item => ({ item, subtotal: lineTotal(item), freight: 0, total: lineTotal(item), unitCost: item.price }));
+  if (invoice.batchFreight) {
+    for (const row of rows) {
+      row.freight = invoice.batchFreight[row.item.id] || 0;
+      row.total = (Math.round(row.subtotal * 100) + Math.round(row.freight * 100)) / 100;
+      const quantity = row.item.billedQuantity ?? row.item.quantity;
+      row.unitCost = quantity > 0 ? row.item.price + row.freight / quantity : row.item.price;
+    }
+    return rows;
+  }
   const freight = invoice.freight;
   if (!freight || freight.operationId !== invoice.operationId || !Number.isFinite(freight.amount) || freight.amount <= 0) return rows;
   const eligible = rows.filter(row => (!freight.category || (row.item.category || invoice.category) === freight.category) && (row.item.billedQuantity ?? row.item.quantity) > 0);
@@ -107,7 +117,7 @@ export const validateInvoice = (invoice: BillingInvoice) => {
   if (!invoice.items.length) return 'Adicione pelo menos um produto.';
   if (invoice.items.some(item => (invoice.location || item.billedQuantity !== undefined) && (!Number.isFinite(item.billedQuantity) || item.billedQuantity! < 0))) return 'Informe um ajuste faturamento maior ou igual a zero em todos os itens.';
   if (invoice.items.some(item => !item.product.trim() || !item.unit.trim() || !Number.isFinite(item.quantity) || item.quantity <= 0 || !Number.isFinite(item.price) || item.price < 0)) return 'Preencha produto, unidade, quantidade maior que zero e preço válido em todos os itens.';
-  if (invoice.freight) {
+  if (invoice.freight && !invoice.batchFreight) {
     const { amount, operationId, category } = invoice.freight;
     if (operationId !== invoice.operationId) return 'A operação do frete deve ser a mesma do faturamento.';
     if (!Number.isFinite(amount) || amount < 0 || !Number.isSafeInteger(Math.round(amount * 100)) || Math.abs(amount * 100 - Math.round(amount * 100)) > 1e-6) return 'Informe um frete maior ou igual a zero, com até duas casas decimais.';

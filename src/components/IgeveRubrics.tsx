@@ -7,11 +7,12 @@ import type { MonthlyRubric, SavedRubric } from '../lib/igeveRubrics';
 const money = (value: number) => value.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 interface Props {
   operations: BillingOperation[]; points: BillingPoint[]; orders: BillingOrder[]; invoices: SavedInvoice[];
+  applyFreight: (invoice: BillingInvoice) => BillingInvoice;
   catalog: BillingPriceEntry[]; rubrics: SavedRubric[]; busy: boolean;
   onSave: (rubric: MonthlyRubric, version: string | null) => Promise<boolean>;
   onOpen: (invoice: BillingInvoice, version: string | null) => void;
 }
-export default function IgeveRubrics({ operations, points, orders, invoices, catalog, rubrics, busy, onSave, onOpen }: Props) {
+export default function IgeveRubrics({ operations, points, orders, invoices, catalog, rubrics, busy, onSave, onOpen, applyFreight }: Props) {
   const [operationId, setOperationId] = useState('');
   const [pointId, setPointId] = useState('');
   const [complementPoint, setComplementPoint] = useState('');
@@ -25,7 +26,7 @@ export default function IgeveRubrics({ operations, points, orders, invoices, cat
   const rubric = edits[key] || stored?.rubric || { key, operationId, pointId: byLocal ? pointId : '', month, amount: 0, previousAdjustment: 0, adjustmentNotes: '' };
   const dirty = !!edits[key];
   const valid = !!operation && !!month && (!byLocal || !!pointId);
-  const monthInvoices = month ? rubricMonthInvoices(orders, operations, points, billingPricesFromEntries(catalog), invoices.map(row => row.invoice), month) : [];
+  const monthInvoices = month ? rubricMonthInvoices(orders, operations, points, billingPricesFromEntries(catalog), invoices.map(row => row.invoice), month).map(applyFreight) : [];
   const scoped = valid ? rubricScopeInvoices(monthInvoices, rubric, orders, points) : [];
   const balance = rubricBalance(rubric, scoped);
   const crossMonth = scoped.some(invoice => invoice.location && (invoice.location.start.slice(0, 7) !== month || invoice.location.end.slice(0, 7) !== month));
