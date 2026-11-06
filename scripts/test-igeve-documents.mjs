@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { jsPDF } from 'jspdf';
-import { DEFAULT_DOCUMENT_SUPPLIERS, DEFAULT_IGEVE_UNITS, decimal2, documentFilename, documentTotal, emptyNfeDocument, round2, parseBrazilianNumber, unitsForCnpj, validCnpj, validDocumentDate, validateNfeDocument } from '../src/lib/igeveDocuments.ts';
+import { DEFAULT_DOCUMENT_SUPPLIERS, DEFAULT_IGEVE_UNITS, decimal2, createAutomaticQuotation, quotationPrices, documentFilename, documentTotal, emptyNfeDocument, round2, parseBrazilianNumber, unitsForCnpj, validCnpj, validDocumentDate, validateNfeDocument } from '../src/lib/igeveDocuments.ts';
 import { parseNfePages } from '../src/lib/nfePdfImport.ts';
 import { createIgeveDocumentPdf } from '../src/lib/igeveDocumentPdf.ts';
 
@@ -44,6 +44,51 @@ const splitHead = header(100).flatMap(w => w.text === 'VALOR UNITÁRIO' ? [word(
 assert.equal(parseNfePages([{ words: [...splitHead, ...line(140, 'TESTE CABEÇALHO', '12,00', '3,50')] }]).document.items.length, 1);
 const centeredLine = line(190, 'QUANTIDADE ALINHADA À DIREITA', '3,00', '2,55').map(w => w.text === '3,00' ? { ...w, x: 404, width: 20 } : w);
 assert.equal(parseNfePages([{ words: [...header(160), ...centeredLine] }]).document.items[0].quantity, 3);
+
+// Centered description heading, fiscal codes and wrapped products as in the OM DANFE.
+const omHeader = header(160).map(w => w.text === 'DESCRIÇÃO DOS PRODUTOS' ? word(w.text, 130, 160, 100) : w);
+const om = parseNfePages([{ words: [
+  word('RECEBEMOS DE OM LOGISTICA E DISTRIBUICAO LTDA OS PRODUTOS CONSTANTES NA NOTA FISCAL', 10, 10),
+  word('Nº 21', 450, 30), word('68.673.515/0001-96', 10, 45),
+  word('DESTINATÁRIO / REMETENTE', 10, 60), word('NOME / RAZÃO SOCIAL', 10, 70), word('CNPJ / CPF', 350, 70), word('DATA EMISSÃO', 480, 70),
+  word('INSTITUTO DE GESTAO EDUCACIONAL', 10, 85), word('28.413.401/0012-45', 350, 85), word('23/10/2026', 480, 85),
+  word('ENDEREÇO', 10, 100), word('BAIRRO / DISTRITO', 350, 100), word('RUA DR LOURENCO DE MENDONCA, 107', 10, 115), word('JARDIM AUGUSTA', 350, 115),
+  word('CEP', 10, 130), word('MUNICÍPIO', 100, 130), word('UF', 400, 130), word('08452-330', 10, 145), word('SAO PAULO', 100, 145), word('SP', 400, 145),
+  ...omHeader, ...line(190, 'IG. ACUCAR', '3,00', '6,20', '8177893'), word('1KG', 55, 204),
+] }, { words: [...line(30, 'IG. ARROZ', '9,00', '8,00', '8203304')] }]);
+assert.equal(om.document.number, '21');
+assert.equal(om.document.issuedAt, '2026-10-23');
+assert.equal(om.document.issuer, 'OM LOGISTICA E DISTRIBUICAO LTDA');
+assert.equal(om.document.recipient, 'INSTITUTO DE GESTAO EDUCACIONAL');
+assert.equal(om.document.address, 'RUA DR LOURENCO DE MENDONCA, 107 - JARDIM AUGUSTA - SAO PAULO/SP - CEP 08452-330');
+assert.equal(om.document.items.length, 2);
+assert.equal(om.document.items[0].code, '8177893');
+assert.equal(om.document.items[0].product, 'IG. ACUCAR 1KG');
+assert.equal(om.document.items[1].product, 'IG. ARROZ');
+const mergedRun = parseNfePages([{ words: [...omHeader, word('8177893 IG. ACUCAR', 10, 190, 102), ...line(190, '', '3,00', '6,20').filter(w => w.x >= 265)] }]);
+assert.equal(mergedRun.document.items[0].code, '8177893');
+assert.equal(mergedRun.document.items[0].product, 'IG. ACUCAR');
+const inconsistent = parseNfePages([{ words: [word('VALOR TOTAL DOS PRODUTOS', 450, 10), word('3.024,10', 450, 24), ...header(160), ...line(190, 'TESTE', '1,00', '10,00')] }]);
+assert.ok(inconsistent.warnings.some(w => w.includes('difere do total')));
+const autoDoc = { ...om.document, quotations: [] };
+const issuerQuote = createAutomaticQuotation(autoDoc, DEFAULT_DOCUMENT_SUPPLIERS[2], DEFAULT_DOCUMENT_SUPPLIERS);
+assert.equal(issuerQuote.markupPercent, 0);
+assert.equal(issuerQuote.prices[autoDoc.items[0].id], 6.2);
+autoDoc.quotations.push(issuerQuote);
+const partner1 = createAutomaticQuotation(autoDoc, DEFAULT_DOCUMENT_SUPPLIERS[0], DEFAULT_DOCUMENT_SUPPLIERS);
+autoDoc.quotations.push(partner1);
+const partner2 = createAutomaticQuotation(autoDoc, DEFAULT_DOCUMENT_SUPPLIERS[1], DEFAULT_DOCUMENT_SUPPLIERS);
+assert.equal(partner1.markupPercent, 8.75);
+assert.equal(partner1.prices[autoDoc.items[0].id], 6.74);
+assert.equal(partner1.prices[autoDoc.items[1].id], 8.7);
+assert.equal(partner2.markupPercent, 12.35);
+assert.equal(partner2.prices[autoDoc.items[0].id], 6.97);
+assert.equal(partner2.prices[autoDoc.items[1].id], 8.99);
+autoDoc.quotations.push(partner2);
+assert.throws(() => createAutomaticQuotation(autoDoc, DEFAULT_DOCUMENT_SUPPLIERS[3], DEFAULT_DOCUMENT_SUPPLIERS));
+autoDoc.quotations = [partner2];
+assert.equal(createAutomaticQuotation(autoDoc, DEFAULT_DOCUMENT_SUPPLIERS[0], DEFAULT_DOCUMENT_SUPPLIERS).markupPercent, 8.75);
+assert.equal(quotationPrices([{ ...autoDoc.items[0], price: 100 }], 8.75)[autoDoc.items[0].id], 108.75);
 
 const doc = { ...emptyNfeDocument(), ...parsed.document, number: '658', issuer: 'CANINDÉ', unitId: 'igeve-unit-24', unitName: 'GARÇA TORTA', address: 'ENDEREÇO DE TESTE, 123 - MACEIÓ/AL', deliverySupplierId: 'caninde', deliveryDate: '2026-11-06', confirmed: true, consumption: 'NOVEMBRO/2026', baskets: 2, notes: 'TESTE DE SOFTWARE - DADOS FICTÍCIOS. Sem validade comercial.' };
 const quote = id => ({ supplierId: id, date: '2026-11-06', reference: 'COTAÇÃO FICTÍCIA PARA TESTE', prices: Object.fromEntries(doc.items.map(i => [i.id, i.price])) });

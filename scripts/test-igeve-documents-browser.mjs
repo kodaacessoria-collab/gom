@@ -52,6 +52,22 @@ await page.getByLabel('CNPJ do destinatário',{exact:true}).fill('28.413.401/004
 assert.equal(await page.getByLabel('Unidade / escola',{exact:false}).inputValue(),'igeve-unit-24');
 for(const name of ['CANINDÉ DISTRIBUIDORA','RED SOLUÇÕES','GRANTERRA']) await page.locator('.igeve-document-suppliers label').filter({hasText:name}).locator('input').check();
 const q=page.locator('.igeve-document-quote');
+assert.equal(await q.nth(0).locator('input[type=number]').nth(0).inputValue(),'2.56');
+assert.equal(await q.nth(1).locator('input[type=number]').nth(0).inputValue(),'2.78');
+assert.equal(await q.nth(2).locator('input[type=number]').nth(0).inputValue(),'2.88');
+await page.getByLabel('Preço da NF-e item 1',{exact:true}).fill('100');
+await page.getByLabel('Preço da NF-e item 1',{exact:true}).blur();
+assert.equal(await q.nth(0).locator('input[type=number]').nth(0).inputValue(),'100.00');
+assert.equal(await q.nth(1).locator('input[type=number]').nth(0).inputValue(),'108.75');
+assert.equal(await q.nth(2).locator('input[type=number]').nth(0).inputValue(),'112.35');
+await q.nth(1).locator('input[type=number]').nth(0).fill('90');
+await page.getByLabel('Preço da NF-e item 1',{exact:true}).fill('200');
+await page.getByLabel('Preço da NF-e item 1',{exact:true}).blur();
+assert.equal(await q.nth(1).locator('input[type=number]').nth(0).inputValue(),'90.00');
+await q.nth(1).getByRole('button',{name:'Recalcular valores automaticamente'}).click();
+assert.equal(await q.nth(1).locator('input[type=number]').nth(0).inputValue(),'217.50');
+await page.getByLabel('Preço da NF-e item 1',{exact:true}).fill('2.56');
+await page.getByLabel('Preço da NF-e item 1',{exact:true}).blur();
 for(let i=0;i<3;i++) {
  await q.nth(i).getByLabel('Referência da cotação recebida').fill(`TESTE FICTÍCIO ${i}`);
  const values=i===0?[2.56,4.5,10]:i===1?[2,4,9]:[3,5,11];

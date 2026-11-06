@@ -55,13 +55,42 @@ export function parseNfePages(pages: PdfTextPage[]): { document: NfeDocument; wa
   if (distinctIssuer.length === 1) doc.issuerCnpj = distinctIssuer[0];
   const number = allText.match(/(?:N[º°o.]\s*|N[ÚU]MERO\s*:?\s*)(\d[\d.]{0,14})\b/i);
   if (number) doc.number = number[1].replace(/\./g, '');
-  const emissionIndex = lines.findIndex(l => /DATA\s+D[AE]\s+EMISS[ÃA]O/i.test(l));
+  const emissionIndex = lines.findIndex(l => /DATA\s+(?:D[AE]\s+)?EMISS[ÃA]O/i.test(l));
   const issue = emissionIndex >= 0 ? lines.slice(emissionIndex, emissionIndex + 4).join(' ').match(/\b(\d{2})\/(\d{2})\/(\d{4})\b/) : null;
   if (issue) doc.issuedAt = `${issue[3]}-${issue[2]}-${issue[1]}`;
+  // Read values inside their labelled fields instead of relying on a fixed row count.
+  function fieldBelow(pattern: RegExp) {
+    for (let r = 0; r < first.length; r++) {
+      const row = first[r];
+      const label = row.words.find(w => pattern.test(norm(w.text)));
+      if (!label) continue;
+      const right = row.words.find(w => w.x > label.x + label.width + 3)?.x ?? Infinity;
+      const value = first.slice(r + 1).find(next => next.y > row.y + 2 && next.y - row.y < 28);
+      return value?.words.filter(w => w.x >= label.x - 4 && w.x < right - 3).map(w => w.text).join(' ').trim() || '';
+    }
+    return '';
+  }
+  const recipient = fieldBelow(/^NOME\s*\/?\s*RAZAO SOCIAL$/);
+  if (recipient) doc.recipient = recipient;
+  doc.address = fieldBelow(/^ENDERECO$/);
+  const district = fieldBelow(/^BAIRRO\s*\/?\s*DISTRITO$/);
+  const city = fieldBelow(/^MUNICIPIO$/);
+  const state = fieldBelow(/^UF$/);
+  const zip = fieldBelow(/^CEP$/);
+  if (doc.address) doc.address = [doc.address, district, [city, state].filter(Boolean).join('/'), zip ? `CEP ${zip}` : ''].filter(Boolean).join(' - ');
+  const receipt = allText.match(/RECEBEMOS DE\s+(.+?)\s+(?:OS\s+)?PRODUTOS/i);
+  if (receipt) doc.issuer = receipt[1].trim().replace(/\s+DOS$/, '');
+  if (!doc.issuer) {
+    const danfe = first.flatMap(r => r.words).find(w => /^DANFE$/.test(norm(w.text)));
+    if (danfe) {
+      const name = first.filter(r => Math.abs(r.y - danfe.y) < 18).flatMap(r => r.words).filter(w => w.x + w.width < danfe.x && /[A-Z]{3}/.test(norm(w.text)) && !/RECEBEMOS|ASSINATURA|RECEBIMENTO/.test(norm(w.text)));
+      doc.issuer = name.map(w => w.text).join(' ').trim();
+    }
+  }
   const parsed: NfeItem[] = [];
+  let columns: Column[] = [];
   for (const page of pages) {
     const rows = pdfRows(page.words);
-    let columns: Column[] = [];
     let headerBottom = -1;
     for (let r = 0; r < rows.length; r++) {
       const row = rows[r];
@@ -77,14 +106,26 @@ export function parseNfePages(pages: PdfTextPage[]): { document: NfeDocument; wa
       if (!columns.length || row.y <= headerBottom) continue;
       if (/DADOS ADICIONAIS|INFORMACOES COMPLEMENTARES|CALCULO DO ISSQN|RESERVADO AO FISCO|TRANSPORTADOR|VALOR TOTAL DA NOTA/.test(norm(text))) { columns = []; continue; }
       const cells: Partial<Record<Column['key'], string>> = {};
-      for (const w of row.words) {
-        // Numeric headings are frequently centered while values align right.
-        // Use the nearest heading center for numeric cells; descriptions use the left edge.
-        const numeric = /^\d+(?:[.,]\d+)*$/.test(w.text.trim());
-        const center = w.x + w.width / 2;
-        const col = numeric ? columns.reduce((best, c) => Math.abs(c.x + c.width / 2 - center) < Math.abs(best.x + best.width / 2 - center) ? c : best)
-          : columns.findLast(c => w.x >= c.x - 4);
-        if (col && col.key !== 'other') cells[col.key] = `${cells[col.key] || ''} ${w.text}`.trim();
+      const codeColumn = columns.find(c => c.key === 'code');
+      const productColumn = columns.find(c => c.key === 'product')!;
+      // Description headings can be centered far to the right of the actual text.
+      const productStart = codeColumn ? Math.min(productColumn.x, codeColumn.x + codeColumn.width + 3) : productColumn.x;
+      const productEnd = columns.find(c => c.x > productColumn.x)?.x ?? Infinity;
+      for (const original of row.words) {
+        // PDF.js may combine the code, description and fiscal cells in one text run.
+        const pieces = [...original.text.matchAll(/\S+/g)];
+        const spansColumns = [...columns.map(c => c.x), productStart, productEnd].some(x => x > original.x + 4 && x < original.x + original.width - 4);
+        const words = spansColumns && pieces.length > 1 ? pieces.map(m => ({ ...original, text: m[0], x: original.x + original.width * m.index / original.text.length, width: original.width * m[0].length / original.text.length })) : [original];
+        for (const w of words) {
+          const numeric = /^\d+(?:[.,]\d+)*$/.test(w.text.trim());
+          const center = w.x + w.width / 2;
+          let col: Column | undefined;
+          if (!numeric && w.x >= productStart - 2 && w.x < productEnd - 4) col = productColumn;
+          else if (numeric && w.x >= productStart && w.x + w.width < productEnd - 4) col = productColumn;
+          else if (numeric) col = columns.reduce((best, c) => Math.abs(c.x + c.width / 2 - center) < Math.abs(best.x + best.width / 2 - center) ? c : best);
+          else col = columns.findLast(c => w.x >= c.x - 4);
+          if (col && col.key !== 'other') cells[col.key] = `${cells[col.key] || ''} ${w.text}`.trim();
+        }
       }
       const quantity = parseBrazilianNumber(cells.quantity || '');
       const price = parseBrazilianNumber(cells.price || '');
@@ -97,6 +138,10 @@ export function parseNfePages(pages: PdfTextPage[]): { document: NfeDocument; wa
     }
   }
   doc.items = parsed;
+  const totalText = fieldBelow(/^VALOR TOTAL DOS PRODUTOS$/);
+  const expectedTotal = parseBrazilianNumber(totalText);
+  const actualTotal = parsed.reduce((sum, item) => sum + round2(item.quantity * item.price), 0);
+  if (Number.isFinite(expectedTotal) && Math.abs(round2(actualTotal) - expectedTotal) > 0.01) warnings.add(`O total dos itens importados (${round2(actualTotal).toFixed(2)}) difere do total de produtos da NF-e (${expectedTotal.toFixed(2)}). Confira se todos os itens e páginas foram importados.`);
   if (!parsed.length) warnings.add('Nenhum item foi identificado automaticamente. Este PDF pode ser digitalizado ou ter outro formato. Inclua os itens manualmente e confira a nota.');
   warnings.add('Confira número, CNPJ do destinatário, produtos, quantidades e preços com o PDF original antes de gerar documentos.');
   return { document: doc, warnings: [...warnings] };

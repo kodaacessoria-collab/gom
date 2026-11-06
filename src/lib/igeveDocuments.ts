@@ -10,7 +10,7 @@ export interface DocumentSupplier {
 export interface IgeveUnit { id: string; name: string; cnpj: string; city: string; address: string }
 export interface NfeItem { id: string; code: string; product: string; unit: string; quantity: number; price: number; brand: string; notes: string }
 export interface Quotation {
-  supplierId: string; date: string; reference: string; prices: Record<string, number | null>;
+  supplierId: string; date: string; reference: string; markupPercent?: number; automaticPrices?: boolean; prices: Record<string, number | null>;
 }
 export interface NfeDocument {
   id: string; number: string; issuedAt: string; issuer: string; issuerCnpj: string;
@@ -52,6 +52,20 @@ export function documentFilename(supplier: DocumentSupplier, doc: NfeDocument, k
 }
 export function documentTotal(items: NfeItem[], prices?: Record<string, number | null>) {
   return items.reduce((sum, item) => sum + Math.round(round2(item.quantity * (prices ? prices[item.id] ?? 0 : item.price)) * 100), 0) / 100;
+}
+// Automatic quotations always use the original NF-e unit price as their base.
+export function quotationPrices(items: NfeItem[], markupPercent: number) {
+  return Object.fromEntries(items.map(item => [item.id, Number.isFinite(item.price) ? round2(item.price * (1 + markupPercent / 100)) : null]));
+}
+export function createAutomaticQuotation(doc: NfeDocument, supplier: DocumentSupplier, suppliers: DocumentSupplier[]): Quotation {
+  const isIssuer = (id: string) => {
+    const company = suppliers.find(s => s.id === id);
+    return digits(doc.issuerCnpj).length === 14 && digits(company?.cnpj || '') === digits(doc.issuerCnpj);
+  };
+  const used = doc.quotations.filter(q => !isIssuer(q.supplierId));
+  const markupPercent = isIssuer(supplier.id) ? 0 : used.some(q => q.markupPercent === 8.75 || q.markupPercent == null) ? 12.35 : 8.75;
+  if (!isIssuer(supplier.id) && used.length >= 2) throw new Error('Selecione até dois parceiros e o emitente da NF-e.');
+  return { supplierId: supplier.id, date: documentToday(), reference: markupPercent ? `Orçamento calculado: NF-e ${doc.number} + ${decimal2(markupPercent)}%` : `NF-e ${doc.number}`, markupPercent, automaticPrices: true, prices: quotationPrices(doc.items, markupPercent) };
 }
 export function validateNfeDocument(doc: NfeDocument, suppliers: DocumentSupplier[], kind?: 'quote' | 'delivery') {
   if (!doc.number.trim()) return 'Informe o número da NF-e.';
