@@ -15,6 +15,7 @@ import { FREIGHT_PREFIX, billingFreightApplier, freightScopesOverlap } from '../
 import type { BillingFreight, SavedFreight } from '../lib/igeveFreight';
 import IgevePriceTable from './IgevePriceTable';
 import IgeveRubrics from './IgeveRubrics';
+import IgeveDocuments from './IgeveDocuments';
 import { RUBRIC_PREFIX, withDeferredItems, rubricBalance, rubricMonthInvoices, rubricScopeInvoices } from '../lib/igeveRubrics';
 import type { MonthlyRubric, SavedRubric } from '../lib/igeveRubrics';
 import './IgeveBilling.css';
@@ -45,6 +46,7 @@ function SortHeader({ label, column, sort, onSort }: { label: string; column: st
 
 export default function IgeveBilling() {
   const [tab, setTab] = useState('romaneios');
+  const [documentsOpened, setDocumentsOpened] = useState(false);
   const [operations, setOperations] = useState<BillingOperation[]>([]);
   const [orders, setOrders] = useState<BillingOrder[]>([]);
   const [points, setPoints] = useState<BillingPoint[]>([]);
@@ -352,8 +354,9 @@ export default function IgeveBilling() {
   }
   return <section className="igeve-billing">
     <div className="igeve-heading"><div><h1>Faturamento IGEVE</h1><p>Romaneios e complementos com valores próprios para faturamento.</p></div><button className="button button-outline" disabled={busy || !!draft || !!Object.keys(priceEdits).length} onClick={() => void load()}><RefreshCw size={18} /> Atualizar</button></div>
-    <nav className="igeve-actions" aria-label="Faturamento IGEVE">{[['rubrics', 'Rubricas por operação'], ['romaneios', 'Faturamento por romaneio'], ['saved', 'Romaneios de faturamento'], ['freight', 'Frete'], ['locations', 'Faturamento por operação/local'], ['report', 'Relatório por empresas'], ['prices', 'Tabela de preços']].map(([id, label]) => <button key={id} className={`button ${tab !== id ? 'button-outline' : ''}`} disabled={busy || !!draft} onClick={() => setTab(id)}>{label}</button>)}</nav>
-    {tab !== 'rubrics' && <div className="card igeve-panel igeve-filter-panel"><div className="igeve-filters">
+    <nav className="igeve-actions" aria-label="Faturamento IGEVE">{[['documents', 'Orçamentos e entrega por NF-e'], ['rubrics', 'Rubricas por operação'], ['romaneios', 'Faturamento por romaneio'], ['saved', 'Romaneios de faturamento'], ['freight', 'Frete'], ['locations', 'Faturamento por operação/local'], ['report', 'Relatório por empresas'], ['prices', 'Tabela de preços']].map(([id, label]) => <button key={id} className={`button ${tab !== id ? 'button-outline' : ''}`} disabled={busy || !!draft} onClick={() => { if (id === 'documents') setDocumentsOpened(true); setTab(id); }}>{label}</button>)}</nav>
+    {documentsOpened && <div hidden={tab !== 'documents'}><IgeveDocuments /></div>}
+    {tab !== 'rubrics' && tab !== 'documents' && <div className="card igeve-panel igeve-filter-panel"><div className="igeve-filters">
       <label>Operação<select className="input-field" value={operationId} onChange={event => { setOperationId(event.target.value); setLocationFilter(''); }}><option value="">Todas as operações IGEVE</option>{operations.map(op => <option key={op.id} value={op.id}>{op.name}</option>)}</select></label>
       <div className="igeve-category-filter"><span id="igeve-category-label">Categoria</span><details onKeyDown={event => { if (event.key === 'Escape') { event.currentTarget.open = false; event.currentTarget.querySelector('summary')?.focus(); } }}><summary className="input-field" aria-labelledby="igeve-category-label igeve-category-selection"><span id="igeve-category-selection">{categoryFilter.length ? categoryFilter.join(', ') : 'Todas as categorias'}</span></summary><div className="igeve-category-options" role="group" aria-label="Selecionar categorias">
         <label><input type="checkbox" checked={!categoryFilter.length} onChange={() => setCategoryFilter([])} />Todas as categorias</label>
@@ -365,7 +368,7 @@ export default function IgeveBilling() {
       {tab === 'locations' && <label>Local<select className="input-field" value={locationFilter} onChange={event => setLocationFilter(event.target.value)}><option value="">Todos os locais</option>{locationFilter && !locationGroups.some(row => row.key === locationFilter) && <option value={locationFilter}>Local selecionado (sem faturamento nos filtros atuais)</option>}{locationGroups.map(row => <option key={row.key} value={row.key}>{row.operation} / {row.destination}</option>)}</select></label>}
     </div><small>Maceió, Guaianases, Boituva, Mongaguá e Rio de Janeiro. Alterações aqui são exclusivas do faturamento.</small></div>}
     {message && <div className="card igeve-panel" role="status">{message}</div>}
-    {tab !== 'prices' && tab !== 'rubrics' && !validPeriod && <div role="alert">A data inicial deve ser anterior ou igual à data final.</div>}
+    {tab !== 'prices' && tab !== 'rubrics' && tab !== 'documents' && !validPeriod && <div role="alert">A data inicial deve ser anterior ou igual à data final.</div>}
     {busy && <p role="status">Processando...</p>}
     {ready && tab === 'rubrics' && <IgeveRubrics operations={operations} points={points} orders={orders} invoices={saved} catalog={priceCatalog} rubrics={rubrics} busy={busy} onSave={saveRubric} onOpen={open} applyFreight={applyFreight} />}
     {ready && tab === 'prices' && <IgevePriceTable rows={visiblePrices} edits={priceEdits} busy={busy} onEdit={editPrice} onSave={event => void savePrices(event)} onCancel={() => setPriceEdits({})} header={header} />}

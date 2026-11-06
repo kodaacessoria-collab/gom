@@ -2,6 +2,29 @@
 
 Disponível no menu para administradores, seguindo o acesso de Operações.
 
+## Orçamentos e entrega por NF-e
+
+Na aba **Orçamentos e entrega por NF-e**, use **Preparar documentos**:
+
+1. Importe uma NF-e em PDF (até 20 MB e 100 páginas). O sistema extrai os itens quando reconhece as colunas de um DANFE com texto: código, descrição, unidade, quantidade e preço unitário. Descrições com mais de uma linha e tabelas em várias páginas são consideradas. Confira todos os resultados no original. PDFs digitalizados ou formatos não reconhecidos permitem preenchimento manual, sem OCR. Valores extraídos com mais de duas casas são arredondados e recebem aviso de conferência. Nenhuma extração de PDF é tratada como validação fiscal da nota.
+2. Confira número, emissão, emitente e CNPJ do destinatário. A relação inicial de unidades vem de **UNIDADES IGEVE - OUT 2026**. Um CNPJ com unidade única preenche a escola; para Matriz/Inocoop e as três creches de Mongaguá, é obrigatório selecionar a unidade. Cadastre ou corrija endereços e novas unidades em **Unidades IGEVE**. A unidade selecionada deve pertencer ao CNPJ informado.
+3. Confira produtos, marcas, quantidades e preços. As quantidades e os preços deste fluxo usam duas casas decimais, inclusive nos PDFs. Acrescente cestas e referência de consumo quando necessário. O total é a soma dos valores dos itens arredondados em centavos.
+4. Para orçamento, selecione de uma a três empresas: o fornecedor da nota e/ou até dois parceiros. Os preços do emitente podem começar com os preços da NF-e; os preços dos parceiros começam vazios. Informe os preços reais, a data efetiva e a referência de cada cotação recebida. Cada empresa possui seus próprios valores; não há acréscimos automáticos nem exigência de um fornecedor superar outro. A data começa no dia atual de São Paulo e deve ser confirmada conforme a cotação; não há retroação automática. Datas futuras são rejeitadas.
+5. Para romaneio, selecione a empresa responsável e informe a data de entrega. O documento inclui unidade/escola, CNPJ, endereço, produtos, quantidades, observações e campos de recebimento/assinatura. Preços não aparecem. O estilo Canindé com quantidade de cestas também mostra a composição por cesta.
+6. Marque a conferência ao terminar. Alterações posteriores exigem nova conferência. Salve os dados, visualize os documentos ou gere os PDFs. Mais de um orçamento é baixado em um ZIP com PDFs separados. Os arquivos usam as iniciais das duas primeiras palavras da empresa, tipo de documento, número da NF-e e unidade: `CD-ORÇAMENTO_658-GARCA_TORTA.pdf`, por exemplo.
+
+Em **Empresas e modelos**, há estilos iniciais para Canindé, Nobre/Granterra, OM Logística, LM, RED e Delícias. Eles recriam a estrutura dos documentos com os campos atualizados; não usam a página preenchida como fundo. É possível cadastrar novas empresas, escolher um estilo, mudar cor, logotipo próprio (PNG/JPG até 512 KB), pagamento, validade e observações. Confirme os dados cadastrais antes de emitir. O modelo Delícias não informa CNPJ no anexo, então seu cadastro exige preenchimento antes da geração. Um PDF de referência de até 2 MB pode ser arquivado no cadastro para consulta e download intacto; seu conteúdo não é reutilizado como assinatura do documento novo. Cada novo PDF tem espaço para sua própria assinatura.
+
+**Histórico** recupera os dados salvos e permite baixar a última geração com os dados e modelos arquivados naquela ocasião, mesmo após editar um cadastro. Novas gravações usam verificação de versão para impedir sobrescrita concorrente. Se ocorrer conflito, preserve as alterações, atualize e reabra o registro. Os dados são independentes do estoque, das entregas de Operações e dos demais faturamentos. Nenhuma migração é necessária: os prefixos em `app_shared_state` são `gom_igeve_document_`, `gom_igeve_supplier_` e `gom_igeve_unit_`.
+
+A NF-e original permanece intacta e disponível para conferência durante a sessão em que foi importada. O histórico guarda os campos conferidos, nome do arquivo, data de importação e impressão digital SHA-256; não guarda o arquivo fiscal original. Guarde o PDF original separadamente. A reimportação do mesmo arquivo já salvo direciona para o histórico. Os modelos anexados servem como referências visuais, e não como instruções executáveis.
+
+Validação específica: `node scripts/test-igeve-documents.mjs`. O teste usa dados fictícios e gera PDFs de conferência em `tmp/pdfs/igeve-documents/`. A compilação e os testes existentes de faturamento, frete e rubricas também devem passar.
+
+O teste de integração `node scripts/test-igeve-documents-browser.mjs` requer Playwright/Chromium, os arquivos fictícios gerados pelo teste acima e um servidor Vite local na porta 5174. As variáveis opcionais `PLAYWRIGHT_MODULE`, `CHROME_EXECUTABLE_PATH` e `GOM_TEST_URL` permitem apontar para as instalações locais. O teste intercepta as consultas/gravações do banco, sem alterar dados reais, e verifica importação, casas decimais, seleção da escola, três cotações, PDF/ZIP, histórico, conflito de gravação, cadastros e largura da tela móvel.
+
+## Faturamento das entregas de Operações
+
 1. Em **Faturamento por romaneio**, filtre a data de entrega, a operação e a categoria. São relacionadas as operações cadastradas de Maceió, Guaianases (também Gauianases/Guaianazes), Boituva, Mongaguá e Rio de Janeiro.
 2. Clique em **Preparar faturamento** para copiar o romaneio de um local de entrega. Informe a empresa, CNPJ e data do faturamento. Empresas cadastradas podem ser selecionadas na sugestão, e empresas adicionais podem ser informadas manualmente.
 3. Ajuste produtos, quantidades e preços. O preço unitário da **Tabela de preços** da operação e categoria é usado como valor inicial. Zero é permitido; confirme os valores antes de salvar.
