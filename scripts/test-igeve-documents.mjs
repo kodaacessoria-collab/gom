@@ -40,6 +40,35 @@ assert.equal(parsed.document.issuedAt, '2026-11-06');
 assert.ok(parsed.warnings.some(w => w.includes('arredondamentos')));
 assert.equal(parseNfePages([{ words: [word('66.321.676/0001-95', 1, 1)] }]).document.recipientCnpj, '');
 assert.equal(parseNfePages([{ words: [] }]).document.items.length, 0);
+// Pro System: recipient has a repeated issuer heading and descriptions sit below the numeric cells.
+const offsetLine = (y, product, qty, price, code, offset = 2.76) => line(y, product, qty, price, code).map(w => w.x === 55 ? { ...w, y: y + offset } : w);
+const offsetPages = [{ words: [
+  word('RECEBEMOS DE EMPRESA DE TESTE OS PRODUTOS', 10, 10), word('Nº 339', 200, 20),
+  word('66.321.676/0001-95', 10, 30), word('IDENTIFICAÇÃO DO EMITENTE', 10, 45),
+  word('NOME / RAZÃO SOCIAL', 10, 60), word('CNPJ / CPF', 350, 60), word('DATA DA EMISSÃO', 480, 60),
+  word('DESTINATARIO DE TESTE', 10, 75), word('28.413.401/0007-88', 350, 75), word('21/10/2026', 480, 75),
+  word('ENDEREÇO', 10, 90), word('BAIRRO', 300, 90), word('CEP', 450, 90),
+  word('RUA FICTICIA, 38', 10, 105), word('BAIRRO TESTE', 300, 105), word('08142-405', 450, 105),
+  word('CIDADE', 10, 120), word('UF', 300, 120), word('SAO PAULO', 10, 135), word('SP', 300, 135),
+  word('CÁLCULO DO IMPOSTO', 10, 150), word('VALOR TOTAL DOS PRODUTOS', 450, 165), word('R$ 70,00', 450, 180),
+  word('TRANSPORTADOR', 10, 200), word('ENDEREÇO', 10, 215), word('MUNICÍPIO', 300, 215),
+  word('ENDERECO DO TRANSPORTADOR', 10, 230), word('OUTRA CIDADE', 300, 230),
+  ...header(260), ...offsetLine(290, 'ABOBORA', '2', '9,50', '243'),
+  ...offsetLine(315, 'ALHO CALIBRE 7', '1', '11,10', '534', 5.14),
+  word('DADOS ADICIONAIS', 10, 350),
+] }, { words: [
+  ...header(30), ...offsetLine(60, 'OVO CARTELA', '1', '39,90', '50', 0), word('COM PVC 30 UND', 55, 69),
+] }];
+const offsetResult = parseNfePages(offsetPages);
+assert.equal(offsetResult.document.recipientCnpj, '28.413.401/0007-88');
+assert.equal(offsetResult.document.issuerCnpj, '66.321.676/0001-95');
+assert.equal(offsetResult.document.issuedAt, '2026-10-21');
+assert.equal(offsetResult.document.address, 'RUA FICTICIA, 38 - BAIRRO TESTE - SAO PAULO/SP - CEP 08142-405');
+assert.deepEqual(offsetResult.document.items.map(i => [i.code, i.product, i.quantity, i.price]), [
+  ['243', 'ABOBORA', 2, 9.5], ['534', 'ALHO CALIBRE 7', 1, 11.1], ['50', 'OVO CARTELA COM PVC 30 UND', 1, 39.9],
+]);
+assert.equal(documentTotal(offsetResult.document.items), 70);
+assert.equal(offsetResult.warnings.length, 1, 'Importação completa sem divergência no total ou CNPJ');
 const splitHead = header(100).flatMap(w => w.text === 'VALOR UNITÁRIO' ? [word('VALOR', w.x, 92, 25), word('UNITÁRIO', w.x, 104, 40)] : [{ ...w, y: w.text === 'UNID.' ? 92 : w.y }]);
 assert.equal(parseNfePages([{ words: [...splitHead, ...line(140, 'TESTE CABEÇALHO', '12,00', '3,50')] }]).document.items.length, 1);
 const centeredLine = line(190, 'QUANTIDADE ALINHADA À DIREITA', '3,00', '2,55').map(w => w.text === '3,00' ? { ...w, x: 404, width: 20 } : w);
@@ -193,4 +222,11 @@ for (const [index, p] of [page1, page2].entries()) {
   for (const w of p.words) fixture.text(w.text, w.x, w.y);
 }
 writeFileSync('tmp/pdfs/igeve-documents/nfe-fixture.pdf', new Uint8Array(fixture.output('arraybuffer')));
+const offsetFixture = new jsPDF({ unit: 'pt', format: [650, 850] });
+for (const [index, p] of offsetPages.entries()) {
+  if (index) offsetFixture.addPage();
+  offsetFixture.setFontSize(8);
+  for (const w of p.words) offsetFixture.text(w.text, w.x, w.y);
+}
+writeFileSync('tmp/pdfs/igeve-documents/nfe-offset-fixture.pdf', new Uint8Array(offsetFixture.output('arraybuffer')));
 console.log('OK: extração por colunas, múltiplas páginas, decimais, CNPJ/unidade, validação de cotações, nomes de arquivos e PDFs de seis modelos.');

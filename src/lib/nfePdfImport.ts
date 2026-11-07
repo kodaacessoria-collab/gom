@@ -44,13 +44,19 @@ export function parseNfePages(pages: PdfTextPage[]): { document: NfeDocument; wa
   const allText = lines.join('\n');
   const first = pages[0] ? pdfRows(pages[0].words) : [];
   const cnpjPattern = /\b\d{2}\.\d{3}\.\d{3}\/\d{4}-\d{2}\b|\b\d{14}\b/g;
-  const recipientIndex = first.findIndex(r => /DESTINAT[ÁA]RIO\s*\/?\s*REMETENTE|DESTINAT[ÁA]RIO/.test(norm(r.words.map(w => w.text).join(' '))));
-  const recipientRows = recipientIndex >= 0 ? first.slice(recipientIndex + 1, recipientIndex + 7) : [];
+  const rowText = (row: (typeof first)[number]) => norm(row.words.map(w => w.text).join(' '));
+  const recipientTitle = first.findIndex(r => /^DESTINATARIO(?:\s*\/?\s*REMETENTE)?$/.test(rowText(r).trim()) || r.words.some(w => /^DESTINATARIO(?:\s*\/?\s*REMETENTE)?$/.test(norm(w.text).trim())));
+  // Some DANFEs incorrectly repeat "Identificação do emitente" over the recipient.
+  // The name + CNPJ/CPF fields still identify that block without guessing a CNPJ.
+  const recipientFields = first.findIndex(r => /NOME\s*\/?\s*RAZAO SOCIAL/.test(rowText(r)) && /CNPJ\s*\/?\s*CPF/.test(rowText(r)));
+  const recipientStart = recipientTitle >= 0 ? recipientTitle + 1 : recipientFields;
+  const recipientEnd = recipientStart >= 0 ? first.findIndex((r, i) => i >= recipientStart && /CALCULO DO IMPOSTO|FATURA|TRANSPORTADOR|DADOS DO PRODUTO/.test(rowText(r))) : -1;
+  const recipientRows = recipientStart >= 0 ? first.slice(recipientStart, recipientEnd >= 0 ? recipientEnd : recipientStart + 12) : [];
   // Only the recipient block may supply a recipient CNPJ; never guess from issuer/tax data.
   const recipientCnpjs = [...new Set(recipientRows.flatMap(r => r.words.map(w => w.text).join(' ').match(cnpjPattern) || []))];
   if (recipientCnpjs.length === 1) doc.recipientCnpj = recipientCnpjs[0];
   else warnings.add('Confira o CNPJ do destinatário: não foi possível identificá-lo com segurança.');
-  const issuerCnpjs = recipientIndex >= 0 ? first.slice(0, recipientIndex).flatMap(r => r.words.map(w => w.text).join(' ').match(cnpjPattern) || []) : [];
+  const issuerCnpjs = recipientStart >= 0 ? first.slice(0, recipientStart).flatMap(r => r.words.map(w => w.text).join(' ').match(cnpjPattern) || []) : [];
   const distinctIssuer = [...new Set(issuerCnpjs)];
   if (distinctIssuer.length === 1) doc.issuerCnpj = distinctIssuer[0];
   const number = allText.match(/(?:N[º°o.]\s*|N[ÚU]MERO\s*:?\s*)(\d[\d.]{0,14})\b/i);
@@ -59,24 +65,24 @@ export function parseNfePages(pages: PdfTextPage[]): { document: NfeDocument; wa
   const issue = emissionIndex >= 0 ? lines.slice(emissionIndex, emissionIndex + 4).join(' ').match(/\b(\d{2})\/(\d{2})\/(\d{4})\b/) : null;
   if (issue) doc.issuedAt = `${issue[3]}-${issue[2]}-${issue[1]}`;
   // Read values inside their labelled fields instead of relying on a fixed row count.
-  function fieldBelow(pattern: RegExp) {
-    for (let r = 0; r < first.length; r++) {
-      const row = first[r];
+  function fieldBelow(pattern: RegExp, rows = first) {
+    for (let r = 0; r < rows.length; r++) {
+      const row = rows[r];
       const label = row.words.find(w => pattern.test(norm(w.text)));
       if (!label) continue;
       const right = row.words.find(w => w.x > label.x + label.width + 3)?.x ?? Infinity;
-      const value = first.slice(r + 1).find(next => next.y > row.y + 2 && next.y - row.y < 28);
+      const value = rows.slice(r + 1).find(next => next.y > row.y + 2 && next.y - row.y < 28);
       return value?.words.filter(w => w.x >= label.x - 4 && w.x < right - 3).map(w => w.text).join(' ').trim() || '';
     }
     return '';
   }
-  const recipient = fieldBelow(/^NOME\s*\/?\s*RAZAO SOCIAL$/);
+  const recipient = fieldBelow(/^NOME\s*\/?\s*RAZAO SOCIAL$/, recipientRows);
   if (recipient) doc.recipient = recipient;
-  doc.address = fieldBelow(/^ENDERECO$/);
-  const district = fieldBelow(/^BAIRRO\s*\/?\s*DISTRITO$/);
-  const city = fieldBelow(/^MUNICIPIO$/);
-  const state = fieldBelow(/^UF$/);
-  const zip = fieldBelow(/^CEP$/);
+  doc.address = fieldBelow(/^ENDERECO$/, recipientRows);
+  const district = fieldBelow(/^BAIRRO(?:\s*\/?\s*DISTRITO)?$/, recipientRows);
+  const city = fieldBelow(/^(MUNICIPIO|CIDADE)$/, recipientRows);
+  const state = fieldBelow(/^UF$/, recipientRows);
+  const zip = fieldBelow(/^CEP$/, recipientRows);
   if (doc.address) doc.address = [doc.address, district, [city, state].filter(Boolean).join('/'), zip ? `CEP ${zip}` : ''].filter(Boolean).join(' - ');
   const receipt = allText.match(/RECEBEMOS DE\s+(.+?)\s+(?:OS\s+)?PRODUTOS/i);
   if (receipt) doc.issuer = receipt[1].trim().replace(/\s+DOS$/, '');
@@ -94,6 +100,7 @@ export function parseNfePages(pages: PdfTextPage[]): { document: NfeDocument; wa
     let headerBottom = -1;
     let tableActive = columns.length > 0;
     let lastItemY: number | undefined;
+    let pendingCells: { cells: Partial<Record<Column['key'], string>>; y: number } | undefined;
     for (let r = 0; r < rows.length; r++) {
       const row = rows[r];
       const text = row.words.map(w => w.text).join(' ');
@@ -103,15 +110,16 @@ export function parseNfePages(pages: PdfTextPage[]): { document: NfeDocument; wa
           columns = candidate;
           tableActive = true;
           lastItemY = undefined;
+          pendingCells = undefined;
           headerBottom = row.y;
           continue;
         }
       }
       // Keep the layout for continuation pages that do not repeat the table header.
       // A footer ends this page's table, not the following page's table.
-      if (/DADOS ADICIONAIS|INFORMACOES COMPLEMENTARES|CALCULO DO ISSQN|RESERVADO AO FISCO|TRANSPORTADOR|VALOR TOTAL DA NOTA/.test(norm(text))) { tableActive = false; lastItemY = undefined; continue; }
+      if (/DADOS ADICIONAIS|INFORMACOES COMPLEMENTARES|CALCULO DO ISSQN|RESERVADO AO FISCO|TRANSPORTADOR|VALOR TOTAL DA NOTA/.test(norm(text))) { tableActive = false; lastItemY = undefined; pendingCells = undefined; continue; }
       if (!tableActive || !columns.length || row.y <= headerBottom) continue;
-      const cells: Partial<Record<Column['key'], string>> = {};
+      let cells: Partial<Record<Column['key'], string>> = {};
       const codeColumn = columns.find(c => c.key === 'code');
       const productColumn = columns.find(c => c.key === 'product')!;
       // Description headings can be centered far to the right of the actual text.
@@ -134,8 +142,22 @@ export function parseNfePages(pages: PdfTextPage[]): { document: NfeDocument; wa
           if (col && col.key !== 'other') cells[col.key] = `${cells[col.key] || ''} ${w.text}`.trim();
         }
       }
+      // A description can have its own baseline below the numeric cells (Pro System).
+      // Keep those cells until the description arrives, without appending it to the previous product.
+      const descriptionOnly = cells.product && !cells.code && !cells.unit && !cells.quantity && !cells.price;
+      if (descriptionOnly && pendingCells && row.y - pendingCells.y < 24) {
+        cells = { ...pendingCells.cells, product: cells.product };
+        pendingCells = undefined;
+      } else if (cells.code || cells.unit || cells.quantity || cells.price) {
+        pendingCells = undefined;
+        lastItemY = undefined;
+      }
       const quantity = parseBrazilianNumber(cells.quantity || '');
       const price = parseBrazilianNumber(cells.price || '');
+      if (!cells.product && cells.code && cells.unit && Number.isFinite(quantity) && quantity > 0 && Number.isFinite(price) && price >= 0) {
+        pendingCells = { cells, y: row.y };
+        continue;
+      }
       if (cells.product && cells.unit && Number.isFinite(quantity) && quantity > 0 && Number.isFinite(price) && price >= 0) {
         if (round2(quantity) !== quantity || round2(price) !== price) warnings.add('Há valores com mais de duas casas na NF-e. A lista usa duas casas; confira os arredondamentos e o total.');
         parsed.push({ id: crypto.randomUUID(), code: cells.code || '', product: cells.product, unit: cells.unit, quantity: round2(quantity), price: round2(price), brand: '', notes: '' });

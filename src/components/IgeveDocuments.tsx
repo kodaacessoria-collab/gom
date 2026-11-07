@@ -108,10 +108,10 @@ export default function IgeveDocuments() {
     if (!discard()) return;
     const result = await importNfePdf(file);
     const existing = records.find(r => r.value.document.sourceHash === result.document.sourceHash);
-    if (existing) { setMessage('Esta NF-e já foi importada. Abra o registro no histórico para continuar.'); setMode('history'); return; }
+    if (existing && !window.confirm('Esta NF-e já foi importada. Deseja reler o PDF para corrigir a importação? Os dados e itens serão extraídos novamente e os orçamentos selecionados serão removidos. A substituição no histórico só ocorrerá ao salvar.')) return;
     const supplier = suppliers.find(s => digits(s.cnpj) === digits(result.document.issuerCnpj));
-    setDraft({ ...applyCnpj(result.document.recipientCnpj, result.document), deliverySupplierId: supplier?.id || '' });
-    setVersion(undefined); setSource(file); setWarnings(result.warnings); setDirty(true); setMode('editor');
+    setDraft({ ...applyCnpj(result.document.recipientCnpj, result.document), id: existing?.value.document.id || result.document.id, deliverySupplierId: supplier?.id || '' });
+    setVersion(existing?.version); setSource(file); setWarnings(result.warnings); setDirty(true); setMode('editor');
     setMessage('PDF importado. Confira todos os campos e os itens com o original.');
   }
   async function save(kind?: 'quote' | 'delivery', selectedIds?: string[], generatedDocument = draft) {

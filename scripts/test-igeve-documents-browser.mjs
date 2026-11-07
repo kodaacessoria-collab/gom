@@ -176,6 +176,34 @@ await page.getByRole('button',{name:'Baixar última geração',exact:true}).wait
 await page.getByRole('button',{name:'Abrir',exact:true}).click();
 assert.equal(await page.getByLabel('Número da NF-e',{exact:true}).inputValue(),'658');
 await page.setViewportSize({width:390,height:844});
+// Alternate DANFE layout imports recipient fields, address and offset descriptions on both pages.
+await page.getByLabel('Importar NF-e em PDF',{exact:true}).setInputFiles('tmp/pdfs/igeve-documents/nfe-offset-fixture.pdf');
+await page.getByText('PDF importado. Confira todos os campos e os itens com o original.').waitFor();
+assert.equal(await page.getByLabel('Número da NF-e',{exact:true}).inputValue(),'339');
+assert.equal(await page.getByLabel('CNPJ do destinatário',{exact:true}).inputValue(),'28.413.401/0007-88');
+assert.equal(await page.getByLabel('CNPJ do emitente',{exact:true}).inputValue(),'66.321.676/0001-95');
+assert.match(await page.getByLabel('Endereço de entrega',{exact:true}).inputValue(),/RUA FICTICIA, 38 - BAIRRO TESTE - SAO PAULO\/SP/);
+assert.match(await page.getByLabel('Unidade / escola',{exact:false}).locator('option:checked').textContent(),/RUBI/);
+assert.equal(await page.locator('input[aria-label^="product item"]').count(),3);
+assert.equal(await page.getByLabel('product item 2',{exact:true}).inputValue(),'ALHO CALIBRE 7');
+assert.equal(await page.getByLabel('product item 3',{exact:true}).inputValue(),'OVO CARTELA COM PVC 30 UND');
+await page.getByText('Total dos produtos da NF-e: R$ 70,00',{exact:true}).waitFor();
+// Reimport repairs a saved incomplete extraction and updates the same history record.
+await page.getByLabel('product item 2',{exact:true}).fill('IMPORTACAO INCOMPLETA');
+await page.getByLabel('Conferi a NF-e, o CNPJ, a unidade, os itens e os valores informados.').check();
+await page.getByRole('button',{name:'Salvar dados da NF-e',exact:true}).click();
+await page.getByText('Dados da NF-e salvos.',{exact:true}).waitFor();
+const savedOffset = [...db.values()].find(r => r.value.document?.number === '339');
+const recordCount = [...db.keys()].filter(k => k.startsWith('gom_igeve_document_')).length;
+await page.getByLabel('Importar NF-e em PDF',{exact:true}).setInputFiles('tmp/pdfs/igeve-documents/nfe-offset-fixture.pdf');
+await page.getByText('PDF importado. Confira todos os campos e os itens com o original.').waitFor();
+assert.equal(await page.getByLabel('product item 2',{exact:true}).inputValue(),'ALHO CALIBRE 7');
+assert.equal(db.get(savedOffset.key).value.document.items[1].product,'IMPORTACAO INCOMPLETA','Reimportação só muda o histórico ao salvar');
+await page.getByLabel('Conferi a NF-e, o CNPJ, a unidade, os itens e os valores informados.').check();
+await page.getByRole('button',{name:'Salvar dados da NF-e',exact:true}).click();
+await page.getByText('Dados da NF-e salvos.',{exact:true}).waitFor();
+assert.equal(db.get(savedOffset.key).value.document.items[1].product,'ALHO CALIBRE 7');
+assert.equal([...db.keys()].filter(k => k.startsWith('gom_igeve_document_')).length,recordCount);
 await page.screenshot({path:'tmp/pdfs/igeve-documents/ui-mobile.png',fullPage:true});
 assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth),true);
 assert.deepEqual(errors,[]);
