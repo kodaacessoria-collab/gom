@@ -16,13 +16,14 @@ const browser = await chromium.launch({...(process.env.CHROME_EXECUTABLE_PATH ? 
 try {
 const page = await browser.newPage({viewport:{width:1440,height:1100}});
 const errors=[]; page.on('pageerror', e=>errors.push(e.message));
-const db=new Map(); let conflict=false;
+const db=new Map(); let conflict=false; let writeGate;
 await page.route('**/rest/v1/app_shared_state*', async route=>{
  const req=route.request(), url=new URL(req.url());
  if(req.method()==='GET') {
   const prefix=(url.searchParams.get('key')||'').replace(/^like\./,'').replace(/\\/g,'').replace(/%$/,'');
   return route.fulfill({status:200,contentType:'application/json',body:JSON.stringify([...db.values()].filter(r=>r.key.startsWith(prefix)).sort((a,b)=>a.key.localeCompare(b.key)))});
  }
+ if(writeGate) await writeGate;
  if(conflict) return route.fulfill({status:409,contentType:'application/json',body:JSON.stringify({message:'Conflito simulado'})});
  const row=req.postDataJSON();
  if(req.method()==='PATCH') {
@@ -74,6 +75,34 @@ for(let i=0;i<3;i++) {
  const inputs=q.nth(i).locator('input[type=number]');
  for(let j=0;j<3;j++) await inputs.nth(j).fill(String(values[j]));
 }
+// Validation feedback must be visible from the buttons at the end of a quotation.
+await q.nth(0).getByRole('button',{name:'Baixar orçamento PDF',exact:true}).click();
+const alert=page.getByRole('alert');
+await alert.filter({hasText:'Confirme a conferência'}).waitFor();
+assert.equal(await alert.evaluate(el=>el===document.activeElement),true);
+await page.waitForFunction(()=>{const r=document.querySelector('[role=alert]').getBoundingClientRect();return r.top>=0&&r.bottom<=innerHeight;});
+await q.nth(0).getByRole('checkbox').check();
+// Preview is local and must not write to the history or depend on its availability.
+conflict=true;
+await q.nth(0).getByRole('button',{name:'Visualizar orçamento',exact:true}).click();
+await page.getByRole('dialog').waitFor();
+assert.equal(db.size,0);
+await page.getByRole('button',{name:'Fechar',exact:true}).click();
+// A rejected history write still delivers the PDF and keeps unsaved data visible.
+const fallbackDownload=page.waitForEvent('download');
+let releaseWrite;
+writeGate=new Promise(resolve=>{releaseWrite=resolve;});
+await q.nth(0).getByRole('button',{name:'Baixar orçamento PDF',exact:true}).click();
+const fallback=await fallbackDownload;
+releaseWrite(); writeGate=undefined;
+await fallback.saveAs('tmp/pdfs/igeve-documents/quote-without-history.pdf');
+assert.match(fallback.suggestedFilename(),/\.pdf$/);
+const fallbackBytes=await (await import('node:fs/promises')).readFile('tmp/pdfs/igeve-documents/quote-without-history.pdf');
+assert.equal(fallbackBytes.subarray(0,5).toString(),'%PDF-');
+await page.getByRole('alert').filter({hasText:'Download gerado, mas os dados não foram salvos no histórico.'}).waitFor();
+assert.equal(db.size,0);
+await page.getByText('Alterações não salvas',{exact:true}).waitFor();
+conflict=false;
 await page.getByLabel('Conferi a NF-e, o CNPJ, a unidade, os itens e os valores informados.').check();
 await page.getByRole('button',{name:'Salvar dados da NF-e',exact:true}).click();
 await page.getByText('Dados da NF-e salvos.',{exact:true}).waitFor();
@@ -91,6 +120,7 @@ for(const [name,bytes] of Object.entries(files)) writeFileSync(`tmp/pdfs/igeve-d
 await page.getByLabel('Data de entrega',{exact:true}).fill('2026-11-06');
 await page.getByLabel('Conferi a NF-e, o CNPJ, a unidade, os itens e os valores informados.').check();
 download=page.waitForEvent('download'); await page.getByRole('button',{name:'Gerar romaneio PDF',exact:true}).click(); out=await download; await out.saveAs('tmp/pdfs/igeve-documents/browser-delivery.pdf');
+await page.getByText('Romaneio gerado e dados salvos.',{exact:true}).waitFor();
 assert.equal([...db.values()][0].value.generatedKind,'delivery');
 assert.equal([...db.values()][0].value.generatedDocument.deliveryDate,'2026-11-06');
 await page.getByRole('button',{name:'Histórico',exact:true}).click();

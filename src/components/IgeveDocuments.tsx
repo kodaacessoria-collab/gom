@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
 import { supabase } from '../lib/supabase';
 import { DEFAULT_DOCUMENT_SUPPLIERS, DEFAULT_IGEVE_UNITS, DOCUMENT_PREFIX, SUPPLIER_PREFIX, UNIT_PREFIX, createAutomaticQuotation, quotationPrices, decimal2, digits, documentToday, documentTotal, emptyNfeDocument, round2, unitsForCnpj, validCnpj, validateNfeDocument } from '../lib/igeveDocuments';
@@ -19,14 +19,15 @@ async function readRows<T>(prefix: string): Promise<Stored<T>[]> {
 }
 async function writeRow(key: string, value: unknown, version?: string) {
   const row = { key, value, updated_at: new Date().toISOString() };
+  const signal = AbortSignal.timeout(15000);
   const result = version
-    ? await supabase.from('app_shared_state').update(row).eq('key', key).eq('updated_at', version).select('updated_at').single()
-    : await supabase.from('app_shared_state').insert(row).select('updated_at').single();
+    ? await supabase.from('app_shared_state').update(row).eq('key', key).eq('updated_at', version).select('updated_at').abortSignal(signal).single()
+    : await supabase.from('app_shared_state').insert(row).select('updated_at').abortSignal(signal).single();
   if (result.error || !result.data) throw new Error('Não foi possível salvar. Pode haver uma edição de outro usuário. Preserve suas alterações e atualize os documentos antes de tentar novamente.');
   return result.data.updated_at as string;
 }
 function downloadBlob(blob: Blob, name: string) {
-  const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = name; a.click(); setTimeout(() => URL.revokeObjectURL(url), 60000);
+  const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = name; document.body.append(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 60000);
 }
 async function imageData(file: File) {
   if (file.size > 512 * 1024 || !['image/png', 'image/jpeg'].includes(file.type)) throw new Error('Use um logotipo PNG ou JPG de até 512 KB.');
@@ -57,6 +58,8 @@ export default function IgeveDocuments() {
   const [ready, setReady] = useState(false);
   const [dirty, setDirty] = useState(false);
   const [message, setMessage] = useState('');
+  const [messageIsError, setMessageIsError] = useState(false);
+  const messageRef = useRef<HTMLDivElement>(null);
   const [warnings, setWarnings] = useState<string[]>([]);
   const [supplierEditor, setSupplierEditor] = useState<DocumentSupplier | null>(null);
   const [unitEditor, setUnitEditor] = useState<IgeveUnit | null>(null);
@@ -69,8 +72,8 @@ export default function IgeveDocuments() {
   const selectedSnapshot = records.find(r => r.value.document.id === draft.id)?.value;
   const change = (patch: Partial<NfeDocument>) => { setDraft(d => ({ ...d, ...patch, confirmed: patch.confirmed ?? false })); setDirty(true); };
   const run = async (action: () => Promise<void>) => {
-    setBusy(true); setMessage('');
-    try { await action(); } catch (error) { setMessage(error instanceof Error ? error.message : 'Não foi possível concluir a ação.'); }
+    setBusy(true); setMessage(''); setMessageIsError(false);
+    try { await action(); } catch (error) { setMessageIsError(true); setMessage(error instanceof Error ? error.message : 'Não foi possível concluir a ação.'); }
     finally { setBusy(false); }
   };
   async function load() {
@@ -90,6 +93,12 @@ export default function IgeveDocuments() {
     window.addEventListener('beforeunload', warn); return () => window.removeEventListener('beforeunload', warn);
   }, [dirty, supplierEditor, unitEditor]);
   useEffect(() => () => { if (preview) URL.revokeObjectURL(preview.url); }, [preview]);
+  useEffect(() => {
+    if (message && messageIsError) {
+      messageRef.current?.focus({ preventScroll: true });
+      messageRef.current?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    }
+  }, [message, messageIsError]);
   const discard = () => !dirty || window.confirm('Há alterações não salvas. Deseja descartá-las?');
   function applyCnpj(cnpj: string, doc = draft): NfeDocument {
     const found = unitsForCnpj(cnpj, units);
@@ -122,12 +131,15 @@ export default function IgeveDocuments() {
   async function generate(kind: 'quote' | 'delivery', only?: string, previewOnly = false) {
     const outputDoc = only && kind === 'quote' ? { ...draft, quotations: draft.quotations.filter(q => q.supplierId === only) } : draft;
     const error = validateNfeDocument(outputDoc, suppliers, kind); if (error) throw new Error(error);
+    if (!currentUnit || digits(currentUnit.cnpj) !== digits(outputDoc.recipientCnpj)) throw new Error('A unidade selecionada deve corresponder ao CNPJ do destinatário.');
     const { createIgeveDocumentPdf } = await import('../lib/igeveDocumentPdf');
     const selected = kind === 'delivery' ? [suppliers.find(s => s.id === draft.deliverySupplierId)!] : suppliers.filter(s => draft.quotations.some(q => q.supplierId === s.id) && (!only || s.id === only));
     const outputs = selected.map(s => createIgeveDocumentPdf(outputDoc, s, kind, outputDoc.quotations.find(q => q.supplierId === s.id)));
-    await save(previewOnly ? undefined : kind, selected.map(s => s.id), outputDoc);
     if (previewOnly) { setPreview({ url: outputs[0].pdf.output('bloburl').toString(), name: outputs[0].filename }); return; }
-    if (outputs.length === 1) outputs[0].pdf.save(outputs[0].filename);
+    // Generate locally first. A failure to archive must not prevent the download.
+    let blob: Blob;
+    let filename: string;
+    if (outputs.length === 1) { blob = outputs[0].pdf.output('blob'); filename = outputs[0].filename; }
     else {
       const { zipSync } = await import('fflate');
       const files: Record<string, Uint8Array> = {};
@@ -135,7 +147,18 @@ export default function IgeveDocuments() {
         const name = Object.hasOwn(files, out.filename) ? out.filename.replace(/\.pdf$/, `_${index + 1}.pdf`) : out.filename;
         files[name] = new Uint8Array(out.pdf.output('arraybuffer'));
       }
-      downloadBlob(new Blob([Uint8Array.from(zipSync(files))], { type: 'application/zip' }), `ORCAMENTOS_${draft.number.replace(/[^a-zA-Z0-9_-]/g, '_')}.zip`);
+      blob = new Blob([Uint8Array.from(zipSync(files))], { type: 'application/zip' });
+      filename = `ORCAMENTOS_${draft.number.replace(/[^a-zA-Z0-9_-]/g, '_')}.zip`;
+    }
+    downloadBlob(blob, filename);
+    setMessage('Download gerado. Salvando dados no histórico...');
+    let archiveError = '';
+    try { await save(kind, selected.map(s => s.id), outputDoc); }
+    catch (error) { archiveError = error instanceof Error ? error.message : 'Não foi possível salvar no histórico.'; }
+    if (archiveError) {
+      setMessageIsError(true);
+      setMessage(`Download gerado, mas os dados não foram salvos no histórico. ${archiveError} Guarde o arquivo e tente Salvar dados da NF-e novamente.`);
+      return;
     }
     setMessage(kind === 'quote' ? 'Orçamento(s) gerado(s) e dados salvos.' : 'Romaneio gerado e dados salvos.');
   }
@@ -194,7 +217,7 @@ export default function IgeveDocuments() {
     <div className="card igeve-panel"><div className="igeve-heading"><div><h2>Orçamentos e entrega por NF-e</h2><p>Importe a nota, confira os produtos e prepare os documentos de cada fornecedor.</p></div><button className="button button-outline" disabled={busy || dirty || !!supplierEditor || !!unitEditor} onClick={() => void run(load)}>Atualizar documentos</button></div>
       <div className="igeve-actions">{[['editor', 'Preparar documentos'], ['suppliers', 'Empresas e modelos'], ['units', 'Unidades IGEVE'], ['history', 'Histórico']].map(([key, label]) => <button key={key} className={`button ${mode === key ? '' : 'button-outline'}`} disabled={busy} onClick={() => setMode(key as typeof mode)}>{label}</button>)}</div>
     </div>
-    {message && <div role="status" className="card igeve-panel">{message}</div>}
+    {message && <div ref={messageRef} tabIndex={-1} role={messageIsError ? 'alert' : 'status'} className={`card igeve-panel${messageIsError ? ' igeve-document-notice' : ''}`}>{message}</div>}
     {busy && <p role="status">Processando documentos...</p>}
     {!ready && !busy && <p>Atualize os documentos para carregar os cadastros.</p>}
     <fieldset disabled={busy || !ready} className="igeve-document-fieldset">
@@ -242,7 +265,9 @@ export default function IgeveDocuments() {
           <div className="table-container"><table><thead><tr><th>Produto</th><th>Quantidade</th><th>Preço cotado (R$)</th><th>Total (R$)</th></tr></thead><tbody>{draft.items.map(i => <tr key={i.id}><td>{i.product}</td><td>{decimal2(i.quantity)} {i.unit}</td><td><DecimalInput label={`Preço ${s?.name} ${i.product}`} value={q.prices[i.id] ?? null} onChange={value => updateQuote(q.supplierId, { automaticPrices: false, prices: { ...q.prices, [i.id]: value } })} /></td><td>{q.prices[i.id] == null ? 'Pendente' : decimal2(i.quantity * q.prices[i.id]!)}</td></tr>)}</tbody></table></div>
           {q.automaticPrices === false && <p>Preços editados manualmente.</p>}
           {q.markupPercent != null && <button className="button button-outline" onClick={() => updateQuote(q.supplierId, { automaticPrices: true, prices: quotationPrices(draft.items, q.markupPercent!) })}>Recalcular valores automaticamente</button>}
-          <strong>Total: R$ {decimal2(documentTotal(draft.items, q.prices))}</strong><div className="igeve-actions"><button className="button button-outline" onClick={() => void run(() => generate('quote', q.supplierId, true))}>Visualizar orçamento</button><button className="button" onClick={() => void run(() => generate('quote', q.supplierId))}>Baixar orçamento PDF</button></div>
+          <strong>Total: R$ {decimal2(documentTotal(draft.items, q.prices))}</strong>
+          <label className="igeve-check"><input type="checkbox" aria-label={`Conferência do orçamento ${s?.name}`} checked={draft.confirmed} onChange={e => change({ confirmed: e.target.checked })} />Conferi a NF-e, a unidade, os produtos e os valores para gerar o orçamento.</label>
+          <div className="igeve-actions"><button className="button button-outline" onClick={() => void run(() => generate('quote', q.supplierId, true))}>Visualizar orçamento</button><button className="button" onClick={() => void run(() => generate('quote', q.supplierId))}>Baixar orçamento PDF</button></div>
         </div>; })}
         <button className="button" disabled={!draft.quotations.length} onClick={() => void run(() => generate('quote'))}>Gerar orçamentos selecionados{draft.quotations.length > 1 ? ' (ZIP com PDFs)' : ' (PDF)'}</button>
       </div>
