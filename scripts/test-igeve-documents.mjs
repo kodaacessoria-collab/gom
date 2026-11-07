@@ -155,12 +155,33 @@ for (const supplier of DEFAULT_DOCUMENT_SUPPLIERS) {
     writeFileSync(`tmp/pdfs/igeve-documents/${s.id}-${kind}.pdf`, new Uint8Array(out.pdf.output('arraybuffer')));
   }
 }
+// Source codes belong only to the issuer, including custom models and unknown issuers.
+for (const supplier of [...DEFAULT_DOCUMENT_SUPPLIERS, { ...DEFAULT_DOCUMENT_SUPPLIERS[2], id: 'custom', layout: 'generic' }]) {
+  const s = supplier.cnpj ? supplier : { ...supplier, cnpj: '66.036.822/0001-30' };
+  const q = quote(s.id);
+  for (const issuerCnpj of ['66.321.676/0001-95', s.cnpj.replace(/\D/g, ''), '']) {
+    const sample = { ...doc, issuerCnpj, baskets: 0, items: doc.items.map(i => ({ ...i, code: 'ZX987654' })), quotations: [q] };
+    const pdf = createIgeveDocumentPdf(sample, s, 'quote', q).pdf;
+    const ownsCodes = issuerCnpj.replace(/\D/g, '') === s.cnpj.replace(/\D/g, '');
+    assert.equal(pdf.output().includes('ZX987654'), ownsCodes, `${s.layout}: códigos apenas no orçamento do emitente`);
+    assert.equal(pdf.output().includes('(Cód.)'), ownsCodes, `${s.layout}: parceiros não têm coluna de código`);
+    assert.ok(pdf.output().includes('56,68'), `${s.layout}: total preservado`);
+  }
+}
 const long = { ...structuredClone(doc), number: '927461805', notes: doc.notes + '\n' + 'Texto de observação para verificar paginação e margens. '.repeat(150), items: Array.from({ length: 120 }, (_, i) => ({ ...doc.items[i % 3], id: String(i), product: 'PRODUTO COM DESCRIÇÃO LONGA PARA TESTE DE QUEBRA DE LINHA - ' + i })) };
 long.quotations = [{ ...quote('caninde'), prices: Object.fromEntries(long.items.map(i => [i.id, i.price])) }];
 const longPdf = createIgeveDocumentPdf(long, DEFAULT_DOCUMENT_SUPPLIERS[0], 'quote', long.quotations[0]);
 assert.ok(longPdf.pdf.getNumberOfPages() > 3);
 assert.equal(longPdf.pdf.output().includes('927461805'), false, 'Cabeçalhos e rodapés de continuação não imprimem o número da nota');
 writeFileSync('tmp/pdfs/igeve-documents/long-quote.pdf', new Uint8Array(longPdf.pdf.output('arraybuffer')));
+for (const supplier of DEFAULT_DOCUMENT_SUPPLIERS) {
+  const s = supplier.cnpj ? supplier : { ...supplier, cnpj: '66.036.822/0001-30' };
+  const q = { ...long.quotations[0], supplierId: s.id };
+  const pdf = createIgeveDocumentPdf({ ...long, quotations: [q] }, s, 'quote', q).pdf;
+  assert.ok(pdf.getNumberOfPages() > 3);
+  assert.equal(pdf.output().includes('927461805'), false);
+  writeFileSync(`tmp/pdfs/igeve-documents/long-${s.id}.pdf`, new Uint8Array(pdf.output('arraybuffer')));
+}
 assert.throws(() => createIgeveDocumentPdf({ ...doc, confirmed: false }, DEFAULT_DOCUMENT_SUPPLIERS[0], 'quote', doc.quotations[0]));
 assert.deepEqual(doc, snapshot, 'PDF não altera os dados salvos');
 

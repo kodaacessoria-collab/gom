@@ -1,6 +1,7 @@
 import { jsPDF } from 'jspdf';
+import { createQuotationPdf } from './igeveQuotePdf.ts';
 import { autoTable } from 'jspdf-autotable';
-import { decimal2, documentFilename, documentTotal, validateNfeDocument } from './igeveDocuments.ts';
+import { decimal2, documentFilename, validateNfeDocument } from './igeveDocuments.ts';
 import type { DocumentSupplier, NfeDocument, Quotation } from './igeveDocuments.ts';
 
 const date = (s: string) => s.split('-').reverse().join('/');
@@ -10,6 +11,7 @@ export function createIgeveDocumentPdf(doc: NfeDocument, supplier: DocumentSuppl
   if (error) throw new Error(error);
   if (kind === 'quote' && (!quotation || quotation.supplierId !== supplier.id)) throw new Error('Cotação não corresponde ao fornecedor.');
   if (!/^#[0-9a-f]{6}$/i.test(supplier.color)) throw new Error('Confira a cor do modelo.');
+  if (kind === 'quote') return { pdf: createQuotationPdf(doc, supplier, quotation!), filename: documentFilename(supplier, doc, kind) };
   const pdf = new jsPDF({ unit: 'mm', format: 'a4' });
   const color = rgb(supplier.color);
   const left = 14, width = 182;
@@ -33,10 +35,10 @@ export function createIgeveDocumentPdf(doc: NfeDocument, supplier: DocumentSuppl
   if (supplier.address) text(supplier.address, 8);
   if (supplier.contact) text(supplier.contact, 8);
   y += 2;
-  const title = kind === 'quote' ? 'ORÇAMENTO' : 'ROMANEIO DE ENTREGA';
+  const title = 'ROMANEIO DE ENTREGA';
   pdf.setDrawColor(...color); pdf.setLineWidth(.5); pdf.line(left, y, 196, y); y += 7;
-  text(kind === 'quote' ? title : `${title} - NF-e ${doc.number}`, 13, true);
-  text(kind === 'quote' ? `Data da cotação: ${date(quotation!.date)}  |  Validade: ${supplier.validity} dias` : `Data de entrega: ${date(doc.deliveryDate)}`, 9);
+  text(`${title} - NF-e ${doc.number}`, 13, true);
+  text(`Data de entrega: ${date(doc.deliveryDate)}`, 9);
   const fields = [
     ['Cliente', doc.recipient], ['CNPJ do destinatário', doc.recipientCnpj], ['Unidade de atendimento', doc.unitName],
     ['Endereço de entrega', doc.address || '________________________________________________'],
@@ -48,30 +50,19 @@ export function createIgeveDocumentPdf(doc: NfeDocument, supplier: DocumentSuppl
   y = (pdf as jsPDF & { lastAutoTable: { finalY: number } }).lastAutoTable.finalY + 6;
   if (doc.baskets > 0) { pageSpace(12); text(`Quantidade de cestas: ${decimal2(doc.baskets)}`, 10, true); }
   const basketDelivery = kind === 'delivery' && supplier.layout === 'caninde' && doc.baskets > 0;
-  const head = kind === 'quote'
-    ? [['Cód.', 'Produto / descrição', 'Marca', 'Un.', 'Quantidade', 'Vl. unit. (R$)', 'Total (R$)']]
-    : basketDelivery ? [['Cód.', 'Produto / descrição', 'Un.', 'Por cesta', 'Total previsto', 'Conferência']]
-      : [['Cód.', 'Produto / descrição', 'Un.', 'Quantidade', 'Observações']];
-  const body = doc.items.map(item => kind === 'quote'
-    ? [item.code, item.product, item.brand, item.unit, decimal2(item.quantity), decimal2(quotation!.prices[item.id]!), decimal2(Math.round((item.quantity * quotation!.prices[item.id]! + Number.EPSILON) * 100) / 100)]
-    : basketDelivery ? [item.code, item.product, item.unit, decimal2(item.quantity / doc.baskets), decimal2(item.quantity), item.notes]
-      : [item.code, item.product, item.unit, decimal2(item.quantity), item.notes]);
+  const head = basketDelivery ? [['Cód.', 'Produto / descrição', 'Un.', 'Por cesta', 'Total previsto', 'Conferência']]
+    : [['Cód.', 'Produto / descrição', 'Un.', 'Quantidade', 'Observações']];
+  const body = doc.items.map(item => basketDelivery
+    ? [item.code, item.product, item.unit, decimal2(item.quantity / doc.baskets), decimal2(item.quantity), item.notes]
+    : [item.code, item.product, item.unit, decimal2(item.quantity), item.notes]);
   autoTable(pdf, { startY: y, margin: { left, right: left, top: 32, bottom: 25 }, head, body,
     theme: supplier.layout === 'red' || supplier.layout === 'delicias' ? 'plain' : 'striped',
     styles: { fontSize: 8, cellPadding: 2.4, overflow: 'linebreak', valign: 'middle' },
     headStyles: { fillColor: color, textColor: supplier.layout === 'nobre' ? [20, 20, 20] : [255, 255, 255] },
-    columnStyles: kind === 'quote' ? { 0: { cellWidth: 13 }, 1: { cellWidth: 62 }, 2: { cellWidth: 18 }, 3: { cellWidth: 12 }, 4: { cellWidth: 23, halign: 'right' }, 5: { cellWidth: 26, halign: 'right' }, 6: { cellWidth: 28, halign: 'right' } }
-      : basketDelivery ? { 0: { cellWidth: 16 }, 1: { cellWidth: 80 }, 2: { cellWidth: 12 }, 3: { cellWidth: 22, halign: 'right' }, 4: { cellWidth: 26, halign: 'right' }, 5: { cellWidth: 26 } }
+    columnStyles: basketDelivery ? { 0: { cellWidth: 16 }, 1: { cellWidth: 80 }, 2: { cellWidth: 12 }, 3: { cellWidth: 22, halign: 'right' }, 4: { cellWidth: 26, halign: 'right' }, 5: { cellWidth: 26 } }
         : { 0: { cellWidth: 16 }, 1: { cellWidth: 94 }, 2: { cellWidth: 14 }, 3: { cellWidth: 25, halign: 'right' }, 4: { cellWidth: 33 } },
   });
   y = (pdf as jsPDF & { lastAutoTable: { finalY: number } }).lastAutoTable.finalY + 8;
-  if (kind === 'quote') {
-    pageSpace(28); pdf.setTextColor(...color);
-    text(`VALOR TOTAL: R$ ${decimal2(documentTotal(doc.items, quotation!.prices))}`, 13, true);
-    pdf.setTextColor(35, 35, 35);
-    if (doc.baskets > 0) text(`Valor por cesta: R$ ${decimal2(documentTotal(doc.items, quotation!.prices) / doc.baskets)}`, 9);
-    text(`Condições de pagamento: ${supplier.payment}`, 9);
-  }
   const notes = [doc.notes, supplier.footer].filter(Boolean).join('\n');
   if (notes) {
     const lines = pdf.splitTextToSize(`Observações: ${notes}`, width) as string[];
@@ -89,13 +80,13 @@ export function createIgeveDocumentPdf(doc: NfeDocument, supplier: DocumentSuppl
   }
   y += 5;
   text('_________________________________________________________________', 9);
-  text(kind === 'quote' ? 'Assinatura do representante autorizado do fornecedor' : 'Assinatura do recebedor', 9);
+  text('Assinatura do recebedor', 9);
   const count = pdf.getNumberOfPages();
   for (let p = 1; p <= count; p++) {
     pdf.setPage(p); pdf.setFont('helvetica', 'normal'); pdf.setFontSize(8); pdf.setTextColor(90, 90, 90);
-    if (p > 1) { pdf.text(pdf.splitTextToSize(kind === 'quote' ? `${supplier.name} | ${title}` : `${supplier.name} | ${title} | NF-e ${doc.number}`, width), left, 15); }
+    if (p > 1) { pdf.text(pdf.splitTextToSize(`${supplier.name} | ${title} | NF-e ${doc.number}`, width), left, 15); }
     pdf.setDrawColor(210, 210, 210); pdf.line(left, 278, 196, 278);
-    pdf.text(pdf.splitTextToSize(kind === 'quote' ? doc.unitName : `NF-e ${doc.number} | ${doc.unitName}`, 152), left, 283);
+    pdf.text(pdf.splitTextToSize(`NF-e ${doc.number} | ${doc.unitName}`, 152), left, 283);
     pdf.text(`${p}/${count}`, 196, 283, { align: 'right' });
   }
   return { pdf, filename: documentFilename(supplier, doc, kind) };
