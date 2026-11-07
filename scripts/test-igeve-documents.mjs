@@ -68,6 +68,38 @@ assert.equal(om.document.items[1].product, 'IG. ARROZ');
 const mergedRun = parseNfePages([{ words: [...omHeader, word('8177893 IG. ACUCAR', 10, 190, 102), ...line(190, '', '3,00', '6,20').filter(w => w.x >= 265)] }]);
 assert.equal(mergedRun.document.items[0].code, '8177893');
 assert.equal(mergedRun.document.items[0].product, 'IG. ACUCAR');
+// A continuation page may have the issuer's header and no product headings.
+// Footer sections on page 1 must not discard the layout for page 2.
+const continuation = parseNfePages([
+  { words: [...omHeader, ...line(190, 'OLEO DE SOJA', '8,00', '9,80'), word('DADOS ADICIONAIS', 10, 250)] },
+  { words: [word('RUA DO EMITENTE', 80, 30), word('FONE: (19) 9999-0000', 80, 45),
+    ...Array.from({ length: 12 }, (_, i) => line(100 + i * 20, `PRODUTO CONTINUACAO ${i + 1}`, '2,00', '3,50', String(i + 2))).flat(),
+    word('CALCULO DO ISSQN', 10, 360), ...line(390, 'NAO IMPORTAR TRIBUTOS', '1,00', '999,00')] },
+]);
+assert.equal(continuation.document.items.length, 13);
+assert.equal(continuation.document.items[0].product, 'OLEO DE SOJA');
+assert.equal(continuation.document.items[12].product, 'PRODUTO CONTINUACAO 12');
+const noFooter = parseNfePages([
+  { words: [...omHeader, ...line(190, 'OLEO DE SOJA', '8,00', '9,80')] },
+  { words: [word('RUA DO EMITENTE', 80, 30), ...line(100, 'SAL', '6,00', '2,90')] },
+]);
+assert.deepEqual(noFooter.document.items.map(i => i.product), ['OLEO DE SOJA', 'SAL']);
+// Compact DANFE coordinates: centered headings, joined NCM/CST, integer quantities,
+// right-aligned prices and units of different widths, with 27 + 12 products.
+const compactHeader = [word('CÓDIGO', 39.6, 492.2, 20.3), word('DESCRIÇÃO DOS PRODUTOS / SERVIÇOS', 94.2, 492.2, 102),
+  word('NCM/SH', 218.3, 492.2, 19.7), word('CST/', 249.8, 488.7, 11.4), word('CFOP', 270.8, 492.2, 13.9),
+  word('UNID', 292.6, 492.2, 12.2), word('QUANT.', 319.1, 492.2, 19.2), word('VL UNITÁRIO', 357, 492.2, 31.9), word('VALOR TOTAL', 409.7, 492.2, 36.9)];
+const compactLine = (y, index) => [word(String(8100000 + index), 19, y, 25.2), word(`PRODUTO TESTE ${index}`, 79, y, 75.6),
+  word('17019900 0102', 210.7, y, 53.2), word('5102', 268.6, y, 16.8), word(index % 2 ? 'KILO' : 'PCT', 289.6, y, 16.8),
+  word('2', 325.9, y, 4.2), word('6,20', 381.2, y, 16.8), word('12,40', 436, y, 21)];
+const compact = parseNfePages([
+  { words: [...compactHeader, ...Array.from({ length: 27 }, (_, i) => compactLine(502.6 + i * 12, i)).flat()] },
+  { words: [word('RUA DO EMITENTE', 79, 56, 75), ...Array.from({ length: 12 }, (_, i) => compactLine(259.6 + i * 12, i + 27)).flat()] },
+]);
+assert.equal(compact.document.items.length, 39);
+for (const [i, item] of compact.document.items.entries()) {
+  assert.deepEqual([item.code, item.product, item.quantity, item.price], [String(8100000 + i), `PRODUTO TESTE ${i}`, 2, 6.2]);
+}
 const inconsistent = parseNfePages([{ words: [word('VALOR TOTAL DOS PRODUTOS', 450, 10), word('3.024,10', 450, 24), ...header(160), ...line(190, 'TESTE', '1,00', '10,00')] }]);
 assert.ok(inconsistent.warnings.some(w => w.includes('difere do total')));
 const autoDoc = { ...om.document, quotations: [] };

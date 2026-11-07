@@ -92,6 +92,8 @@ export function parseNfePages(pages: PdfTextPage[]): { document: NfeDocument; wa
   for (const page of pages) {
     const rows = pdfRows(page.words);
     let headerBottom = -1;
+    let tableActive = columns.length > 0;
+    let lastItemY: number | undefined;
     for (let r = 0; r < rows.length; r++) {
       const row = rows[r];
       const text = row.words.map(w => w.text).join(' ');
@@ -99,12 +101,16 @@ export function parseNfePages(pages: PdfTextPage[]): { document: NfeDocument; wa
         const candidate = tableColumns(rows, r);
         if (['product', 'unit', 'quantity', 'price'].every(key => candidate.some(c => c.key === key))) {
           columns = candidate;
+          tableActive = true;
+          lastItemY = undefined;
           headerBottom = row.y;
           continue;
         }
       }
-      if (!columns.length || row.y <= headerBottom) continue;
-      if (/DADOS ADICIONAIS|INFORMACOES COMPLEMENTARES|CALCULO DO ISSQN|RESERVADO AO FISCO|TRANSPORTADOR|VALOR TOTAL DA NOTA/.test(norm(text))) { columns = []; continue; }
+      // Keep the layout for continuation pages that do not repeat the table header.
+      // A footer ends this page's table, not the following page's table.
+      if (/DADOS ADICIONAIS|INFORMACOES COMPLEMENTARES|CALCULO DO ISSQN|RESERVADO AO FISCO|TRANSPORTADOR|VALOR TOTAL DA NOTA/.test(norm(text))) { tableActive = false; lastItemY = undefined; continue; }
+      if (!tableActive || !columns.length || row.y <= headerBottom) continue;
       const cells: Partial<Record<Column['key'], string>> = {};
       const codeColumn = columns.find(c => c.key === 'code');
       const productColumn = columns.find(c => c.key === 'product')!;
@@ -114,7 +120,8 @@ export function parseNfePages(pages: PdfTextPage[]): { document: NfeDocument; wa
       for (const original of row.words) {
         // PDF.js may combine the code, description and fiscal cells in one text run.
         const pieces = [...original.text.matchAll(/\S+/g)];
-        const spansColumns = [...columns.map(c => c.x), productStart, productEnd].some(x => x > original.x + 4 && x < original.x + original.width - 4);
+        const insideDescription = original.x >= productStart - 2 && original.x + original.width < productEnd - 4;
+        const spansColumns = !insideDescription && [...columns.map(c => c.x), productStart, productEnd].some(x => x > original.x + 4 && x < original.x + original.width - 4);
         const words = spansColumns && pieces.length > 1 ? pieces.map(m => ({ ...original, text: m[0], x: original.x + original.width * m.index / original.text.length, width: original.width * m[0].length / original.text.length })) : [original];
         for (const w of words) {
           const numeric = /^\d+(?:[.,]\d+)*$/.test(w.text.trim());
@@ -132,8 +139,12 @@ export function parseNfePages(pages: PdfTextPage[]): { document: NfeDocument; wa
       if (cells.product && cells.unit && Number.isFinite(quantity) && quantity > 0 && Number.isFinite(price) && price >= 0) {
         if (round2(quantity) !== quantity || round2(price) !== price) warnings.add('Há valores com mais de duas casas na NF-e. A lista usa duas casas; confira os arredondamentos e o total.');
         parsed.push({ id: crypto.randomUUID(), code: cells.code || '', product: cells.product, unit: cells.unit, quantity: round2(quantity), price: round2(price), brand: '', notes: '' });
-      } else if (cells.product && !cells.unit && !cells.quantity && !cells.price && parsed.length && !/DESCRI|PRODUTO|SERVI[CÇ]O|^FOLHA/.test(norm(cells.product))) {
+        lastItemY = row.y;
+      } else if (cells.product && !cells.code && !cells.unit && !cells.quantity && !cells.price && lastItemY !== undefined && row.y - lastItemY < 24 && !/DESCRI|PRODUTO|SERVI[CÇ]O|^FOLHA/.test(norm(cells.product))) {
         parsed[parsed.length - 1].product += ` ${cells.product}`;
+        lastItemY = row.y;
+      } else if (cells.product && cells.code && cells.unit && (cells.quantity || cells.price)) {
+        warnings.add('Há linhas de produtos que não puderam ser importadas por completo. Confira quantidades e preços com o PDF original.');
       }
     }
   }
