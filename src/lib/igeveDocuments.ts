@@ -1,7 +1,7 @@
 export const DOCUMENT_PREFIX = 'gom_igeve_document_';
 export const SUPPLIER_PREFIX = 'gom_igeve_supplier_';
 export const UNIT_PREFIX = 'gom_igeve_unit_';
-export type DocumentLayout = 'caninde' | 'nobre' | 'om' | 'lm' | 'red' | 'delicias' | 'generic';
+export type DocumentLayout = 'caninde' | 'nobre' | 'om' | 'lm' | 'red' | 'delicias' | 'manu' | 'generic';
 export interface DocumentSupplier {
   id: string; name: string; cnpj: string; address: string; contact: string;
   layout: DocumentLayout; color: string; payment: string; validity: number;
@@ -47,7 +47,7 @@ export function unitsForCnpj(cnpj: string, units: IgeveUnit[]) {
 export function documentFilename(supplier: DocumentSupplier, doc: NfeDocument, kind: 'quote' | 'delivery') {
   const safe = (s: string) => s.normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-zA-Z0-9_-]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 100);
   const words = safe(supplier.name).split('_').filter(Boolean);
-  const initials = words.length > 1 ? words.slice(0, 2).map(w => w[0]).join('') : words[0]?.slice(0, 2);
+  const initials = supplier.layout === 'manu' ? 'MA' : words.length > 1 ? words.slice(0, 2).map(w => w[0]).join('') : words[0]?.slice(0, 2);
   return `${(initials || 'FO').toUpperCase()}-${kind === 'quote' ? 'ORÇAMENTO' : `ROMANEIO_${safe(doc.number)}`}-${safe(doc.unitName)}.pdf`;
 }
 export function documentTotal(items: NfeItem[], prices?: Record<string, number | null>) {
@@ -102,6 +102,7 @@ export const DEFAULT_DOCUMENT_SUPPLIERS: DocumentSupplier[] = [
   supplier('lm', 'L M DE OLIVEIRA COMERCIAL LTDA', '66.036.822/0001-30', 'Rua Jornalista Eron Domingues, 553 - Vila Brasil - Ourinhos/SP - CEP 19915-200', 'lm', '#333333'),
   supplier('red', 'RED SOLUÇÕES E SERVIÇOS DO BRASIL LTDA', '12.484.640/0001-01', 'Av. Mofarrej, 348 - Conj. 1308 - Vila Leopoldina - São Paulo/SP - CEP 05311-000', 'red', '#356345'),
   supplier('delicias', 'DELICIAS ALIMENTOS', '', '', 'delicias', '#4d4d4d'),
+  { ...supplier('manu', 'MANU DISTRIBUIDORA DE ALIMENTOS EIRELI', '17.979.701/0001-17', 'Rua Visconde de Pirajá, 414 - Sala 718 - Ipanema - Rio de Janeiro/RJ', 'manu', '#08265b'), contact: 'Telefone (21) 96595-8320', payment: 'Pix / Dep. Bancário' },
 ];
 const unitRows: [string, string, string][] = [
   ['MATRIZ - RATEIO', '0001-92', 'Campinas/SP'], ['CEI IGEVE RUBI', '0007-88', 'Guaianases/SP'], ['CEI IGEVE MENDONÇA', '0012-45', 'Guaianases/SP'],

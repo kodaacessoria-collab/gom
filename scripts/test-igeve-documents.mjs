@@ -229,4 +229,4 @@ for (const [index, p] of offsetPages.entries()) {
   for (const w of p.words) offsetFixture.text(w.text, w.x, w.y);
 }
 writeFileSync('tmp/pdfs/igeve-documents/nfe-offset-fixture.pdf', new Uint8Array(offsetFixture.output('arraybuffer')));
-console.log('OK: extração por colunas, múltiplas páginas, decimais, CNPJ/unidade, validação de cotações, nomes de arquivos e PDFs de seis modelos.');
+console.log('OK: extração por colunas, múltiplas páginas, decimais, CNPJ/unidade, validação de cotações, nomes de arquivos e PDFs dos fornecedores.');

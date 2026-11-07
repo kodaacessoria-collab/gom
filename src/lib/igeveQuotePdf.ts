@@ -4,9 +4,11 @@ import type { UserOptions } from 'jspdf-autotable';
 import { decimal2, digits, documentTotal } from './igeveDocuments.ts';
 import type { DocumentSupplier, NfeDocument, Quotation } from './igeveDocuments.ts';
 import { QUOTE_LOGOS } from './igeveQuoteLogos.ts';
+import { createManuQuotationPdf } from './igeveManuQuotePdf.ts';
 
 // Rebuild the reference layouts with current data; never reuse signed pages.
 export function createQuotationPdf(doc: NfeDocument, supplier: DocumentSupplier, quotation: Quotation) {
+  if (supplier.layout === 'manu') return createManuQuotationPdf(doc, supplier, quotation);
   const pdf = new jsPDF({ unit: 'mm', format: 'a4' });
   const layout = supplier.layout;
   const color = (hex: string): [number, number, number] => [1, 3, 5].map(i => parseInt(hex.slice(i, i + 2), 16)) as [number, number, number];
