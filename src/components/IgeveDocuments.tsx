@@ -148,7 +148,7 @@ export default function IgeveDocuments() {
         files[name] = new Uint8Array(out.pdf.output('arraybuffer'));
       }
       blob = new Blob([Uint8Array.from(zipSync(files))], { type: 'application/zip' });
-      filename = `ORCAMENTOS_${draft.number.replace(/[^a-zA-Z0-9_-]/g, '_')}.zip`;
+      filename = `ORCAMENTOS_${draft.unitName.replace(/[^a-zA-Z0-9_-]/g, '_')}.zip`;
     }
     downloadBlob(blob, filename);
     setMessage('Download gerado. Salvando dados no histórico...');
@@ -171,7 +171,8 @@ export default function IgeveDocuments() {
     else {
       const { zipSync } = await import('fflate');
       const files = Object.fromEntries(outputs.map((out, index) => [out.filename.replace(/\.pdf$/, `_${index + 1}.pdf`), new Uint8Array(out.pdf.output('arraybuffer'))]));
-      downloadBlob(new Blob([Uint8Array.from(zipSync(files))], { type: 'application/zip' }), `DOCUMENTOS_${doc.number.replace(/[^a-zA-Z0-9_-]/g, '_')}.zip`);
+      const reference = record.generatedKind === 'quote' ? doc.unitName : doc.number;
+      downloadBlob(new Blob([Uint8Array.from(zipSync(files))], { type: 'application/zip' }), `DOCUMENTOS_${reference.replace(/[^a-zA-Z0-9_-]/g, '_')}.zip`);
     }
     setMessage('Última geração recuperada com os dados e modelos arquivados na ocasião.');
   }

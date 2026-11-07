@@ -35,13 +35,12 @@ export function createIgeveDocumentPdf(doc: NfeDocument, supplier: DocumentSuppl
   y += 2;
   const title = kind === 'quote' ? 'ORÇAMENTO' : 'ROMANEIO DE ENTREGA';
   pdf.setDrawColor(...color); pdf.setLineWidth(.5); pdf.line(left, y, 196, y); y += 7;
-  text(`${title} - NF-e ${doc.number}`, 13, true);
+  text(kind === 'quote' ? title : `${title} - NF-e ${doc.number}`, 13, true);
   text(kind === 'quote' ? `Data da cotação: ${date(quotation!.date)}  |  Validade: ${supplier.validity} dias` : `Data de entrega: ${date(doc.deliveryDate)}`, 9);
   const fields = [
     ['Cliente', doc.recipient], ['CNPJ do destinatário', doc.recipientCnpj], ['Unidade de atendimento', doc.unitName],
     ['Endereço de entrega', doc.address || '________________________________________________'],
     ...(doc.consumption ? [['Referência de consumo', doc.consumption]] : []),
-    ...(kind === 'quote' ? [['Referência da cotação', quotation!.reference]] : []),
   ];
   autoTable(pdf, { startY: y, margin: { left, right: left, bottom: 25, top: 32 }, theme: supplier.layout === 'caninde' ? 'striped' : 'plain',
     body: fields, styles: { fontSize: 8, cellPadding: 2, overflow: 'linebreak' }, columnStyles: { 0: { cellWidth: 40, fontStyle: 'bold' }, 1: { cellWidth: 142 } },
@@ -94,9 +93,9 @@ export function createIgeveDocumentPdf(doc: NfeDocument, supplier: DocumentSuppl
   const count = pdf.getNumberOfPages();
   for (let p = 1; p <= count; p++) {
     pdf.setPage(p); pdf.setFont('helvetica', 'normal'); pdf.setFontSize(8); pdf.setTextColor(90, 90, 90);
-    if (p > 1) { pdf.text(pdf.splitTextToSize(`${supplier.name} | ${title} | NF-e ${doc.number}`, width), left, 15); }
+    if (p > 1) { pdf.text(pdf.splitTextToSize(kind === 'quote' ? `${supplier.name} | ${title}` : `${supplier.name} | ${title} | NF-e ${doc.number}`, width), left, 15); }
     pdf.setDrawColor(210, 210, 210); pdf.line(left, 278, 196, 278);
-    pdf.text(pdf.splitTextToSize(`NF-e ${doc.number} | ${doc.unitName}`, 152), left, 283);
+    pdf.text(pdf.splitTextToSize(kind === 'quote' ? doc.unitName : `NF-e ${doc.number} | ${doc.unitName}`, 152), left, 283);
     pdf.text(`${p}/${count}`, 196, 283, { align: 'right' });
   }
   return { pdf, filename: documentFilename(supplier, doc, kind) };

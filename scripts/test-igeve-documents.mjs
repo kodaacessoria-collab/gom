@@ -138,25 +138,28 @@ assert.ok(validateNfeDocument({ ...doc, quotations: [{ ...doc.quotations[0], pri
 assert.ok(validateNfeDocument({ ...doc, items: [{ ...doc.items[0], quantity: .001 }] }, DEFAULT_DOCUMENT_SUPPLIERS, 'quote'));
 assert.ok(validateNfeDocument({ ...doc, deliveryDate: '2026-02-30' }, DEFAULT_DOCUMENT_SUPPLIERS, 'delivery'));
 assert.equal(documentTotal(doc.items), 56.68);
-assert.equal(documentFilename(DEFAULT_DOCUMENT_SUPPLIERS[0], doc, 'quote'), 'CD-ORÇAMENTO_658-GARCA_TORTA.pdf');
+assert.equal(documentFilename(DEFAULT_DOCUMENT_SUPPLIERS[0], doc, 'quote'), 'CD-ORÇAMENTO-GARCA_TORTA.pdf');
 assert.equal(documentFilename(DEFAULT_DOCUMENT_SUPPLIERS[0], { ...doc, number: '../../658' }, 'delivery'), 'CD-ROMANEIO_658-GARCA_TORTA.pdf');
 assert.deepEqual(doc, snapshot);
 
 mkdirSync('tmp/pdfs/igeve-documents', { recursive: true });
 for (const supplier of DEFAULT_DOCUMENT_SUPPLIERS) {
   const s = supplier.cnpj ? supplier : { ...supplier, cnpj: '66.321.676/0001-95' };
-  const q = quote(s.id);
-  const sample = { ...doc, quotations: [q], deliverySupplierId: s.id };
+  const q = { ...quote(s.id), reference: 'NF-e 927461805' };
+  const sample = { ...doc, number: '927461805', quotations: [q], deliverySupplierId: s.id };
   for (const kind of ['quote', 'delivery']) {
     const out = createIgeveDocumentPdf(sample, s, kind, q);
     assert.ok(out.pdf.getNumberOfPages() >= 1);
+    assert.equal(out.pdf.output().includes('927461805'), kind === 'delivery', 'Orçamentos não imprimem o número da nota, inclusive referências antigas');
+    assert.equal(out.filename.includes('927461805'), kind === 'delivery');
     writeFileSync(`tmp/pdfs/igeve-documents/${s.id}-${kind}.pdf`, new Uint8Array(out.pdf.output('arraybuffer')));
   }
 }
-const long = { ...structuredClone(doc), notes: doc.notes + '\n' + 'Texto de observação para verificar paginação e margens. '.repeat(150), items: Array.from({ length: 120 }, (_, i) => ({ ...doc.items[i % 3], id: String(i), product: 'PRODUTO COM DESCRIÇÃO LONGA PARA TESTE DE QUEBRA DE LINHA - ' + i })) };
+const long = { ...structuredClone(doc), number: '927461805', notes: doc.notes + '\n' + 'Texto de observação para verificar paginação e margens. '.repeat(150), items: Array.from({ length: 120 }, (_, i) => ({ ...doc.items[i % 3], id: String(i), product: 'PRODUTO COM DESCRIÇÃO LONGA PARA TESTE DE QUEBRA DE LINHA - ' + i })) };
 long.quotations = [{ ...quote('caninde'), prices: Object.fromEntries(long.items.map(i => [i.id, i.price])) }];
 const longPdf = createIgeveDocumentPdf(long, DEFAULT_DOCUMENT_SUPPLIERS[0], 'quote', long.quotations[0]);
 assert.ok(longPdf.pdf.getNumberOfPages() > 3);
+assert.equal(longPdf.pdf.output().includes('927461805'), false, 'Cabeçalhos e rodapés de continuação não imprimem o número da nota');
 writeFileSync('tmp/pdfs/igeve-documents/long-quote.pdf', new Uint8Array(longPdf.pdf.output('arraybuffer')));
 assert.throws(() => createIgeveDocumentPdf({ ...doc, confirmed: false }, DEFAULT_DOCUMENT_SUPPLIERS[0], 'quote', doc.quotations[0]));
 assert.deepEqual(doc, snapshot, 'PDF não altera os dados salvos');
