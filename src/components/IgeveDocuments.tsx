@@ -35,7 +35,7 @@ async function imageData(file: File) {
 }
 const blankSupplier = (): DocumentSupplier => ({ id: crypto.randomUUID(), name: '', cnpj: '', address: '', contact: '', layout: 'generic', color: '#203b50', payment: 'PIX / à vista', validity: 90, footer: '' });
 const newItem = (): NfeItem => ({ id: crypto.randomUUID(), code: '', product: '', unit: 'UN', quantity: 1, price: 0, brand: '', notes: '' });
-const layoutNames: Record<DocumentLayout, string> = { caninde: 'Canindé - dados em quadro / cestas', nobre: 'Nobre - destaque em laranja / marcas', om: 'OM Logística - cabeçalho central', lm: 'LM - tabela comercial', red: 'RED - proposta comercial', delicias: 'Delícias - entrega simplificada', manu: 'Manu Alimentos - cabeçalho azul / quadro comercial', generic: 'Padrão personalizado' };
+const layoutNames: Record<DocumentLayout, string> = { caninde: 'Canindé - dados em quadro / cestas', nobre: 'Nobre - destaque em laranja / marcas', om: 'OM Logística - cabeçalho central', lm: 'LM - tabela comercial', red: 'RED - proposta comercial', delicias: 'Delícias - entrega simplificada', manu: 'Manu Alimentos - cabeçalho azul / quadro comercial', rionutri: 'Rio Nutri - cabeçalho e conferência de entrega', generic: 'Padrão personalizado' };
 
 function DecimalInput({ value, onChange, label, min = 0 }: { value: number | null; onChange: (value: number | null) => void; label: string; min?: number }) {
   const [editing, setEditing] = useState(false);
