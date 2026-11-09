@@ -13,6 +13,7 @@ import type { Company } from '../types';
 import IgeveFreight from './IgeveFreight';
 import { FREIGHT_PREFIX, billingFreightApplier, freightScopesOverlap } from '../lib/igeveFreight';
 import type { BillingFreight, SavedFreight } from '../lib/igeveFreight';
+import IgevePriceImport from './IgevePriceImport';
 import IgevePriceTable from './IgevePriceTable';
 import IgeveRubrics from './IgeveRubrics';
 import IgeveDocuments from './IgeveDocuments';
@@ -51,6 +52,7 @@ export default function IgeveBilling() {
   const [orders, setOrders] = useState<BillingOrder[]>([]);
   const [points, setPoints] = useState<BillingPoint[]>([]);
   const [savedPrices, setSavedPrices] = useState<SavedBillingPrice[]>([]);
+  const [importedPrices, setImportedPrices] = useState<BillingPriceEntry[]>([]);
   const [priceEdits, setPriceEdits] = useState<Record<string, string>>({});
   const prices = billingPricesFromEntries(savedPrices.map(row => row.entry));
   const [companies, setCompanies] = useState<Company[]>([]);
@@ -135,7 +137,7 @@ export default function IgeveBilling() {
     ...savedPrices.map(row => row.entry.category),
     ...categoryFilter,
   ]);
-  const priceCatalog = billingPriceCatalog(orders, operations, saved.map(row => row.invoice), savedPrices.map(row => row.entry));
+  const priceCatalog = billingPriceCatalog(orders, operations, saved.map(row => row.invoice), [...savedPrices.map(row => row.entry), ...importedPrices]);
   const visiblePrices = sortBillingRows(priceCatalog.filter(row => (!operationId || row.operationId === operationId) && billingCategoryMatches(row.category, categoryFilter)).map(row => ({ ...row, operation: operations.find(operation => operation.id === row.operationId)?.name || row.operationId })), sorts.prices, (row, column) => {
     switch (column) {
       case 'operation': return row.operation;
@@ -151,7 +153,7 @@ export default function IgeveBilling() {
     setPriceEdits(current => {
       const next = { ...current };
       const original = priceCatalog.find(row => row.key === key)?.salePrice;
-      if (value === (original == null ? '' : String(original))) delete next[key];
+      if (!importedPrices.some(row => row.key === key) && value === (original == null ? '' : String(original))) delete next[key];
       else next[key] = value;
       return next;
     });
@@ -180,6 +182,7 @@ export default function IgeveBilling() {
         if (result.error || !result.data) throw new Error(`Não foi possível salvar o preço de ${entry.product}. Ele pode ter sido alterado por outro usuário. Cancele as alterações pendentes e clique em Atualizar antes de tentar novamente.`);
         setSavedPrices(current => [...current.filter(item => item.entry.key !== entry.key), { entry, version: result.data.updated_at }]);
         setPriceEdits(current => { const next = { ...current }; delete next[entry.key]; return next; });
+        setImportedPrices(current => current.filter(item => item.key !== entry.key));
         count++;
       }
       setMessage(`${count} preço(s) salvo(s) com sucesso. Novos faturamentos usarão a tabela da operação e categoria.`);
@@ -371,7 +374,8 @@ export default function IgeveBilling() {
     {tab !== 'prices' && tab !== 'rubrics' && tab !== 'documents' && !validPeriod && <div role="alert">A data inicial deve ser anterior ou igual à data final.</div>}
     {busy && <p role="status">Processando...</p>}
     {ready && tab === 'rubrics' && <IgeveRubrics operations={operations} points={points} orders={orders} invoices={saved} catalog={priceCatalog} rubrics={rubrics} busy={busy} onSave={saveRubric} onOpen={open} applyFreight={applyFreight} />}
-    {ready && tab === 'prices' && <IgevePriceTable rows={visiblePrices} edits={priceEdits} busy={busy} onEdit={editPrice} onSave={event => void savePrices(event)} onCancel={() => setPriceEdits({})} header={header} />}
+    {ready && tab === 'prices' && <IgevePriceImport operations={operations} categories={categories} catalog={priceCatalog} busy={busy} onApply={entries => { setImportedPrices(current => [...current.filter(row => !entries.some(entry => entry.key === row.key)), ...entries]); setPriceEdits(current => ({ ...current, ...Object.fromEntries(entries.map(entry => [entry.key, String(entry.salePrice)])) })); setOperationId(entries[0].operationId); setCategoryFilter([entries[0].category]); }} />}
+    {ready && tab === 'prices' && <IgevePriceTable rows={visiblePrices} edits={priceEdits} busy={busy} onEdit={editPrice} onSave={event => void savePrices(event)} onCancel={() => { setPriceEdits({}); setImportedPrices([]); }} header={header} />}
     {ready && (tab === 'romaneios' || tab === 'freight') && <IgeveFreight source={freightSource} scope={{ operationId, categories: categoryFilter, start, end }} saved={freights} busy={busy} detailed={tab === 'freight'} onSave={saveFreight} />}
     {ready && tab === 'romaneios' && <div className="card igeve-panel"><h2>Romaneios disponíveis</h2><div className="table-container"><table><thead><tr>{header('operation', 'Operação / local')}{header('control', 'Controle')}{header('date', 'Entrega')}{header('category', 'Categoria')}{header('action', 'Ação')}</tr></thead><tbody>
       {availableRows.map(({ order, delivery, operation, destination, action }) => <tr key={`${order.id}-${delivery.id}`}><td>{operation}<br />{destination}</td><td>{getOrderControlNumber(order.importedAt)}</td><td>{dateLabel(order.deliveryDate)}</td><td>{order.category}</td><td><button disabled={busy} className="button button-outline" onClick={() => importDelivery(order, delivery)}>{action}</button></td></tr>)}

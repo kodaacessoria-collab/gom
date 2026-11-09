@@ -45,6 +45,7 @@ export const billingPriceKey = (product: string, unit: string) => `${normalizeBi
 export const BILLING_PRICE_PREFIX = 'gom_igeve_price_';
 export interface BillingPriceEntry {
   key: string; operationId: string; category: string; product: string; unit: string; salePrice: number | null;
+  source?: { filename: string; hash: string; invoice: string; importedAt: string };
 }
 export interface SavedBillingPrice { entry: BillingPriceEntry; version: string }
 export const billingOperationPriceKey = (operationId: string, category: string, product: string, unit: string) =>

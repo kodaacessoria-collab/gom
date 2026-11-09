@@ -1,7 +1,7 @@
 export const DOCUMENT_PREFIX = 'gom_igeve_document_';
 export const SUPPLIER_PREFIX = 'gom_igeve_supplier_';
 export const UNIT_PREFIX = 'gom_igeve_unit_';
-export type DocumentLayout = 'caninde' | 'nobre' | 'om' | 'lm' | 'red' | 'delicias' | 'manu' | 'generic';
+export type DocumentLayout = 'caninde' | 'nobre' | 'om' | 'lm' | 'red' | 'delicias' | 'manu' | 'rionutri' | 'generic';
 export interface DocumentSupplier {
   id: string; name: string; cnpj: string; address: string; contact: string;
   layout: DocumentLayout; color: string; payment: string; validity: number;
@@ -103,6 +103,7 @@ export const DEFAULT_DOCUMENT_SUPPLIERS: DocumentSupplier[] = [
   supplier('red', 'RED SOLUÇÕES E SERVIÇOS DO BRASIL LTDA', '12.484.640/0001-01', 'Av. Mofarrej, 348 - Conj. 1308 - Vila Leopoldina - São Paulo/SP - CEP 05311-000', 'red', '#356345'),
   supplier('delicias', 'DELICIAS ALIMENTOS', '', '', 'delicias', '#4d4d4d'),
   { ...supplier('manu', 'MANU DISTRIBUIDORA DE ALIMENTOS EIRELI', '17.979.701/0001-17', 'Rua Visconde de Pirajá, 414 - Sala 718 - Ipanema - Rio de Janeiro/RJ', 'manu', '#08265b'), contact: 'Telefone (21) 96595-8320', payment: 'Pix / Dep. Bancário' },
+  { ...supplier('rionutri', 'RioNutri Distribuidora Ltda.', '69.599.208/0001-75', 'Rua Visconde de Pirajá, 414, Sala 718/1021 - Ipanema - Rio de Janeiro/RJ - CEP 22410-002', 'rionutri', '#008777'), contact: '(14) 99868-8551 | comercial.grupoom@gmail.com', payment: 'Banco C6 (336) - Ag. 0001 - CC 44609673-3 | PIX: 69.599.208/0001-75', referenceName: 'Romaneio_0003 - PROTEINAS.pdf', footer: 'Rio Nutri Distribuição | Inscrição estadual: 16.782.29-7' },
 ];
 const unitRows: [string, string, string][] = [
   ['MATRIZ - RATEIO', '0001-92', 'Campinas/SP'], ['CEI IGEVE RUBI', '0007-88', 'Guaianases/SP'], ['CEI IGEVE MENDONÇA', '0012-45', 'Guaianases/SP'],
