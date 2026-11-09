@@ -26,6 +26,26 @@ export interface BillingInvoice {
 export const billingInvoiceType = (invoice: BillingInvoice) => invoice.location ? 'Por local' : invoice.rubric?.kind === 'carry' ? 'Aproveitamento anterior' : invoice.rubric?.kind === 'complement' ? 'Complemento de rubrica' : invoice.parentId ? 'Complemento' : 'Romaneio';
 export interface SavedInvoice { invoice: BillingInvoice; version: string }
 export const normalizeBillingText = (value: string) => value.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toUpperCase().replace(/\s+/g, ' ').trim();
+// NF-e suppliers add "IG." to descriptions; it is not part of the product name.
+export const billingProductName = (value: string) => value.replace(/\bIG\.\s*/gi, '').replace(/\s+/g, ' ').trim();
+export function billingProductIdentity(product: string, unit: string): [string, string] {
+  let name = normalizeBillingText(billingProductName(product));
+  let measure = normalizeBillingText(unit || 'UN').replace(/\s+/g, '');
+  const weight = (value: string) => {
+    const match = value.match(/^(\d+(?:[.,]\d+)?)?(KG|G|GR|L|ML)$/);
+    if (!match) return null;
+    const amount = Number((match[1] || '1').replace(',', '.')) * (match[2] === 'KG' || match[2] === 'L' ? 1000 : 1);
+    return `${amount}${['L', 'ML'].includes(match[2]) ? 'ML' : 'G'}`;
+  };
+  const pack = name.match(/(?:^|\s)(\d+(?:[.,]\d+)?\s*(?:KG|GR|G|ML|L))$/);
+  const packageUnit = pack ? weight(pack[1].replace(/\s+/g, '')) : null;
+  const unitWeight = weight(measure);
+  if (pack && packageUnit && (unitWeight === packageUnit || ['UN', 'UND', 'UNID', 'UNIDADE'].includes(measure))) {
+    name = name.slice(0, pack.index).trim(); measure = packageUnit;
+  } else if (unitWeight) measure = unitWeight;
+  else if (['UND', 'UNID', 'UNIDADE'].includes(measure)) measure = 'UN';
+  return [name, measure];
+}
 export const isIgeveOperation = (operation: BillingOperation) =>
   ['MACEIO', 'GUAIANASES', 'GAUIANASES', 'GUAIANAZES', 'BOITUVA', 'MONGAGUA', 'RIO DE JANEIRO'].some(city =>
     (` ${normalizeBillingText(`${operation.name} ${operation.city}`)} `).includes(` ${city} `));
@@ -45,11 +65,12 @@ export const billingPriceKey = (product: string, unit: string) => `${normalizeBi
 export const BILLING_PRICE_PREFIX = 'gom_igeve_price_';
 export interface BillingPriceEntry {
   key: string; operationId: string; category: string; product: string; unit: string; salePrice: number | null;
+  identityVersion?: 1;
   source?: { filename: string; hash: string; invoice: string; importedAt: string };
 }
 export interface SavedBillingPrice { entry: BillingPriceEntry; version: string }
 export const billingOperationPriceKey = (operationId: string, category: string, product: string, unit: string) =>
-  `${BILLING_PRICE_PREFIX}${encodeURIComponent(JSON.stringify([operationId, normalizeBillingText(category), normalizeBillingText(product), normalizeBillingText(unit || 'UN')]))}`;
+  `${BILLING_PRICE_PREFIX}${encodeURIComponent(JSON.stringify([operationId, normalizeBillingText(category), ...billingProductIdentity(product, unit)]))}`;
 export const parseBillingPrice = (value: string): number | null => {
   if (!value.trim()) return null;
   const price = Number(value);
@@ -62,17 +83,38 @@ export function billingPriceCatalog(orders: BillingOrder[], operations: BillingO
   const add = (operationId: string, category: string, product: string, unit: string) => {
     if (!validOperations.has(operationId) || !category.trim() || !product.trim()) return;
     const key = billingOperationPriceKey(operationId, category, product, unit);
-    if (!catalog.has(key)) catalog.set(key, { key, operationId, category, product: product.trim(), unit: unit.trim() || 'UN', salePrice: null });
+    if (!catalog.has(key)) catalog.set(key, { key, operationId, category, product: billingProductName(product), unit: unit.trim() || 'UN', salePrice: null });
   };
   for (const order of orders) for (const delivery of order.deliveries) for (const item of delivery.items) add(order.operationId, order.category, item.product, item.unit);
   for (const invoice of invoices) for (const item of invoice.items) {
     const category = item.category || (!invoice.location ? invoice.category : invoice.location.categories?.length === 1 ? invoice.location.categories[0] : invoice.location.category && !invoice.location.category.includes(',') ? invoice.location.category : '');
     if (category) add(invoice.operationId, category, item.product, item.unit);
   }
-  for (const entry of saved) if (validOperations.has(entry.operationId)) catalog.set(entry.key, { ...entry });
+  for (const entry of canonicalBillingPrices(saved)) if (validOperations.has(entry.operationId)) {
+    const original = catalog.get(entry.key);
+    catalog.set(entry.key, { ...entry, product: original?.product || billingProductName(entry.product), unit: original?.unit || entry.unit });
+  }
   return [...catalog.values()].sort((a, b) => a.operationId.localeCompare(b.operationId) || a.category.localeCompare(b.category, 'pt-BR') || a.product.localeCompare(b.product, 'pt-BR') || a.unit.localeCompare(b.unit, 'pt-BR'));
 }
-export const billingPricesFromEntries = (entries: BillingPriceEntry[]): BillingPrices => Object.fromEntries(entries
+// Read legacy keys without rewriting stored invoices or dropping their price sources.
+export function canonicalBillingPrices(entries: BillingPriceEntry[]): BillingPriceEntry[] {
+  const selected = new Map<string, BillingPriceEntry>();
+  for (const entry of entries) {
+    const key = billingOperationPriceKey(entry.operationId, entry.category, entry.product, entry.unit);
+    const previous = selected.get(key);
+    if (previous) {
+      const canonical = Number(entry.identityVersion === 1) - Number(previous.identityVersion === 1);
+      if (canonical < 0) continue;
+      if (!canonical) {
+        if (previous.salePrice !== null && entry.salePrice === null) continue;
+        if ((previous.salePrice === null) === (entry.salePrice === null) && (previous.source?.importedAt || '') > (entry.source?.importedAt || '')) continue;
+      }
+    }
+    selected.set(key, entry);
+  }
+  return [...selected.entries()].map(([key, entry]) => ({ ...entry, key, product: billingProductName(entry.product) }));
+}
+export const billingPricesFromEntries = (entries: BillingPriceEntry[]): BillingPrices => Object.fromEntries(canonicalBillingPrices(entries)
   .filter(entry => entry.salePrice !== null && Number.isFinite(entry.salePrice) && entry.salePrice >= 0)
   .map(entry => [entry.key, { salePrice: entry.salePrice! }]));
 export const billingUnitPrice = (prices: BillingPrices, operationId: string, category: string, product: string, unit: string) =>

@@ -167,7 +167,7 @@ export default function IgeveBilling() {
       entries = changes.map(([key, value]) => {
         const item = priceCatalog.find(row => row.key === key);
         if (!item) throw new Error('Produto não encontrado. Atualize a tabela.');
-        return { ...item, salePrice: parseBillingPrice(value) };
+        return { ...item, salePrice: parseBillingPrice(value), identityVersion: 1 as const };
       });
     } catch (error) { setMessage(error instanceof Error ? error.message : 'Preço inválido.'); return; }
     setBusy(true); setMessage('');
