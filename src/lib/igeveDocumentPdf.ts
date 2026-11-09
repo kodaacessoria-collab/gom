@@ -1,3 +1,4 @@
+import { createRioNutriPdf } from './igeveRioNutriPdf.ts';
 import { jsPDF } from 'jspdf';
 import { createQuotationPdf } from './igeveQuotePdf.ts';
 import { autoTable } from 'jspdf-autotable';
@@ -11,6 +12,7 @@ export function createIgeveDocumentPdf(doc: NfeDocument, supplier: DocumentSuppl
   if (error) throw new Error(error);
   if (kind === 'quote' && (!quotation || quotation.supplierId !== supplier.id)) throw new Error('Cotação não corresponde ao fornecedor.');
   if (!/^#[0-9a-f]{6}$/i.test(supplier.color)) throw new Error('Confira a cor do modelo.');
+  if (supplier.layout === 'rionutri') return { pdf: createRioNutriPdf(doc, supplier, kind === 'quote' ? quotation : undefined), filename: documentFilename(supplier, doc, kind) };
   if (kind === 'quote') return { pdf: createQuotationPdf(doc, supplier, quotation!), filename: documentFilename(supplier, doc, kind) };
   const pdf = new jsPDF({ unit: 'mm', format: 'a4' });
   const color = rgb(supplier.color);
