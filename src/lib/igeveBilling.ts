@@ -132,6 +132,22 @@ export function applyBillingTablePrices(invoice: BillingInvoice, prices: Billing
   });
   return { invoice: { ...invoice, items }, updated, missing };
 }
+export const billingQuantityAdjustment = (item: BillingItem) =>
+  Math.round(((item.billedQuantity ?? item.quantity) - item.quantity) * 1e6) / 1e6;
+
+export function applyBillingQuantityAdjustment(item: BillingItem, input: string): BillingItem {
+  const value = input.trim();
+  if (value && !/^[+-]?(?:\d+(?:[.,]\d{1,3})?|[.,]\d{1,3})$/.test(value)) {
+    throw new Error('Informe o ajuste em quantidade, como -10 ou +10, com até três casas decimais.');
+  }
+  const adjustment = value ? Number(value.replace(',', '.')) : 0;
+  const billedQuantity = Math.round((item.quantity + adjustment) * 1e6) / 1e6;
+  if (!Number.isFinite(billedQuantity) || billedQuantity < 0) {
+    throw new Error('O ajuste não pode deixar a quantidade faturada negativa.');
+  }
+  return { ...item, billedQuantity };
+}
+
 export const lineTotal = (item: BillingItem) => Math.round((item.billedQuantity ?? item.quantity) * item.price * 100) / 100;
 // Allocate integer cents by largest remainder so the freight is charged exactly once.
 export function billingCostLines(invoice: BillingInvoice) {
@@ -175,7 +191,7 @@ export const validateInvoice = (invoice: BillingInvoice) => {
   if (!invoice.company.trim()) return 'Informe a empresa para faturamento.';
   if (!/^\d{4}-\d{2}-\d{2}$/.test(invoice.date)) return 'Informe a data do faturamento.';
   if (!invoice.items.length) return 'Adicione pelo menos um produto.';
-  if (invoice.items.some(item => (invoice.location || item.billedQuantity !== undefined) && (!Number.isFinite(item.billedQuantity) || item.billedQuantity! < 0))) return 'Informe um ajuste faturamento maior ou igual a zero em todos os itens.';
+  if (invoice.items.some(item => (invoice.location || item.billedQuantity !== undefined) && (!Number.isFinite(item.billedQuantity) || item.billedQuantity! < 0))) return 'A quantidade faturada (entregue mais ajuste) deve ser maior ou igual a zero em todos os itens.';
   if (invoice.items.some(item => !item.product.trim() || !item.unit.trim() || !Number.isFinite(item.quantity) || item.quantity <= 0 || !Number.isFinite(item.price) || item.price < 0)) return 'Preencha produto, unidade, quantidade maior que zero e preço válido em todos os itens.';
   if (invoice.freight && !invoice.batchFreight) {
     const { amount, operationId, category } = invoice.freight;

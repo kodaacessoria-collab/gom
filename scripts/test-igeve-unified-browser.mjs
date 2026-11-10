@@ -55,8 +55,20 @@ try {
   await dialog.getByLabel('Empresa para faturamento',{exact:true}).fill('Empresa Teste');
   await dialog.getByLabel('Preço 1',{exact:true}).fill('10');
   await dialog.getByLabel('Preço 2',{exact:true}).fill('20');
-  await dialog.getByLabel('Ajuste faturamento 1',{exact:true}).fill('0.5');
-  await dialog.getByLabel('Ajuste faturamento 2',{exact:true}).fill('0');
+  const adjustment1 = dialog.getByLabel('Ajuste faturamento 1',{exact:true});
+  const adjustment2 = dialog.getByLabel('Ajuste faturamento 2',{exact:true});
+  assert.equal(await adjustment1.inputValue(), '', 'Ajuste começa vazio');
+  assert.equal(await adjustment2.inputValue(), '', 'Todas as linhas começam sem ajuste');
+  await adjustment1.fill('+10');
+  assert.ok((await adjustment1.locator('..').innerText()).includes('Qtd. faturada: 11'));
+  await adjustment1.fill('');
+  assert.ok((await adjustment1.locator('..').innerText()).includes('Qtd. faturada: 1'), 'Vazio mantém entrega');
+  await adjustment1.fill('0');
+  assert.ok((await adjustment1.locator('..').innerText()).includes('Qtd. faturada: 1'), 'Zero não zera faturamento');
+  await adjustment1.fill('-10');
+  assert.ok(await dialog.getByRole('alert').filter({hasText:'quantidade faturada negativa'}).count());
+  await adjustment1.fill('-0.5');
+  await adjustment2.fill('-2');
   assert.equal(await dialog.getByLabel('Categoria do romaneio de ajuste').locator('option').count(), 2);
   const { getDocument } = await import('pdfjs-dist/legacy/build/pdf.mjs');
   for (const [category, product, excluded, total] of [
@@ -87,9 +99,13 @@ try {
   const saved = [...db.values()].filter(row => row.key.startsWith('gom_igeve_invoice_'));
   assert.equal(saved.length,1, 'Grava apenas um faturamento com as duas origens');
   assert.equal(saved[0].value.location.sourceIds.length,2);
+  assert.deepEqual(saved[0].value.items.map(item => item.billedQuantity), [.5, 0]);
+  assert.deepEqual(saved[0].value.items.map(item => item.quantity), [1, 2]);
   await page.getByRole('button',{name:'Faturamento por romaneio',exact:true}).click();
   await select(['Estocáveis','Dietas e Fórmulas']);
   await panel.getByRole('button',{name:'Abrir faturamento unificado',exact:true}).click();
+  assert.equal(await dialog.getByLabel('Ajuste faturamento 1',{exact:true}).inputValue(),'-0.5');
+  assert.equal(await dialog.getByLabel('Ajuste faturamento 2',{exact:true}).inputValue(),'-2');
   assert.equal(await dialog.getByLabel('Preço 1',{exact:true}).inputValue(),'10');
   assert.equal(await dialog.getByLabel('Preço 2',{exact:true}).inputValue(),'20');
   await dialog.getByRole('button',{name:'Cancelar',exact:true}).click();
@@ -98,6 +114,8 @@ try {
   await select(['Dietas e Fórmulas','Estocáveis']);
   await panel.getByRole('button',{name:'Abrir faturamento unificado',exact:true}).click();
   assert.equal(await dialog.getByLabel('Empresa para faturamento',{exact:true}).inputValue(),'Empresa Teste');
+  assert.equal(await dialog.getByLabel('Ajuste faturamento 1',{exact:true}).inputValue(),'-0.5');
+  assert.equal(await dialog.getByLabel('Ajuste faturamento 2',{exact:true}).inputValue(),'-2');
   assert.deepEqual(errors,[]);
   console.log('OK: uma/várias/todas as categorias, separação por local, exclusão da terceira categoria, gravação única e reabertura após inverter seleção e recarregar.');
 } finally { await browser.close(); }

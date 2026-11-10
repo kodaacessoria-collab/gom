@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { isIgeveOperation, billingTablePrice, applyBillingTablePrices, billingCostLines, billingAdjustmentLines, billingDateInRange, invoiceTotal, lineTotal, companyTotals, validateInvoice, sortBillingRows, locationTotals, locationBillingInvoices, billingOperationPriceKey, billingPriceCatalog, billingPricesFromEntries, parseBillingPrice, billingUnitPrice, createDeliveryBillingInvoice, createLocationBillingInvoice, locationInvoiceConflict, effectiveBillingInvoices, billingCategoryMatches, billingInvoiceCategoryMatches, billingCategoryOptions } from '../src/lib/igeveBilling.ts';
+import { isIgeveOperation, billingTablePrice, applyBillingTablePrices, billingCostLines, billingAdjustmentLines, billingQuantityAdjustment, applyBillingQuantityAdjustment, billingDateInRange, invoiceTotal, lineTotal, companyTotals, validateInvoice, sortBillingRows, locationTotals, locationBillingInvoices, billingOperationPriceKey, billingPriceCatalog, billingPricesFromEntries, parseBillingPrice, billingUnitPrice, createDeliveryBillingInvoice, createLocationBillingInvoice, locationInvoiceConflict, effectiveBillingInvoices, billingCategoryMatches, billingInvoiceCategoryMatches, billingCategoryOptions } from '../src/lib/igeveBilling.ts';
 for (const city of ['Maceió', 'Gauianases', 'Guaianases', 'Guaianazes', 'Boituva', 'Mongaguá', 'Rio de Janeiro']) {
   assert.equal(isIgeveOperation({ id: city, name: `Operação ${city}`, city }), true, city);
 }
@@ -133,7 +133,7 @@ const consolidated = createLocationBillingInvoice(localGroup, localOrders, repor
 assert.equal(consolidated.items.length, 2, 'Agrupa produto/unidade sem misturar unidades distintas');
 const riceKg = consolidated.items.find(item => item.unit === 'KG');
 assert.equal(riceKg.quantity, 10, 'Quantidade entregue soma a origem, independente da edição individual');
-assert.equal(riceKg.billedQuantity, 10, 'Ajuste inicial usa a quantidade entregue');
+assert.equal(riceKg.billedQuantity, 10, 'Quantidade faturada inicial usa a quantidade entregue, com diferença zero');
 assert.equal(riceKg.price, 2.55);
 assert.equal(consolidated.location.count, 2);
 const adjusted = { ...consolidated, company: 'Empresa de teste', items: consolidated.items.map(item => item.id === riceKg.id ? { ...item, billedQuantity: 8, price: 6 } : { ...item, billedQuantity: 0, price: 100 }) };
@@ -294,3 +294,16 @@ assert.equal(billingAdjustmentLines(base, 'Estocáveis').length, 1, 'Compatível
 assert.deepEqual(billingAdjustmentLines({ ...categoryAdjustment, batchFreight: { rice: 1.23, zero: 0, meat: 4.56 } }, 'Estocáveis').map(row => row.freight), [1.23, 0], 'Preserva o frete do conjunto de romaneios');
 assert.deepEqual(categoryAdjustment, adjustmentSnapshot, 'Exportação não altera os dados de origem');
 console.log('OK: romaneio de ajuste por categoria, quantidades zeradas, totais e frete preservado.');
+
+const sixtyDelivered = { ...base.items[0], quantity: 60, price: 6 };
+for (const [input, expected] of [['', 60], ['0', 60], ['-10', 50], ['+10', 70], ['-60', 0], ['+0,5', 60.5], ['-.125', 59.875]]) {
+  const item = applyBillingQuantityAdjustment(sixtyDelivered, input);
+  assert.equal(item.quantity, 60, 'A entrega original fica preservada');
+  assert.equal(item.billedQuantity, expected, `60 entregues e ajuste ${input} = ${expected} faturados`);
+  assert.equal(lineTotal(item), Math.round(expected * 6 * 100) / 100);
+  assert.equal(billingQuantityAdjustment(item), expected - 60);
+}
+assert.equal(applyBillingQuantityAdjustment({ ...sixtyDelivered, billedQuantity: 50 }, '').billedQuantity, 60, 'Limpar o ajuste restaura a quantidade entregue');
+assert.equal(billingQuantityAdjustment({ ...sixtyDelivered, billedQuantity: 50 }), -10, 'Registros anteriores são exibidos como diferença, sem mudar o valor faturado');
+for (const input of ['-61', '-', '+', 'abc', 'Infinity', '1e3', '1.2345']) assert.throws(() => applyBillingQuantityAdjustment(sixtyDelivered, input), undefined, input);
+console.log('OK: ajuste vazio, positivo, negativo, decimal, zeramento, compatibilidade e bloqueio de quantidade final negativa.');
