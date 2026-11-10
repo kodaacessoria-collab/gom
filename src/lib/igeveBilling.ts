@@ -5,7 +5,7 @@ export const BILLING_PREFIX = 'gom_igeve_invoice_';
 export const SOURCE_KEYS = ['gom_delivery_operations', 'gom_delivery_points', 'gom_delivery_operation_orders'];
 export interface BillingOperation { id: string; name: string; city: string }
 export interface BillingPoint { id: string; name: string; operationId: string; code?: string; address?: string; neighborhood?: string }
-export interface BillingItem { id: string; product: string; unit: string; quantity: number; price: number; billedQuantity?: number; category?: string }
+export interface BillingItem { id: string; product: string; unit: string; quantity: number; price: number; billedQuantity?: number; category?: string; addedForBilling?: boolean }
 export interface BillingOrder {
   id: string; operationId: string; category: string; deliveryDate: string; importedAt: string; consumptionPeriod?: string;
   deliveries: { id: string; deliveryPointId: string; items: { product: string; unit: string; quantity: number }[] }[];
@@ -132,6 +132,28 @@ export function applyBillingTablePrices(invoice: BillingInvoice, prices: Billing
   });
   return { invoice: { ...invoice, items }, updated, missing };
 }
+
+export function billingProductsToAdd(invoice: BillingInvoice, entries: BillingPriceEntry[]) {
+  const categories = invoice.location ? invoice.location.categories || invoice.items.map(item => item.category || invoice.category)
+    : invoice.rubric && invoice.rubric.kind !== 'reduction' ? [] : [invoice.category];
+  const existing = new Set(invoice.items.map(item => billingOperationPriceKey(invoice.operationId, item.category || invoice.category, item.product, item.unit)));
+  return canonicalBillingPrices(entries).filter(entry => entry.operationId === invoice.operationId &&
+    (!categories.length || categories.some(category => normalizeBillingText(category) === normalizeBillingText(entry.category))) &&
+    !existing.has(entry.key))
+    .sort((a, b) => a.product.localeCompare(b.product, 'pt-BR') || a.category.localeCompare(b.category, 'pt-BR') || a.unit.localeCompare(b.unit, 'pt-BR'));
+}
+
+export function addBillingTableProduct(invoice: BillingInvoice, entries: BillingPriceEntry[], key: string, quantity: number, id: string): BillingInvoice {
+  const entry = billingProductsToAdd(invoice, entries).find(entry => entry.key === key);
+  if (!entry) throw new Error('Selecione um produto da tabela da operação e categoria que ainda não esteja neste faturamento.');
+  if (!Number.isFinite(quantity) || quantity <= 0 || Math.abs(quantity * 1000 - Math.round(quantity * 1000)) > 1e-6) {
+    throw new Error('Informe uma quantidade maior que zero, com até três casas decimais.');
+  }
+  const adjustable = !!invoice.location || invoice.rubric?.kind === 'reduction';
+  const item: BillingItem = { id, product: entry.product, unit: entry.unit, category: entry.category, price: entry.salePrice ?? 0,
+    quantity: adjustable ? 0 : quantity, ...(adjustable ? { billedQuantity: quantity } : {}), addedForBilling: true };
+  return { ...invoice, items: [...invoice.items, item] };
+}
 export const billingQuantityAdjustment = (item: BillingItem) =>
   Math.round(((item.billedQuantity ?? item.quantity) - item.quantity) * 1e6) / 1e6;
 
@@ -192,7 +214,9 @@ export const validateInvoice = (invoice: BillingInvoice) => {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(invoice.date)) return 'Informe a data do faturamento.';
   if (!invoice.items.length) return 'Adicione pelo menos um produto.';
   if (invoice.items.some(item => (invoice.location || item.billedQuantity !== undefined) && (!Number.isFinite(item.billedQuantity) || item.billedQuantity! < 0))) return 'A quantidade faturada (entregue mais ajuste) deve ser maior ou igual a zero em todos os itens.';
-  if (invoice.items.some(item => !item.product.trim() || !item.unit.trim() || !Number.isFinite(item.quantity) || item.quantity <= 0 || !Number.isFinite(item.price) || item.price < 0)) return 'Preencha produto, unidade, quantidade maior que zero e preço válido em todos os itens.';
+  if (invoice.items.some(item => !item.product.trim() || !item.unit.trim() || !Number.isFinite(item.quantity) ||
+    (item.addedForBilling && (invoice.location || invoice.rubric?.kind === 'reduction') ? item.quantity !== 0 : item.quantity <= 0) ||
+    !Number.isFinite(item.price) || item.price < 0)) return 'Preencha produto, unidade, quantidade maior que zero e preço válido em todos os itens.';
   if (invoice.freight && !invoice.batchFreight) {
     const { amount, operationId, category } = invoice.freight;
     if (operationId !== invoice.operationId) return 'A operação do frete deve ser a mesma do faturamento.';
