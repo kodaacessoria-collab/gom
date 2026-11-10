@@ -290,7 +290,9 @@ assert.deepEqual(stockAdjustment.map(row => row.freight), [4, 0], 'Mantém apena
 assert.equal(stockAdjustment.reduce((sum, row) => sum + row.total, 0), 10, 'Total inclui somente produtos e frete da categoria');
 assert.equal(billingAdjustmentLines(categoryAdjustment, 'Proteínas')[0].total, 36);
 assert.deepEqual(billingAdjustmentLines(categoryAdjustment, 'Limpeza'), []);
-assert.equal(billingAdjustmentLines(base, 'Estocáveis').length, 1, 'Compatível com item sem categoria própria');
+assert.equal(billingAdjustmentLines(base, 'Estocáveis').length, 0, 'Itens sem ajuste não entram no romaneio');
+assert.equal(billingAdjustmentLines({ ...base, items: [{ ...base.items[0], billedQuantity: 2 }] }, 'Estocáveis').length, 1, 'Compatível com item ajustado sem categoria própria');
+assert.equal(billingAdjustmentLines({ ...categoryAdjustment, items: [...categoryAdjustment.items, { ...categoryAdjustment.items[0], id: 'unchanged', billedQuantity: 5 }] }, 'Estocáveis').length, 2, 'Exclui os itens cuja quantidade não foi alterada');
 assert.deepEqual(billingAdjustmentLines({ ...categoryAdjustment, batchFreight: { rice: 1.23, zero: 0, meat: 4.56 } }, 'Estocáveis').map(row => row.freight), [1.23, 0], 'Preserva o frete do conjunto de romaneios');
 assert.deepEqual(categoryAdjustment, adjustmentSnapshot, 'Exportação não altera os dados de origem');
 console.log('OK: romaneio de ajuste por categoria, quantidades zeradas, totais e frete preservado.');

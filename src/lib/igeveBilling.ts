@@ -4,10 +4,10 @@ import { getOrderControlNumber } from './orderControlNumber.ts';
 export const BILLING_PREFIX = 'gom_igeve_invoice_';
 export const SOURCE_KEYS = ['gom_delivery_operations', 'gom_delivery_points', 'gom_delivery_operation_orders'];
 export interface BillingOperation { id: string; name: string; city: string }
-export interface BillingPoint { id: string; name: string; operationId: string }
+export interface BillingPoint { id: string; name: string; operationId: string; code?: string; address?: string; neighborhood?: string }
 export interface BillingItem { id: string; product: string; unit: string; quantity: number; price: number; billedQuantity?: number; category?: string }
 export interface BillingOrder {
-  id: string; operationId: string; category: string; deliveryDate: string; importedAt: string;
+  id: string; operationId: string; category: string; deliveryDate: string; importedAt: string; consumptionPeriod?: string;
   deliveries: { id: string; deliveryPointId: string; items: { product: string; unit: string; quantity: number }[] }[];
 }
 export interface LocationInvoiceContext {
@@ -184,7 +184,7 @@ export function billingCostLines(invoice: BillingInvoice) {
 }
 // Filter after allocation so a category export preserves its share of the full invoice freight.
 export const billingAdjustmentLines = (invoice: BillingInvoice, category: string) =>
-  billingCostLines(invoice).filter(row => (row.item.category || invoice.category) === category);
+  billingCostLines(invoice).filter(row => (row.item.category || invoice.category) === category && billingQuantityAdjustment(row.item) !== 0);
 
 export const invoiceTotal = (invoice: BillingInvoice) => Math.round(billingCostLines(invoice).reduce((sum, row) => sum + row.total, 0) * 100) / 100;
 export const validateInvoice = (invoice: BillingInvoice) => {
