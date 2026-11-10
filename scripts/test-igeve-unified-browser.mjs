@@ -8,11 +8,11 @@ import IgeveBilling from '/src/components/IgeveBilling.tsx'; import '/src/index.
 createRoot(document.getElementById('root')).render(React.createElement(IgeveBilling));
 </script></body></html>`);
 const operation = { id: 'guaianases', name: 'Operação Guaianases (SP)', city: 'Guaianases' };
-const points = ['Rubi', 'Mendonça'].map((name, i) => ({ id: `point-${i}`, name, operationId: operation.id }));
+const points = ['Rubi', 'Mendonça'].map((name, i) => ({ id: `point-${i}`, name, operationId: operation.id, code: `1${i ? 'B' : 'A'}`, address: 'Rua de teste, 38', neighborhood: 'Jardim Mirian' }));
 const month = new Intl.DateTimeFormat('sv-SE', {timeZone:'America/Sao_Paulo'}).format(new Date()).slice(0,7);
 const orders = ['Estocáveis', 'Dietas e Fórmulas', 'Proteínas'].map((category, i) => ({
   id: `order-${i}`, operationId: operation.id, category, deliveryDate: `${month}-01`, importedAt: `2026-10-30T13:2${i}:00Z`,
-  deliveries: points.map(point => ({ id: `${i}-${point.id}`, deliveryPointId: point.id, items: [{ product: `Produto ${i}`, unit: 'UN', quantity: i + 1 }] })),
+  deliveries: points.map(point => ({ id: `${i}-${point.id}`, deliveryPointId: point.id, items: [{ product: `Produto ${i}`, unit: 'UN', quantity: i + 1 }, ...(i === 0 ? [{product: 'Sem ajuste', unit:'KG', quantity:4}] : [])] })),
 }));
 const db = new Map([
   ['gom_delivery_operations', [operation]], ['gom_delivery_points', points], ['gom_delivery_operation_orders', orders],
@@ -51,8 +51,9 @@ try {
   assert.equal(await panel.getByRole('button',{name:'Preparar faturamento',exact:true}).count(), 0);
   await panel.getByRole('button',{name:'Preparar faturamento unificado',exact:true}).first().click();
   const dialog = page.getByRole('dialog');
-  assert.equal(await dialog.getByRole('textbox',{name:/^Produto \d/}).count(), 2, 'Dois produtos no mesmo editor; terceira categoria excluída');
-  await dialog.getByLabel('Empresa para faturamento',{exact:true}).fill('Empresa Teste');
+  assert.equal(await dialog.getByRole('textbox',{name:/^Produto \d/}).count(), 3, 'Três produtos no mesmo editor; terceira categoria excluída');
+  await dialog.getByLabel('Empresa para faturamento',{exact:true}).fill('OM LOGISTICA E DISTRIBUICAO LTDA');
+  await dialog.getByLabel('CNPJ',{exact:true}).fill('68.673.515/0001-96');
   await dialog.getByLabel('Preço 1',{exact:true}).fill('10');
   await dialog.getByLabel('Preço 2',{exact:true}).fill('20');
   const adjustment1 = dialog.getByLabel('Ajuste faturamento 1',{exact:true});
@@ -69,29 +70,53 @@ try {
   assert.ok(await dialog.getByRole('alert').filter({hasText:'quantidade faturada negativa'}).count());
   await adjustment1.fill('-0.5');
   await adjustment2.fill('-2');
-  assert.equal(await dialog.getByLabel('Categoria do romaneio de ajuste').locator('option').count(), 2);
+  assert.equal(await dialog.getByLabel('Categoria do romaneio').locator('option').count(), 2);
   const { getDocument } = await import('pdfjs-dist/legacy/build/pdf.mjs');
-  for (const [category, product, excluded, total] of [
-    ['Dietas e Fórmulas', 'Produto 1', 'Produto 0', '0,00'],
-    ['Estocáveis', 'Produto 0', 'Produto 1', '5,00'],
+  for (const [category, product, excluded, quantity] of [
+    ['Dietas e Fórmulas', 'Produto 1', 'Produto 0', '-2'],
+    ['Estocáveis', 'Produto 0', 'Produto 1', '-0,5'],
   ]) {
-    await dialog.getByLabel('Categoria do romaneio de ajuste').selectOption(category);
+    await dialog.getByLabel('Categoria do romaneio').selectOption(category);
     const downloaded = page.waitForEvent('download');
-    await dialog.getByRole('button',{name:'Gerar romaneio de ajuste',exact:true}).click();
+    await dialog.getByRole('button',{name:'Gerar romaneio',exact:true}).click();
     const file = await downloaded;
-    assert.ok(file.suggestedFilename().startsWith('romaneio-ajuste-'));
+    assert.ok(file.suggestedFilename().startsWith('romaneio-') && !file.suggestedFilename().includes('ajuste'));
     const path = `tmp/ajuste-${category === 'Estocáveis' ? 'estocaveis' : 'dietas'}.pdf`;
     await file.saveAs(path);
     const { readFileSync } = await import('node:fs');
     const pdf = await getDocument({data: new Uint8Array(readFileSync(path)), useSystemFonts: true}).promise;
     let content = '';
     for (let i = 1; i <= pdf.numPages; i++) content += (await (await pdf.getPage(i)).getTextContent()).items.map(item => item.str).join(' ');
-    assert.ok(content.includes('Romaneio de ajuste'), content);
-    assert.ok(content.includes(category), content);
+    content = content.replace(/\s+/g, ' ');
+    assert.ok(content.includes('ROMANEIO') && !content.includes('ajuste'), content);
+    assert.ok(content.includes(category.toUpperCase()), content);
     assert.ok(content.includes(product), content);
     assert.ok(!content.includes(excluded), 'PDF não deve misturar produtos de outras categorias');
-    assert.ok(content.includes(total), content);
+    assert.ok(content.includes(quantity), content);
+    assert.ok(!content.includes('Sem ajuste'), 'Exclui produto não ajustado da mesma categoria');
+    assert.ok(!content.includes('R$'), 'Modelo OM Log sem valores financeiros');
+    assert.ok(content.includes('Nome de quem recebeu'), content);
+    assert.ok(content.includes('Rua de teste, 38'), content);
+    assert.ok(content.includes('UND / MEDIDA'), content);
   }
+  await adjustment1.fill('');
+  await dialog.getByRole('button',{name:'Gerar romaneio',exact:true}).click();
+  assert.ok(await dialog.getByRole('alert').filter({hasText:'Nenhum item ajustado nesta categoria'}).count());
+  await adjustment1.fill('-0.5');
+  await dialog.getByLabel('Empresa para faturamento',{exact:true}).fill('Outra empresa');
+  await dialog.getByLabel('CNPJ',{exact:true}).fill('12.345.678/0001-90');
+  const genericDownload = page.waitForEvent('download');
+  await dialog.getByRole('button',{name:'Gerar romaneio',exact:true}).click();
+  const genericFile = await genericDownload;
+  await genericFile.saveAs('tmp/romaneio-outra-empresa.pdf');
+  const { readFileSync: readGeneric } = await import('node:fs');
+  const genericPdf = await getDocument({data:new Uint8Array(readGeneric('tmp/romaneio-outra-empresa.pdf')),useSystemFonts:true}).promise;
+  const genericText = (await (await genericPdf.getPage(1)).getTextContent()).items.map(item => item.str).join(' ').replace(/\s+/g,' ');
+  assert.ok(genericText.includes('R$'), 'Outras empresas preservam seu modelo atual');
+  assert.ok(!genericText.includes('UND / MEDIDA'), 'Modelo OM não é usado em outras empresas');
+  assert.ok(!genericText.includes('Sem ajuste'), 'Outras empresas também exportam somente itens ajustados');
+  await dialog.getByLabel('Empresa para faturamento',{exact:true}).fill('OM LOGISTICA E DISTRIBUICAO LTDA');
+  await dialog.getByLabel('CNPJ',{exact:true}).fill('68.673.515/0001-96');
   assert.equal([...db.keys()].filter(key => key.startsWith('gom_igeve_invoice_')).length, 0, 'Gerar PDF não grava nem duplica faturamento');
   await page.screenshot({path:'tmp/igeve-ajuste-categoria.png', fullPage: true});
   await dialog.getByRole('button',{name:'Salvar faturamento',exact:true}).click();
@@ -99,8 +124,8 @@ try {
   const saved = [...db.values()].filter(row => row.key.startsWith('gom_igeve_invoice_'));
   assert.equal(saved.length,1, 'Grava apenas um faturamento com as duas origens');
   assert.equal(saved[0].value.location.sourceIds.length,2);
-  assert.deepEqual(saved[0].value.items.map(item => item.billedQuantity), [.5, 0]);
-  assert.deepEqual(saved[0].value.items.map(item => item.quantity), [1, 2]);
+  assert.deepEqual(saved[0].value.items.map(item => item.billedQuantity), [.5, 0, 4]);
+  assert.deepEqual(saved[0].value.items.map(item => item.quantity), [1, 2, 4]);
   await page.getByRole('button',{name:'Faturamento por romaneio',exact:true}).click();
   await select(['Estocáveis','Dietas e Fórmulas']);
   await panel.getByRole('button',{name:'Abrir faturamento unificado',exact:true}).click();
@@ -113,7 +138,7 @@ try {
   await panel.getByRole('button',{name:'Preparar faturamento unificado',exact:true}).first().waitFor();
   await select(['Dietas e Fórmulas','Estocáveis']);
   await panel.getByRole('button',{name:'Abrir faturamento unificado',exact:true}).click();
-  assert.equal(await dialog.getByLabel('Empresa para faturamento',{exact:true}).inputValue(),'Empresa Teste');
+  assert.equal(await dialog.getByLabel('Empresa para faturamento',{exact:true}).inputValue(),'OM LOGISTICA E DISTRIBUICAO LTDA');
   assert.equal(await dialog.getByLabel('Ajuste faturamento 1',{exact:true}).inputValue(),'-0.5');
   assert.equal(await dialog.getByLabel('Ajuste faturamento 2',{exact:true}).inputValue(),'-2');
   assert.deepEqual(errors,[]);

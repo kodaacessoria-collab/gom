@@ -19,6 +19,8 @@ import IgeveRubrics from './IgeveRubrics';
 import IgeveDocuments from './IgeveDocuments';
 import { RUBRIC_PREFIX, withDeferredItems, rubricBalance, rubricMonthInvoices, rubricScopeInvoices } from '../lib/igeveRubrics';
 import type { MonthlyRubric, SavedRubric } from '../lib/igeveRubrics';
+import { createOmBillingRomaneio, isOmLogBilling, romaneioFilename } from '../lib/igeveOmRomaneio';
+import igeveLogoUrl from '../assets/igeve-logo.png';
 import './IgeveBilling.css';
 
 const money = (value: number) => value.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
@@ -356,10 +358,20 @@ export default function IgeveBilling() {
       if (invoice && adjustmentCategory) {
         const error = validateInvoice(invoice);
         if (error) { setMessage(error); return; }
-        if (!billingAdjustmentLines(invoice, adjustmentCategory).length) { setMessage('Nenhum produto encontrado nesta categoria.'); return; }
+        if (!billingAdjustmentLines(invoice, adjustmentCategory).length) { setMessage('Nenhum item ajustado nesta categoria. Informe um ajuste diferente de zero para gerar o romaneio.'); return; }
+        if (isOmLogBilling(invoice)) {
+          const response = await fetch(igeveLogoUrl);
+          if (!response.ok) throw new Error('Logo indisponível.');
+          const blob = await response.blob();
+          const logo = await new Promise<string>((resolve, reject) => { const reader = new FileReader(); reader.onload = () => resolve(String(reader.result)); reader.onerror = () => reject(reader.error); reader.readAsDataURL(blob); });
+          const sourceKeys = new Set(invoice.location?.deliveryKeys || []);
+          const consumption = [...new Set(orders.filter(order => invoice!.location ? order.deliveries.some(delivery => sourceKeys.has(JSON.stringify([order.id, delivery.id]))) : order.id === invoice!.sourceOrderId).map(order => order.consumptionPeriod).filter(Boolean))].join(' / ');
+          createOmBillingRomaneio(invoice, adjustmentCategory, { logo, point: points.find(point => point.id === invoice!.deliveryPointId), consumption }).save(romaneioFilename(invoice, adjustmentCategory));
+          return;
+        }
       }
       const doc = new jsPDF({ orientation: 'landscape' });
-      await addPdfHeader(doc, { title: invoice ? adjustmentCategory ? `Romaneio de ajuste - ${adjustmentCategory}` : `Faturamento IGEVE - ${billingInvoiceType(invoice)}` : tab === 'locations' ? 'Faturamento IGEVE por operação/local' : 'Faturamento IGEVE por empresa', subtitle: invoice ? `${invoice.company} | CNPJ: ${invoice.cnpj || '-'} | ${dateLabel(invoice.date)}` : `Período de ${tab === 'locations' ? 'entrega' : 'faturamento'}: ${dateLabel(start) || 'início'} a ${dateLabel(end) || 'hoje'}`, footer: !invoice && tab === 'locations' && pendingLocationCount ? `${pendingLocationCount} local(is) a preparar: valores estimados; itens sem preço cadastrado valem zero.` : undefined });
+      await addPdfHeader(doc, { title: invoice ? adjustmentCategory ? 'Romaneio' : `Faturamento IGEVE - ${billingInvoiceType(invoice)}` : tab === 'locations' ? 'Faturamento IGEVE por operação/local' : 'Faturamento IGEVE por empresa', subtitle: invoice ? `${invoice.company} | CNPJ: ${invoice.cnpj || '-'} | ${dateLabel(invoice.date)}` : `Período de ${tab === 'locations' ? 'entrega' : 'faturamento'}: ${dateLabel(start) || 'início'} a ${dateLabel(end) || 'hoje'}`, footer: !invoice && tab === 'locations' && pendingLocationCount ? `${pendingLocationCount} local(is) a preparar: valores estimados; itens sem preço cadastrado valem zero.` : undefined });
       if (invoice) {
         doc.setFontSize(10);
         const info = `${invoice.operation} | ${invoice.destination} | Controle: ${invoice.control} | ${adjustmentCategory || invoice.category}`;
@@ -379,7 +391,7 @@ export default function IgeveBilling() {
         doc.addPage();
         autoTable(doc, { head: [['Empresa', 'Operação / local', 'Controle', 'Tipo', 'Data faturamento', 'Total']], body: visibleInvoices.map(item => [item.company, `${item.operation} / ${item.destination}`, item.control, billingInvoiceType(item), dateLabel(item.date), money(invoiceTotal(item))]) });
       }
-      doc.save(invoice && adjustmentCategory ? `romaneio-ajuste-${adjustmentCategory.replace(/[^a-zA-Z0-9À-ÿ_-]+/g, '-')}-${invoice.control.replace(/[^a-zA-Z0-9_-]+/g, '-')}.pdf` : invoice ? `faturamento-${invoice.control}-${invoice.id.slice(-8)}.pdf` : tab === 'locations' ? 'faturamento-igeve-locais.pdf' : 'faturamento-igeve-empresas.pdf');
+      doc.save(invoice && adjustmentCategory ? romaneioFilename(invoice, adjustmentCategory) : invoice ? `faturamento-${invoice.control}-${invoice.id.slice(-8)}.pdf` : tab === 'locations' ? 'faturamento-igeve-locais.pdf' : 'faturamento-igeve-empresas.pdf');
     } catch { setMessage('Não foi possível gerar o PDF. Tente novamente.'); }
   }
   function exportExcel() {
@@ -440,10 +452,11 @@ export default function IgeveBilling() {
     {draft.rubric?.kind === 'reduction' && <p>As quantidades retiradas em Ajuste faturamento serão guardadas para aproveitamento no mês seguinte. As entregas originais são preservadas.</p>}
     {draft.location && <p>Entregas de {dateLabel(draft.location.start) || 'início'} a {dateLabel(draft.location.end) || 'fim'} · {draft.location.count} romaneio(s). Informe somente a diferença em quantidade: -10 para retirar ou +10 para acrescentar. Vazio ou zero mantém a quantidade entregue. A quantidade faturada é a entregue mais o ajuste.</p>}
     {adjustableDraft && <div className="card igeve-panel">
-      <h3>Romaneio de ajuste por categoria</h3>
-      <p>Gere o PDF com as quantidades entregues e ajustadas, preços e frete da categoria selecionada. O documento usa os valores atuais desta janela; salve o faturamento para registrar as alterações.</p>
-      <div className="igeve-filters"><label>Categoria do romaneio de ajuste<select className="input-field" value={selectedAdjustmentCategory} onChange={event => setAdjustmentCategory(event.target.value)}>{adjustmentCategories.map(category => <option key={category} value={category}>{category}</option>)}</select></label>
-      <button type="button" className="button button-outline" disabled={busy || !selectedAdjustmentCategory} onClick={() => void exportPdf(draft, selectedAdjustmentCategory)}><FileText size={16} /> Gerar romaneio de ajuste</button></div>
+      <h3>Romaneio</h3>
+      <p>Gere o romaneio somente com os itens que receberam ajuste na categoria selecionada. O documento usa os valores atuais desta janela; salve o faturamento para registrar as alterações.</p>
+      {isOmLogBilling(draft) && <p>Modelo OM Log: produtos, unidade, quantidade do ajuste e campos para recebimento.</p>}
+      <div className="igeve-filters"><label>Categoria do romaneio<select className="input-field" value={selectedAdjustmentCategory} onChange={event => setAdjustmentCategory(event.target.value)}>{adjustmentCategories.map(category => <option key={category} value={category}>{category}</option>)}</select></label>
+      <button type="button" className="button button-outline" disabled={busy || !selectedAdjustmentCategory} onClick={() => void exportPdf(draft, selectedAdjustmentCategory)}><FileText size={16} /> Gerar romaneio</button></div>
     </div>}
     {adjustableDraft && <p>Quantidade faturada = quantidade entregue + ajuste. Exemplo: 60 entregues com ajuste -10 = 50 faturados; com +10 = 70 faturados.</p>}
     {adjustmentError && <p role="alert">{adjustmentError}</p>}

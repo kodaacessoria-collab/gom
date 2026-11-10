@@ -87,6 +87,10 @@ No editor de faturamento, cada preço indica **Tabela: R$ ...** quando existe ca
 Use **Buscar preços na tabela** para consultar novamente os valores salvos no banco e aplicar os preços encontrados ao faturamento aberto, inclusive um faturamento antigo que tenha sido salvo antes do cadastro dos preços. Os valores sem correspondência são mantidos. Revise e salve o faturamento para confirmar; cancelar preserva o registro anterior. Alterações ainda não salvas na Tabela de preços precisam ser salvas antes desta busca. O botão não busca preços de outra operação, categoria ou unidade e não inventa valores para itens pendentes.
 
 
-## Romaneio de ajuste por categoria
+## Romaneio
 
-No editor do faturamento por local, escolha **Categoria do romaneio de ajuste** e clique em **Gerar romaneio de ajuste**. O PDF contém somente os produtos da categoria, com quantidade entregue, ajuste com sinal, quantidade faturada, preço e a parcela correspondente do frete. Usa os valores atuais do editor; salve o faturamento para registrar as alterações. Registros antigos preservam a quantidade faturada e mostram no campo apenas a diferença em relação à entrega.
+No editor do faturamento por local, escolha **Categoria do romaneio** e clique em **Gerar romaneio**. Entram somente os itens da categoria cuja quantidade foi alterada; campos vazios, ajuste zero e quantidades finais iguais à entrega ficam fora. Se a categoria não tiver itens ajustados, o sistema informa isso e não gera um arquivo vazio.
+
+Para a **OM Log** (CNPJ 68.673.515/0001-96), o PDF segue o modelo de referência: A4 retrato, logo IGEVE, título **ROMANEIO**, operação/categoria, local/código/endereço/bairro, data de entrega, consumo e observação geral. A tabela verde contém **Produto**, **UND / MEDIDA**, **QTD** e **OBS.**. QTD mostra somente a diferença do ajuste, com sinal para acréscimos e reduções. Não imprime preços nem totais financeiros. Os campos de recebimento, nome, RG e assinatura ficam em branco. Dados de local e consumo vêm dos cadastros e entregas de origem; não são preenchidos com dados fixos do modelo.
+
+O modelo OM Log é exclusivo dessa empresa; as demais preservam o formato atual até receberem seus próprios modelos. O documento usa os valores atuais do editor; salve o faturamento para registrar as alterações. Registros antigos preservam a quantidade faturada e mostram no campo apenas a diferença em relação à entrega.
