@@ -82,6 +82,12 @@ Validação específica: `node scripts/test-igeve-freight.mjs`.
 
 ## Conferência e busca dos preços no editor
 
+Use **Adicionar produtos da tabela** no editor para buscar produtos salvos na tabela da própria operação e das categorias do faturamento. A busca aceita produto, categoria ou unidade. Selecione o produto, informe a quantidade positiva (até três casas decimais) e clique em **Incluir produto selecionado**. Categoria, unidade e preço são preenchidos pela tabela; um preço pendente entra com zero e recebe aviso para preenchimento. Produtos já presentes, inclusive com embalagens equivalentes, ficam fora da seleção.
+
+No faturamento por local e nas reduções de rubrica, os novos produtos têm **Qtd. entregue** zero e a quantidade informada entra em **Ajuste faturamento** como acréscimo. Eles participam do total e do romaneio da sua categoria. O botão de remoção fica disponível para esses produtos; as linhas de entrega original permanecem preservadas. Salve o faturamento para registrar a inclusão ou remoção. Reabrir o registro recupera produto, preço e ajuste. Nos romaneios comuns e complementos, a quantidade é preenchida diretamente.
+
+Validação da inclusão: `node scripts/test-igeve-billing-add-products.mjs`. O teste `node scripts/test-igeve-billing-add-products-browser.mjs` verifica a busca, inclusão, remoção, gravação e reabertura com dados fictícios; requer Playwright/Chromium e Vite na porta 5174.
+
 No editor de faturamento, cada preço indica **Tabela: R$ ...** quando existe cadastro correspondente à operação, categoria, produto e unidade, ou **Sem preço cadastrado na tabela** quando está pendente. Um preço zero cadastrado é válido e aparece como cadastrado. Itens com preço zero e sem cadastro exibem um aviso com os produtos pendentes; nesses casos, o custo final contém somente o frete até informar o preço.
 
 Use **Buscar preços na tabela** para consultar novamente os valores salvos no banco e aplicar os preços encontrados ao faturamento aberto, inclusive um faturamento antigo que tenha sido salvo antes do cadastro dos preços. Os valores sem correspondência são mantidos. Revise e salve o faturamento para confirmar; cancelar preserva o registro anterior. Alterações ainda não salvas na Tabela de preços precisam ser salvas antes desta busca. O botão não busca preços de outra operação, categoria ou unidade e não inventa valores para itens pendentes.
