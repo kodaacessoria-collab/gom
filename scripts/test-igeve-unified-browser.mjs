@@ -55,6 +55,33 @@ try {
   await dialog.getByLabel('Empresa para faturamento',{exact:true}).fill('Empresa Teste');
   await dialog.getByLabel('Preço 1',{exact:true}).fill('10');
   await dialog.getByLabel('Preço 2',{exact:true}).fill('20');
+  await dialog.getByLabel('Ajuste faturamento 1',{exact:true}).fill('0.5');
+  await dialog.getByLabel('Ajuste faturamento 2',{exact:true}).fill('0');
+  assert.equal(await dialog.getByLabel('Categoria do romaneio de ajuste').locator('option').count(), 2);
+  const { getDocument } = await import('pdfjs-dist/legacy/build/pdf.mjs');
+  for (const [category, product, excluded, total] of [
+    ['Dietas e Fórmulas', 'Produto 1', 'Produto 0', '0,00'],
+    ['Estocáveis', 'Produto 0', 'Produto 1', '5,00'],
+  ]) {
+    await dialog.getByLabel('Categoria do romaneio de ajuste').selectOption(category);
+    const downloaded = page.waitForEvent('download');
+    await dialog.getByRole('button',{name:'Gerar romaneio de ajuste',exact:true}).click();
+    const file = await downloaded;
+    assert.ok(file.suggestedFilename().startsWith('romaneio-ajuste-'));
+    const path = `tmp/ajuste-${category === 'Estocáveis' ? 'estocaveis' : 'dietas'}.pdf`;
+    await file.saveAs(path);
+    const { readFileSync } = await import('node:fs');
+    const pdf = await getDocument({data: new Uint8Array(readFileSync(path)), useSystemFonts: true}).promise;
+    let content = '';
+    for (let i = 1; i <= pdf.numPages; i++) content += (await (await pdf.getPage(i)).getTextContent()).items.map(item => item.str).join(' ');
+    assert.ok(content.includes('Romaneio de ajuste'), content);
+    assert.ok(content.includes(category), content);
+    assert.ok(content.includes(product), content);
+    assert.ok(!content.includes(excluded), 'PDF não deve misturar produtos de outras categorias');
+    assert.ok(content.includes(total), content);
+  }
+  assert.equal([...db.keys()].filter(key => key.startsWith('gom_igeve_invoice_')).length, 0, 'Gerar PDF não grava nem duplica faturamento');
+  await page.screenshot({path:'tmp/igeve-ajuste-categoria.png', fullPage: true});
   await dialog.getByRole('button',{name:'Salvar faturamento',exact:true}).click();
   await dialog.waitFor({state:'hidden'});
   const saved = [...db.values()].filter(row => row.key.startsWith('gom_igeve_invoice_'));

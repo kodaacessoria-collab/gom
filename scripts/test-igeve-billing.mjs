@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { isIgeveOperation, billingTablePrice, applyBillingTablePrices, billingCostLines, billingDateInRange, invoiceTotal, lineTotal, companyTotals, validateInvoice, sortBillingRows, locationTotals, locationBillingInvoices, billingOperationPriceKey, billingPriceCatalog, billingPricesFromEntries, parseBillingPrice, billingUnitPrice, createDeliveryBillingInvoice, createLocationBillingInvoice, locationInvoiceConflict, effectiveBillingInvoices, billingCategoryMatches, billingInvoiceCategoryMatches, billingCategoryOptions } from '../src/lib/igeveBilling.ts';
+import { isIgeveOperation, billingTablePrice, applyBillingTablePrices, billingCostLines, billingAdjustmentLines, billingDateInRange, invoiceTotal, lineTotal, companyTotals, validateInvoice, sortBillingRows, locationTotals, locationBillingInvoices, billingOperationPriceKey, billingPriceCatalog, billingPricesFromEntries, parseBillingPrice, billingUnitPrice, createDeliveryBillingInvoice, createLocationBillingInvoice, locationInvoiceConflict, effectiveBillingInvoices, billingCategoryMatches, billingInvoiceCategoryMatches, billingCategoryOptions } from '../src/lib/igeveBilling.ts';
 for (const city of ['Maceió', 'Gauianases', 'Guaianases', 'Guaianazes', 'Boituva', 'Mongaguá', 'Rio de Janeiro']) {
   assert.equal(isIgeveOperation({ id: city, name: `Operação ${city}`, city }), true, city);
 }
@@ -271,3 +271,26 @@ assert.equal(applyBillingTablePrices(manualPriceDraft, {}).missing, 2);
 assert.equal(billingTablePrice(operationPrices, { ...tableDraft, operationId: 'outra' }, tableDraft.items[0]), undefined);
 assert.equal(billingTablePrice(operationPrices, tableDraft, { ...tableDraft.items[0], unit: 'PACOTE' }), undefined);
 console.log('OK: atualização explícita dos preços salvos, consolidados com múltiplas categorias, zero cadastrado, pendências e preservação de valores sem correspondência.');
+
+const categoryAdjustment = {
+  ...structuredClone(base), category: 'Estocáveis, Proteínas',
+  freight: { operationId: base.operationId, category: '', amount: 10 },
+  items: [
+    { id: 'rice', product: 'Arroz', category: 'Estocáveis', unit: 'KG', quantity: 5, billedQuantity: 2, price: 3 },
+    { id: 'zero', product: 'Feijão', category: 'Estocáveis', unit: 'KG', quantity: 4, billedQuantity: 0, price: 8 },
+    { id: 'meat', product: 'Carne', category: 'Proteínas', unit: 'KG', quantity: 8, billedQuantity: 3, price: 10 },
+  ],
+};
+const adjustmentSnapshot = structuredClone(categoryAdjustment);
+const stockAdjustment = billingAdjustmentLines(categoryAdjustment, 'Estocáveis');
+assert.deepEqual(stockAdjustment.map(row => row.item.id), ['rice', 'zero']);
+assert.equal(stockAdjustment[0].item.quantity, 5, 'Preserva quantidade entregue');
+assert.equal(stockAdjustment[0].item.billedQuantity, 2, 'Usa o ajuste faturado');
+assert.deepEqual(stockAdjustment.map(row => row.freight), [4, 0], 'Mantém apenas a parcela do frete da categoria, sem redistribuir o frete inteiro');
+assert.equal(stockAdjustment.reduce((sum, row) => sum + row.total, 0), 10, 'Total inclui somente produtos e frete da categoria');
+assert.equal(billingAdjustmentLines(categoryAdjustment, 'Proteínas')[0].total, 36);
+assert.deepEqual(billingAdjustmentLines(categoryAdjustment, 'Limpeza'), []);
+assert.equal(billingAdjustmentLines(base, 'Estocáveis').length, 1, 'Compatível com item sem categoria própria');
+assert.deepEqual(billingAdjustmentLines({ ...categoryAdjustment, batchFreight: { rice: 1.23, zero: 0, meat: 4.56 } }, 'Estocáveis').map(row => row.freight), [1.23, 0], 'Preserva o frete do conjunto de romaneios');
+assert.deepEqual(categoryAdjustment, adjustmentSnapshot, 'Exportação não altera os dados de origem');
+console.log('OK: romaneio de ajuste por categoria, quantidades zeradas, totais e frete preservado.');

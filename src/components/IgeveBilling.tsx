@@ -7,7 +7,7 @@ import * as XLSX from 'xlsx';
 import { supabase } from '../lib/supabase';
 import { getOrderControlNumber } from '../lib/orderControlNumber';
 import { addPdfHeader } from '../lib/pdfBranding';
-import { billingInvoiceType, BILLING_PREFIX, BILLING_PRICE_PREFIX, billingPriceCatalog, billingPricesFromEntries, billingOperationPriceKey, parseBillingPrice, SOURCE_KEYS, billingCategoryOptions, billingCategoryMatches, billingInvoiceCategoryMatches, sortBillingRows, createLocationBillingInvoice, locationInvoiceConflict, effectiveBillingInvoices, createDeliveryBillingInvoice, locationBillingInvoices, locationTotals, companyTotals, billingDateInRange, invoiceTotal, isIgeveOperation, billingCostLines, billingTablePrice, applyBillingTablePrices, validateInvoice } from '../lib/igeveBilling';
+import { billingInvoiceType, BILLING_PREFIX, BILLING_PRICE_PREFIX, billingPriceCatalog, billingPricesFromEntries, billingOperationPriceKey, parseBillingPrice, SOURCE_KEYS, billingCategoryOptions, billingCategoryMatches, billingInvoiceCategoryMatches, sortBillingRows, createLocationBillingInvoice, locationInvoiceConflict, effectiveBillingInvoices, createDeliveryBillingInvoice, locationBillingInvoices, locationTotals, companyTotals, billingDateInRange, invoiceTotal, isIgeveOperation, billingCostLines, billingAdjustmentLines, billingTablePrice, applyBillingTablePrices, validateInvoice } from '../lib/igeveBilling';
 import type { BillingInvoice, BillingOperation, BillingOrder, BillingPoint, SavedInvoice, BillingSort, SavedBillingPrice, BillingPriceEntry } from '../lib/igeveBilling';
 import type { Company } from '../types';
 import IgeveFreight from './IgeveFreight';
@@ -60,6 +60,7 @@ export default function IgeveBilling() {
   const [freights, setFreights] = useState<SavedFreight[]>([]);
   const [rubrics, setRubrics] = useState<SavedRubric[]>([]);
   const [draft, setDraft] = useState<BillingInvoice | null>(null);
+  const [adjustmentCategory, setAdjustmentCategory] = useState('');
   const [version, setVersion] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [ready, setReady] = useState(false);
@@ -262,7 +263,7 @@ export default function IgeveBilling() {
   const locationGrandTotal = Math.round(visibleLocations.reduce((sum, row) => sum + row.total, 0) * 100) / 100;
   const pendingLocationCount = visibleLocations.filter(row => !row.stored).length;
   const expandedGroup = visibleLocations.find(row => row.key === expandedLocation);
-  const open = (invoice: BillingInvoice, savedVersion: string | null) => { setDraft(structuredClone(applyFreight(invoice))); setVersion(savedVersion); setMessage(''); };
+  const open = (invoice: BillingInvoice, savedVersion: string | null) => { setDraft(structuredClone(applyFreight(invoice))); setVersion(savedVersion); setAdjustmentCategory(''); setMessage(''); };
   function importDelivery(order: BillingOrder, delivery: BillingOrder['deliveries'][number]) {
     const id = `${BILLING_PREFIX}${order.id}_${delivery.id}`;
     const existing = saved.find(row => row.invoice.id === id);
@@ -291,6 +292,8 @@ export default function IgeveBilling() {
   }
   const draftCosts = draft ? billingCostLines(applyFreight(draft)) : [];
   const adjustableDraft = !!draft && (!!draft.location || draft.rubric?.kind === 'reduction');
+  const adjustmentCategories = [...new Set(draft?.items.map(item => item.category || draft.category) || [])].filter(Boolean).sort((a, b) => a.localeCompare(b, 'pt-BR'));
+  const selectedAdjustmentCategory = adjustmentCategory || adjustmentCategories[0] || '';
   const draftMonth = draft?.rubric?.month || draft?.deliveryDate?.slice(0, 7) || draft?.location?.start.slice(0, 7);
   const draftRubric = rubrics.find(({ rubric }) => draft && (draft.rubric ? rubric.key === draft.rubric.key : rubric.operationId === draft.operationId && rubric.month === draftMonth && (!rubric.pointId || rubricScopeInvoices([draft], rubric, orders, points).length > 0)))?.rubric;
   const draftBalance = draft && draftRubric ? rubricBalance(draftRubric, rubricScopeInvoices(rubricMonthInvoices(orders, operations, points, prices, [...saved.filter(row => row.invoice.id !== draft.id).map(row => row.invoice), draft], draftRubric.month).map(applyFreight), draftRubric, orders, points)) : null;
@@ -331,20 +334,25 @@ export default function IgeveBilling() {
     } catch (error) { setMessage(error instanceof Error ? error.message : 'Falha ao salvar. Tente novamente.'); }
     finally { setBusy(false); }
   }
-  async function exportPdf(invoice?: BillingInvoice) {
+  async function exportPdf(invoice?: BillingInvoice, adjustmentCategory?: string) {
     invoice = invoice ? applyFreight(invoice) : undefined;
     try {
+      if (invoice && adjustmentCategory) {
+        const error = validateInvoice(invoice);
+        if (error) { setMessage(error); return; }
+        if (!billingAdjustmentLines(invoice, adjustmentCategory).length) { setMessage('Nenhum produto encontrado nesta categoria.'); return; }
+      }
       const doc = new jsPDF({ orientation: 'landscape' });
-      await addPdfHeader(doc, { title: invoice ? `Faturamento IGEVE - ${billingInvoiceType(invoice)}` : tab === 'locations' ? 'Faturamento IGEVE por operação/local' : 'Faturamento IGEVE por empresa', subtitle: invoice ? `${invoice.company} | CNPJ: ${invoice.cnpj || '-'} | ${dateLabel(invoice.date)}` : `Período de ${tab === 'locations' ? 'entrega' : 'faturamento'}: ${dateLabel(start) || 'início'} a ${dateLabel(end) || 'hoje'}`, footer: !invoice && tab === 'locations' && pendingLocationCount ? `${pendingLocationCount} local(is) a preparar: valores estimados; itens sem preço cadastrado valem zero.` : undefined });
+      await addPdfHeader(doc, { title: invoice ? adjustmentCategory ? `Romaneio de ajuste - ${adjustmentCategory}` : `Faturamento IGEVE - ${billingInvoiceType(invoice)}` : tab === 'locations' ? 'Faturamento IGEVE por operação/local' : 'Faturamento IGEVE por empresa', subtitle: invoice ? `${invoice.company} | CNPJ: ${invoice.cnpj || '-'} | ${dateLabel(invoice.date)}` : `Período de ${tab === 'locations' ? 'entrega' : 'faturamento'}: ${dateLabel(start) || 'início'} a ${dateLabel(end) || 'hoje'}`, footer: !invoice && tab === 'locations' && pendingLocationCount ? `${pendingLocationCount} local(is) a preparar: valores estimados; itens sem preço cadastrado valem zero.` : undefined });
       if (invoice) {
         doc.setFontSize(10);
-        const info = `${invoice.operation} | ${invoice.destination} | Controle: ${invoice.control} | ${invoice.category}`;
+        const info = `${invoice.operation} | ${invoice.destination} | Controle: ${invoice.control} | ${adjustmentCategory || invoice.category}`;
         const infoLines = doc.splitTextToSize(info, 275);
         doc.text(infoLines, 10, 42);
         const parent = saved.find(row => row.invoice.id === invoice.parentId)?.invoice;
-        const notes = [invoice.parentId ? `Complemento do controle ${parent?.control || invoice.control}` : '', invoice.notes, invoice.batchFreight ? `Frete rateado do conjunto de romaneios: ${money(billingCostLines(invoice).reduce((sum, row) => sum + row.freight, 0))}` : invoice.freight?.amount ? `Frete: ${money(invoice.freight.amount)} | Categoria: ${invoice.freight.category || 'Todas'} | Rateio pela quantidade faturada` : ''].filter(Boolean).join(' | ');
-        const costRows = billingCostLines(invoice);
-        autoTable(doc, { startY: 45 + infoLines.length * 5, styles: { fontSize: 8 }, head: [['Produto', 'Categoria', 'Unidade', 'Qtd. entregue', 'Qtd. faturada', 'Preço unitário', 'Frete rateado', 'Custo unit. final', 'Total com frete']], body: costRows.map(({ item, freight, unitCost, total }) => [item.product, item.category || invoice.category, item.unit, item.quantity, item.billedQuantity ?? item.quantity, money(item.price), money(freight), unitCost.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 6 }), money(total)]), foot: [['TOTAL', '', '', '', '', '', money(costRows.reduce((sum, row) => sum + row.freight, 0)), '', money(invoiceTotal(invoice))]] });
+        const costRows = adjustmentCategory ? billingAdjustmentLines(invoice, adjustmentCategory) : billingCostLines(invoice);
+        const notes = [invoice.parentId ? `Complemento do controle ${parent?.control || invoice.control}` : '', invoice.notes, adjustmentCategory ? `Frete rateado desta categoria: ${money(costRows.reduce((sum, row) => sum + row.freight, 0))}` : invoice.batchFreight ? `Frete rateado do conjunto de romaneios: ${money(billingCostLines(invoice).reduce((sum, row) => sum + row.freight, 0))}` : invoice.freight?.amount ? `Frete: ${money(invoice.freight.amount)} | Categoria: ${invoice.freight.category || 'Todas'} | Rateio pela quantidade faturada` : ''].filter(Boolean).join(' | ');
+        autoTable(doc, { startY: 45 + infoLines.length * 5, styles: { fontSize: 8 }, head: [['Produto', 'Categoria', 'Unidade', 'Qtd. entregue', 'Qtd. faturada', 'Preço unitário', 'Frete rateado', 'Custo unit. final', 'Total com frete']], body: costRows.map(({ item, freight, unitCost, total }) => [item.product, item.category || invoice.category, item.unit, item.quantity, item.billedQuantity ?? item.quantity, money(item.price), money(freight), unitCost.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 6 }), money(total)]), foot: [['TOTAL', '', '', '', '', '', money(costRows.reduce((sum, row) => sum + row.freight, 0)), '', money(costRows.reduce((sum, row) => sum + row.total, 0))]] });
         if (notes) { doc.addPage(); doc.text(doc.splitTextToSize(`Observações: ${notes}`, 275), 10, 20); }
       } else if (tab === 'locations') {
         autoTable(doc, { startY: 40, head: [['Operação', 'Local', 'Romaneios', 'Produtos', 'Situação', 'Total']], body: visibleLocations.map(row => [row.operation, row.destination, row.count, row.products, row.stored ? 'Salvo' : 'A preparar', money(row.total)]), foot: [['TOTAL', '', '', '', '', money(locationGrandTotal)]] });
@@ -355,7 +363,7 @@ export default function IgeveBilling() {
         doc.addPage();
         autoTable(doc, { head: [['Empresa', 'Operação / local', 'Controle', 'Tipo', 'Data faturamento', 'Total']], body: visibleInvoices.map(item => [item.company, `${item.operation} / ${item.destination}`, item.control, billingInvoiceType(item), dateLabel(item.date), money(invoiceTotal(item))]) });
       }
-      doc.save(invoice ? `faturamento-${invoice.control}-${invoice.id.slice(-8)}.pdf` : tab === 'locations' ? 'faturamento-igeve-locais.pdf' : 'faturamento-igeve-empresas.pdf');
+      doc.save(invoice && adjustmentCategory ? `romaneio-ajuste-${adjustmentCategory.replace(/[^a-zA-Z0-9À-ÿ_-]+/g, '-')}-${invoice.control.replace(/[^a-zA-Z0-9_-]+/g, '-')}.pdf` : invoice ? `faturamento-${invoice.control}-${invoice.id.slice(-8)}.pdf` : tab === 'locations' ? 'faturamento-igeve-locais.pdf' : 'faturamento-igeve-empresas.pdf');
     } catch { setMessage('Não foi possível gerar o PDF. Tente novamente.'); }
   }
   function exportExcel() {
@@ -415,6 +423,12 @@ export default function IgeveBilling() {
     {draftBalance && <p role="status" className={`igeve-rubric-status ${draftBalance.status}`}>Rubrica do mês: {money(draftRubric!.amount)} · Total previsto com este faturamento e ajuste anterior: {money(draftBalance.used)} · {draftBalance.remaining < 0 ? 'Ultrapassa em' : 'Saldo'}: {money(Math.abs(draftBalance.remaining))}. {draftBalance.remaining < 0 && 'Revise as quantidades antes de concluir.'}</p>}
     {draft.rubric?.kind === 'reduction' && <p>As quantidades retiradas em Ajuste faturamento serão guardadas para aproveitamento no mês seguinte. As entregas originais são preservadas.</p>}
     {draft.location && <p>Entregas de {dateLabel(draft.location.start) || 'início'} a {dateLabel(draft.location.end) || 'fim'} · {draft.location.count} romaneio(s). Informe em Ajuste faturamento a quantidade que será cobrada. Use zero para não faturar um item.</p>}
+    {adjustableDraft && <div className="card igeve-panel">
+      <h3>Romaneio de ajuste por categoria</h3>
+      <p>Gere o PDF com as quantidades entregues e ajustadas, preços e frete da categoria selecionada. O documento usa os valores atuais desta janela; salve o faturamento para registrar as alterações.</p>
+      <div className="igeve-filters"><label>Categoria do romaneio de ajuste<select className="input-field" value={selectedAdjustmentCategory} onChange={event => setAdjustmentCategory(event.target.value)}>{adjustmentCategories.map(category => <option key={category} value={category}>{category}</option>)}</select></label>
+      <button type="button" className="button button-outline" disabled={busy || !selectedAdjustmentCategory} onClick={() => void exportPdf(draft, selectedAdjustmentCategory)}><FileText size={16} /> Gerar romaneio de ajuste</button></div>
+    </div>}
     <div className="table-container"><table><thead><tr><th>{draft.location ? 'Produto / categoria' : 'Produto'}</th><th>Unidade</th><th>{adjustableDraft ? 'Qtd. entregue' : 'Quantidade'}</th>{adjustableDraft && <th>Ajuste faturamento</th>}<th>Preço unitário (R$)</th><th>Frete rateado</th><th>Custo unitário final</th><th>Total com frete</th>{!adjustableDraft && <th>Remover</th>}</tr></thead><tbody>{draft.items.map((item, index) => <tr key={item.id}>
       {(['product', 'unit', 'quantity', ...(adjustableDraft ? ['billedQuantity' as const] : []), 'price'] as const).map(field => <td key={field}><input aria-label={`${field === 'product' ? 'Produto' : field === 'unit' ? 'Unidade' : field === 'quantity' ? (draft.location ? 'Quantidade entregue' : 'Quantidade') : field === 'billedQuantity' ? 'Ajuste faturamento' : 'Preço'} ${index + 1}`} className="input-field" required readOnly={adjustableDraft && (field === 'product' || field === 'unit' || field === 'quantity')} type={field === 'quantity' || field === 'billedQuantity' || field === 'price' ? 'number' : 'text'} min={field === 'quantity' ? '0.001' : '0'} step={field === 'quantity' || field === 'billedQuantity' ? '0.001' : '0.01'} value={field === 'billedQuantity' ? item.billedQuantity ?? item.quantity : item[field]} onChange={event => setDraft({ ...draft, items: draft.items.map(row => {
         if (row.id !== item.id) return row;

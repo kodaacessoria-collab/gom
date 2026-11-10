@@ -166,6 +166,10 @@ export function billingCostLines(invoice: BillingInvoice) {
   }
   return rows;
 }
+// Filter after allocation so a category export preserves its share of the full invoice freight.
+export const billingAdjustmentLines = (invoice: BillingInvoice, category: string) =>
+  billingCostLines(invoice).filter(row => (row.item.category || invoice.category) === category);
+
 export const invoiceTotal = (invoice: BillingInvoice) => Math.round(billingCostLines(invoice).reduce((sum, row) => sum + row.total, 0) * 100) / 100;
 export const validateInvoice = (invoice: BillingInvoice) => {
   if (!invoice.company.trim()) return 'Informe a empresa para faturamento.';
