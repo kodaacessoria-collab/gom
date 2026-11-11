@@ -7,6 +7,7 @@ import * as XLSX from 'xlsx';
 import { supabase } from '../lib/supabase';
 import { getOrderControlNumber } from '../lib/orderControlNumber';
 import { addPdfHeader } from '../lib/pdfBranding';
+import { digits, validCnpj } from '../lib/igeveDocuments';
 import { billingProductsToAdd, addBillingTableProduct, billingInvoiceType, BILLING_PREFIX, BILLING_PRICE_PREFIX, billingPriceCatalog, billingPricesFromEntries, parseBillingPrice, SOURCE_KEYS, billingCategoryOptions, billingCategoryMatches, billingInvoiceCategoryMatches, sortBillingRows, createLocationBillingInvoice, locationInvoiceConflict, effectiveBillingInvoices, createDeliveryBillingInvoice, locationBillingInvoices, locationTotals, companyTotals, billingDateInRange, invoiceTotal, isIgeveOperation, billingCostLines, billingQuantityAdjustment, applyBillingQuantityAdjustment, billingAdjustmentLines, billingTablePrice, billingTablePriceMatch, applyBillingTablePrices, validateInvoice } from '../lib/igeveBilling';
 import type { BillingInvoice, BillingOperation, BillingOrder, BillingPoint, SavedInvoice, BillingSort, SavedBillingPrice, BillingPriceEntry } from '../lib/igeveBilling';
 import type { Company } from '../types';
@@ -27,6 +28,8 @@ import './IgeveBilling.css';
 const money = (value: number) => value.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 const today = () => new Intl.DateTimeFormat('sv-SE', { timeZone: 'America/Sao_Paulo' }).format(new Date());
 const dateLabel = (value: string) => value.split('-').reverse().join('/');
+const BILLING_COMPANY_PREFIX = 'gom_igeve_billing_company_';
+const companyOption = (company: Company) => `${company.legal_name} — ${company.cnpj}`;
 const newItem = () => ({ id: crypto.randomUUID(), product: '', unit: 'UN', quantity: 1, price: 0 });
 interface SharedRow { key: string; value: unknown; updated_at: string }
 async function loadInvoices(prefix = BILLING_PREFIX) {
@@ -59,6 +62,7 @@ export default function IgeveBilling() {
   const [priceEdits, setPriceEdits] = useState<Record<string, string>>({});
   const prices = billingPricesFromEntries(savedPrices.map(row => row.entry), operations);
   const [companies, setCompanies] = useState<Company[]>([]);
+  const [companyNotice, setCompanyNotice] = useState<{ text: string; error?: boolean } | null>(null);
   const [rawSaved, setSaved] = useState<SavedInvoice[]>([]);
   const [freights, setFreights] = useState<SavedFreight[]>([]);
   const [rubrics, setRubrics] = useState<SavedRubric[]>([]);
@@ -107,10 +111,11 @@ export default function IgeveBilling() {
   async function load() {
     setBusy(true); setMessage(''); setReady(false);
     try {
-      const [source, invoices, companyResult, priceRows, rubricRows, freightRows] = await Promise.all([
+      const [source, invoices, companyResult, billingCompanies, priceRows, rubricRows, freightRows] = await Promise.all([
         supabase.from('app_shared_state').select('key,value').in('key', SOURCE_KEYS),
         loadInvoices(),
         supabase.from('companies').select('*').order('legal_name'),
+        loadInvoices(BILLING_COMPANY_PREFIX).catch(() => null),
         loadInvoices(BILLING_PRICE_PREFIX),
         loadInvoices(RUBRIC_PREFIX),
         loadInvoices(FREIGHT_PREFIX),
@@ -123,8 +128,13 @@ export default function IgeveBilling() {
       setRubrics(rubricRows.map(row => ({ rubric: row.value as MonthlyRubric, version: row.updated_at })));
       setSavedPrices(priceRows.map(row => ({ entry: row.value as BillingPriceEntry, version: row.updated_at })));
       setSaved(invoices.map(row => ({ invoice: row.value as BillingInvoice, version: row.updated_at })));
-      setCompanies(companyResult.data || []); setReady(true);
-      if (companyResult.error) setMessage('Cadastro de empresas indisponível. Você pode informar a empresa manualmente.');
+      const baseCompanies = (companyResult.data || []) as Company[];
+      const baseCnpjs = new Set(baseCompanies.map(company => digits(company.cnpj)));
+      const extraCompanies = (billingCompanies || []).map(row => row.value as Company)
+        .filter(company => !baseCnpjs.has(digits(company.cnpj)));
+      setCompanies([...baseCompanies, ...extraCompanies].sort((a, b) => a.legal_name.localeCompare(b.legal_name, 'pt-BR')));
+      setReady(true);
+      if (companyResult.error || billingCompanies === null) setMessage('Parte do cadastro de empresas está indisponível. Você pode informar a empresa manualmente.');
     } catch { setMessage('Não foi possível carregar o faturamento. Clique em Atualizar para tentar novamente.'); }
     finally { setBusy(false); }
   }
@@ -268,7 +278,7 @@ export default function IgeveBilling() {
   const locationGrandTotal = Math.round(visibleLocations.reduce((sum, row) => sum + row.total, 0) * 100) / 100;
   const pendingLocationCount = visibleLocations.filter(row => !row.stored).length;
   const expandedGroup = visibleLocations.find(row => row.key === expandedLocation);
-  const open = (invoice: BillingInvoice, savedVersion: string | null) => { setDraft(structuredClone(applyFreight(invoice))); setVersion(savedVersion); setQuantityAdjustments(Object.fromEntries(invoice.items.map(item => { const adjustment = billingQuantityAdjustment(item); return [item.id, adjustment ? String(adjustment) : '']; }))); setAdjustmentCategory(''); setPriceTableSelection(invoice.priceTableOperationId || invoice.operationId); setMessage(''); };
+  const open = (invoice: BillingInvoice, savedVersion: string | null) => { setDraft(structuredClone(applyFreight(invoice))); setVersion(savedVersion); setQuantityAdjustments(Object.fromEntries(invoice.items.map(item => { const adjustment = billingQuantityAdjustment(item); return [item.id, adjustment ? String(adjustment) : '']; }))); setAdjustmentCategory(''); setPriceTableSelection(invoice.priceTableOperationId || invoice.operationId); setCompanyNotice(null); setMessage(''); };
   function importDelivery(order: BillingOrder, delivery: BillingOrder['deliveries'][number]) {
     const id = `${BILLING_PREFIX}${order.id}_${delivery.id}`;
     const existing = saved.find(row => row.invoice.id === id);
@@ -392,6 +402,51 @@ export default function IgeveBilling() {
     } catch { setMessage('Não foi possível buscar os preços. Os valores do faturamento foram mantidos. Tente novamente.'); }
     finally { setBusy(false); }
   }
+  async function registerBillingCompany() {
+    if (!draft || busy || !ready) return;
+    const name = draft.company.trim();
+    const cnpjInput = draft.cnpj.trim();
+    if (!name || !/^[0-9./\s-]+$/.test(cnpjInput) || !validCnpj(cnpjInput)) {
+      setCompanyNotice({ text: 'Informe a razão social e um CNPJ válido para cadastrar a empresa.', error: true });
+      return;
+    }
+
+    const cnpjDigits = digits(cnpjInput);
+    const existing = companies.find(company => digits(company.cnpj) === cnpjDigits);
+    if (existing) {
+      setDraft({ ...draft, company: existing.legal_name, cnpj: existing.cnpj });
+      setCompanyNotice({ text: 'Este CNPJ já está cadastrado. A empresa existente foi selecionada.' });
+      return;
+    }
+
+    const cnpj = cnpjDigits.replace(/^(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})$/, '$1.$2.$3/$4-$5');
+    const key = `${BILLING_COMPANY_PREFIX}${cnpjDigits}`;
+    const company: Company = { id: key, legal_name: name, trade_name: name, cnpj };
+    setBusy(true);
+    setCompanyNotice(null);
+    try {
+      const { error } = await supabase.from('app_shared_state').insert({ key, value: company });
+      let selected = company;
+      if (error?.code === '23505') {
+        const { data, error: readError } = await supabase.from('app_shared_state').select('value').eq('key', key).single();
+        if (readError || !data?.value) throw readError || error;
+        selected = data.value as Company;
+      } else if (error) {
+        throw error;
+      }
+      setCompanies(current => [...current.filter(item => digits(item.cnpj) !== cnpjDigits), selected]
+        .sort((a, b) => a.legal_name.localeCompare(b.legal_name, 'pt-BR')));
+      setDraft(current => current?.id === draft.id ? { ...current, company: selected.legal_name, cnpj: selected.cnpj } : current);
+      setCompanyNotice({ text: error
+        ? 'Este CNPJ já está cadastrado. A empresa existente foi selecionada.'
+        : 'Empresa cadastrada e selecionada para este faturamento.' });
+    } catch {
+      setCompanyNotice({ text: 'Não foi possível cadastrar a empresa. Confira a conexão e tente novamente.', error: true });
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function save(event: FormEvent) {
     event.preventDefault(); if (!draft || busy || !ready) return;
     if (adjustmentError || draftRubricError) return setMessage(adjustmentError || draftRubricError);
@@ -511,10 +566,24 @@ export default function IgeveBilling() {
     </div>}
     {ready && tab === 'report' && <div className="card igeve-panel"><div className="igeve-heading"><h2>Faturamento por empresas</h2><div className="igeve-actions"><button className="button button-outline" disabled={!totals.length} onClick={() => void exportPdf()}>Exportar PDF</button><button className="button button-outline" disabled={!totals.length} onClick={exportExcel}>Exportar Excel</button></div></div><div className="table-container"><table><thead><tr>{header('company', 'Empresa')}{header('cnpj', 'CNPJ')}{header('count', 'Romaneios')}{header('base', 'Base')}{header('complement', 'Complementos')}{header('total', 'Total')}</tr></thead><tbody>{totals.map(row => <tr key={row.cnpj || row.company}><td>{row.company}</td><td>{row.cnpj || '-'}</td><td>{row.count}</td><td>{money(row.base)}</td><td>{money(row.complement)}</td><td>{money(row.base + row.complement)}</td></tr>)}{!totals.length && <tr><td colSpan={6}>Nenhum faturamento encontrado para os filtros.</td></tr>}</tbody><tfoot><tr><th colSpan={5}>Total geral</th><th>{money(visibleInvoices.reduce((sum, invoice) => sum + invoiceTotal(invoice), 0))}</th></tr></tfoot></table></div></div>}
     {draft && <div className="igeve-editor" role="dialog" aria-modal="true" aria-label="Editar faturamento"><form className="card igeve-panel" onSubmit={event => void save(event)}><h2>{draft.location ? 'Faturamento por local' : draft.rubric?.kind === 'carry' ? 'Aproveitamento de itens do mês anterior' : draft.rubric?.kind === 'complement' || draft.parentId ? 'Romaneio complementar' : 'Faturamento por romaneio'} — {draft.control}</h2><p>{draft.operation} · {draft.destination} · {draft.category}</p><div className="igeve-filters">
-      <label>Empresa para faturamento<input required className="input-field" list="igeve-companies" value={draft.company} onChange={event => { const company = companies.find(item => item.legal_name === event.target.value); setDraft({ ...draft, company: event.target.value, cnpj: company?.cnpj || '' }); }} /><datalist id="igeve-companies">{companies.map(company => <option key={company.id} value={company.legal_name}>{company.trade_name}</option>)}</datalist></label>
-      <label>CNPJ<input className="input-field" value={draft.cnpj} onChange={event => setDraft({ ...draft, cnpj: event.target.value })} /></label>
+      <label>Empresa para faturamento<input required className="input-field" list="igeve-companies" disabled={busy} value={draft.company} onChange={event => {
+        const name = event.target.value;
+        const exactNames = companies.filter(item => item.legal_name === name);
+        const company = companies.find(item => companyOption(item) === name) || (exactNames.length === 1 ? exactNames[0] : undefined);
+        setDraft({ ...draft, company: company?.legal_name || name, cnpj: company?.cnpj || '' });
+        setCompanyNotice(null);
+      }} /><datalist id="igeve-companies">{companies.map(company => <option key={company.id} value={companyOption(company)} />)}</datalist></label>
+      <label>CNPJ<input className="input-field" disabled={busy} value={draft.cnpj} onChange={event => {
+        setDraft({ ...draft, cnpj: event.target.value });
+        setCompanyNotice(null);
+      }} /></label>
       <label>Data do faturamento<input required type="date" className="input-field" value={draft.date} onChange={event => setDraft({ ...draft, date: event.target.value })} /></label>
     </div>
+    <div className="igeve-actions">
+      <button type="button" className="button button-outline" disabled={busy} onClick={() => void registerBillingCompany()}><Plus size={16} /> Cadastrar empresa para faturamento</button>
+      <small>Para cadastrar uma nova empresa, preencha a razão social e o CNPJ acima.</small>
+    </div>
+    {companyNotice && <p role={companyNotice.error ? 'alert' : 'status'}>{companyNotice.text}</p>}
     <p>O frete é informado em <strong>Frete</strong> ou <strong>Faturamento por romaneio</strong>, nos filtros de operação, categorias e período de entrega. O rateio considera a soma das quantidades de todos os romaneios filtrados e aparece no custo final abaixo.</p>
     <div className="igeve-filters">
       <label>Tabela de preços<select className="input-field" disabled={busy} value={priceTableSelection} onChange={event => setPriceTableSelection(event.target.value)}>
