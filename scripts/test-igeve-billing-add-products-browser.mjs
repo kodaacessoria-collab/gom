@@ -50,7 +50,26 @@ try {
   await page.locator('.igeve-category-filter summary').click();
   await page.getByRole('button', {name:'Preparar faturamento',exact:true}).first().click();
   const dialog = page.getByRole('dialog');
-  await dialog.getByLabel('Empresa para faturamento', {exact:true}).fill('OM LOGISTICA E DISTRIBUICAO LTDA');
+  const companyName = dialog.getByLabel('Empresa para faturamento', {exact:true});
+  const companyCnpj = dialog.getByLabel('CNPJ', {exact:true});
+  const registerCompany = dialog.getByRole('button', {name:'Cadastrar empresa para faturamento',exact:true});
+  const billingCompanyName = 'EMPRESA FICTÍCIA DE FATURAMENTO LTDA';
+  await companyName.fill(billingCompanyName);
+  await companyCnpj.fill('11.111.111/1111-11');
+  await registerCompany.click();
+  await dialog.getByText('Informe a razão social e um CNPJ válido para cadastrar a empresa.').waitFor();
+  const companyKey = 'gom_igeve_billing_company_11222333000181';
+  assert.equal(db.has(companyKey), false);
+  await companyCnpj.fill('11222333000181');
+  await registerCompany.click();
+  await dialog.getByText('Empresa cadastrada e selecionada para este faturamento.').waitFor();
+  assert.equal(db.get(companyKey).value.legal_name, billingCompanyName);
+  assert.equal(await companyCnpj.inputValue(), '11.222.333/0001-81');
+  assert.equal(await dialog.locator('#igeve-companies option').count(), 1);
+  await registerCompany.click();
+  await dialog.getByText('Este CNPJ já está cadastrado. A empresa existente foi selecionada.').waitFor();
+  assert.equal(await dialog.locator('#igeve-companies option').count(), 1);
+  await companyName.fill('OM LOGISTICA E DISTRIBUICAO LTDA');
   await dialog.getByRole('button', {name:'Adicionar produtos da tabela',exact:true}).click();
   const selection = dialog.getByLabel('Produto da tabela', {exact:true});
   await selection.waitFor();
@@ -97,6 +116,11 @@ try {
   await page.getByRole('checkbox', {name:'Estocáveis',exact:true}).check();
   await page.locator('.igeve-category-filter summary').click();
   await page.getByRole('button', {name:'Editar faturamento',exact:true}).click();
+  const savedCompany = `${billingCompanyName} — 11.222.333/0001-81`;
+  assert.deepEqual(await dialog.locator('#igeve-companies option').evaluateAll(options => options.map(option => option.value)), [savedCompany]);
+  await companyName.fill(savedCompany);
+  assert.equal(await companyName.inputValue(), billingCompanyName);
+  assert.equal(await companyCnpj.inputValue(), '11.222.333/0001-81');
   assert.equal(await dialog.getByLabel('Ajuste faturamento 3', {exact:true}).inputValue(), '2.5');
   assert.equal(await dialog.getByLabel('Preço 3', {exact:true}).inputValue(), '12.9');
   await dialog.getByLabel('Remover produto 3', {exact:true}).click();
@@ -104,5 +128,5 @@ try {
   await dialog.waitFor({state:'hidden'});
   assert.equal(db.get(stored[0].key).value.items.length, 2, 'Remoção persiste após reabrir');
   assert.deepEqual(errors, []);
-  console.log('OK: busca, operação/categoria, quantidade inválida, inclusão, preço, remoção, gravação e reabertura no navegador.');
+  console.log('OK: cadastro, validação, duplicidade e reuso da empresa. Inclusão e gravação dos produtos no navegador.');
 } finally { await browser.close(); }
