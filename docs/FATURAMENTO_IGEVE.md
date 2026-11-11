@@ -65,6 +65,12 @@ Se houver saldo, o sistema sugere produtos distribuídos entre Hortifrúti, Prot
 Rubricas ficam em `app_shared_state` com o prefixo `gom_igeve_rubric_`, por operação, local (quando aplicável) e mês. A gravação verifica a versão do registro para evitar sobrescrita de outro usuário. Complementos, reduções e aproveitamentos usam os faturamentos existentes, com contexto de rubrica e categorias por item; pedidos e estoque permanecem preservados. O editor mostra o resultado previsto na rubrica ao revisar um faturamento cujo mês/local tenha rubrica cadastrada. PDFs e planilhas preservam as quantidades ajustadas.
 
 
+### Rateio pela base mensal
+
+Selecione a operação, o mês e o local, quando aplicável. Em Maceió, use **Planilha de rubricas (.xlsx)** para carregar a linha da escola selecionada e depois salvar a rubrica. Também é possível preencher manualmente a referência, as Proteínas já faturadas e as bases mensais de Hortifrúti, Estocáveis e Dietas e Fórmulas.
+
+O saldo da referência após Proteínas e o ajuste anterior é distribuído conforme as bases. Hortifrúti e Fórmulas são arredondados a centavos, e Estocáveis recebe a diferença de arredondamento. Ao preparar um romaneio do mês, o editor compara o valor bruto por categoria com a meta disponível, considerando os faturamentos salvos daquele escopo. O excedente é registrado no faturamento como desconto a aplicar, com observação no PDF e detalhamento no Excel. Os totais do faturamento continuam brutos até a aplicação do desconto no fechamento.
+
 ## Frete de todos os romaneios filtrados
 
 Em **Faturamento por romaneio** ou **Frete**, selecione uma operação, uma ou mais categorias e o período de **entrega**. Informe **Valor total do frete (R$)** e clique em **Salvar frete dos romaneios filtrados**. O valor é único para todos os romaneios encontrados, somando todos os locais e categorias selecionados, inclusive entregas ainda sem faturamento preparado. Empresa não restringe este rateio.

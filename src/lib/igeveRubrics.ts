@@ -1,8 +1,8 @@
-import { BILLING_PREFIX, effectiveBillingInvoices, invoiceTotal, lineTotal, locationBillingInvoices, locationTotals, normalizeBillingText } from './igeveBilling.ts';
+import { BILLING_PREFIX, billingCostLines, effectiveBillingInvoices, invoiceTotal, lineTotal, locationBillingInvoices, locationTotals, normalizeBillingText } from './igeveBilling.ts';
 import type { BillingInvoice, BillingItem, BillingOperation, BillingOrder, BillingPoint, BillingPriceEntry } from './igeveBilling.ts';
 
 export const RUBRIC_PREFIX = 'gom_igeve_rubric_';
-export interface MonthlyRubric { key: string; operationId: string; pointId: string; month: string; amount: number; previousAdjustment: number; adjustmentNotes: string }
+export interface MonthlyRubric { key: string; operationId: string; pointId: string; month: string; amount: number; previousAdjustment: number; adjustmentNotes: string; proportional?: ProportionalRubric }
 export interface SavedRubric { rubric: MonthlyRubric; version: string }
 export const rubricKey = (operationId: string, pointId: string, month: string) => `${RUBRIC_PREFIX}${encodeURIComponent(JSON.stringify([operationId, pointId, month]))}`;
 export const rubricOperationKind = (operation: BillingOperation) => {
@@ -17,7 +17,11 @@ export const shiftRubricMonth = (month: string, offset: number) => {
 export const rubricMonthEnd = (month: string) => `${month}-${new Date(Number(month.slice(0, 4)), Number(month.slice(5, 7)), 0).getDate()}`;
 const cents = (value: number) => Math.round(value * 100);
 export const rubricBalance = (rubric: MonthlyRubric, invoices: BillingInvoice[]) => {
-  const total = cents(invoices.reduce((sum, invoice) => sum + invoiceTotal(invoice), 0));
+  const total = rubric.proportional
+    ? cents(rubric.proportional.proteinsBilled) + invoices.reduce((sum, invoice) =>
+      sum + billingCostLines(invoice).reduce((subtotal, row) =>
+        subtotal + (rubricCategory(row.item.category || invoice.category) === 'Proteínas' ? 0 : cents(row.total)), 0), 0)
+    : cents(invoices.reduce((sum, invoice) => sum + invoiceTotal(invoice), 0));
   const used = total + cents(rubric.previousAdjustment);
   const remaining = cents(rubric.amount) - used;
   return { total: total / 100, used: used / 100, remaining: remaining / 100, status: remaining < 0 ? 'exceeded' : remaining === 0 ? 'matched' : used >= cents(rubric.amount) * .9 ? 'near' : 'available' };
@@ -107,4 +111,79 @@ export function createRubricInvoice(rubric: MonthlyRubric, operation: BillingOpe
     company: '', cnpj: '', notes: kind === 'carry' ? 'Itens retirados do faturamento anterior para aproveitamento neste mês.' : 'Complemento sugerido para a rubrica mensal. Conferir produtos e quantidades.',
     items: structuredClone(items), rubric: { key: rubric.key, month: rubric.month, kind, sourceId },
   };
+}
+
+export const RUBRIC_BILLING_CATEGORIES = ['Hortifrúti', 'Estocáveis', 'Dietas e Fórmulas'] as const;
+export type RubricBillingCategory = typeof RUBRIC_BILLING_CATEGORIES[number];
+type RubricAmounts = Record<RubricBillingCategory, number>;
+
+export interface ProportionalRubric {
+  proteinsBilled: number;
+  bases: RubricAmounts;
+}
+
+export interface RubricDiscount {
+  rubricKey: string;
+  month: string;
+  categories: { category: RubricBillingCategory; target: number; gross: number; excess: number }[];
+  total: number;
+}
+
+export function rubricProposal(rubric: MonthlyRubric): RubricAmounts | null {
+  const plan = rubric.proportional;
+  if (!plan) return null;
+  const inputs = [rubric.amount, plan.proteinsBilled, ...RUBRIC_BILLING_CATEGORIES.map(category => plan.bases[category])];
+  if (inputs.some(value => !Number.isFinite(value) || value < 0 || !Number.isSafeInteger(cents(value))) || rubric.amount <= 0) return null;
+
+  const remaining = cents(rubric.amount) - cents(plan.proteinsBilled) - cents(rubric.previousAdjustment);
+  const base = RUBRIC_BILLING_CATEGORIES.reduce((sum, category) => sum + cents(plan.bases[category]), 0);
+  if (remaining < 0 || !Number.isSafeInteger(remaining) || !Number.isSafeInteger(base) || (!base && remaining)) return null;
+
+  const share = (category: RubricBillingCategory) => base
+    ? Number((BigInt(remaining) * BigInt(cents(plan.bases[category])) + BigInt(base) / 2n) / BigInt(base))
+    : 0;
+  const horti = share('Hortifrúti');
+  const formulas = share('Dietas e Fórmulas');
+  // Estocáveis absorbs the rounding difference, as in the workbook.
+  const estocaveis = remaining - horti - formulas;
+  return { 'Hortifrúti': horti / 100, 'Estocáveis': Math.max(0, estocaveis) / 100, 'Dietas e Fórmulas': (formulas + Math.min(0, estocaveis)) / 100 };
+}
+
+export function rubricCategoryTotals(invoices: BillingInvoice[]) {
+  const totals: RubricAmounts = { 'Hortifrúti': 0, 'Estocáveis': 0, 'Dietas e Fórmulas': 0 };
+  for (const invoice of invoices) {
+    for (const row of billingCostLines(invoice)) {
+      const category = rubricCategory(row.item.category || invoice.category);
+      if (category && category !== 'Proteínas') totals[category] += cents(row.total);
+    }
+  }
+  return totals;
+}
+
+export function rubricInvoiceDiscount(rubric: MonthlyRubric, invoice: BillingInvoice, previous: BillingInvoice[]): RubricDiscount | undefined {
+  const proposal = rubricProposal(rubric);
+  if (!proposal) return undefined;
+
+  const current = rubricCategoryTotals([invoice]);
+  const prior = rubricCategoryTotals(previous);
+  for (const other of previous) {
+    if (other.rubricDiscount?.rubricKey !== rubric.key) continue;
+    for (const row of other.rubricDiscount.categories) prior[row.category] -= cents(row.excess);
+  }
+  const categories = RUBRIC_BILLING_CATEGORIES.filter(category => current[category] > 0).map(category => {
+    const target = cents(proposal[category]);
+    const available = Math.max(0, target - Math.max(0, prior[category]));
+    return { category, target: proposal[category], gross: current[category] / 100, excess: Math.max(0, current[category] - available) / 100 };
+  });
+  const total = categories.reduce((sum, row) => sum + cents(row.excess), 0) / 100;
+  return total ? { rubricKey: rubric.key, month: rubric.month, categories: categories.filter(row => row.excess > 0), total } : undefined;
+}
+
+export function rubricDiscountNote(discount?: RubricDiscount, category?: string) {
+  const rows = discount?.categories.filter(row => !category || row.category === rubricCategory(category));
+  if (!rows?.length) return '';
+  const money = (value: number) => value.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+  const details = rows.map(row => `${row.category} excedeu ${money(row.excess)} (meta mensal ${money(row.target)})`).join(' | ');
+  const total = rows.reduce((sum, row) => sum + cents(row.excess), 0) / 100;
+  return `Desconto final a aplicar: ${money(total)}. ${details}.`;
 }

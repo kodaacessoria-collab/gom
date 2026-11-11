@@ -1,4 +1,4 @@
-import type { RubricInvoiceContext } from './igeveRubrics.ts';
+import type { RubricDiscount, RubricInvoiceContext } from './igeveRubrics.ts';
 import { getOrderControlNumber } from './orderControlNumber.ts';
 
 export const BILLING_PREFIX = 'gom_igeve_invoice_';
@@ -20,6 +20,7 @@ export interface BillingInvoice {
   freight?: { operationId: string; category: string; amount: number };
   location?: LocationInvoiceContext;
   rubric?: RubricInvoiceContext;
+  rubricDiscount?: RubricDiscount;
   control: string; operationId: string; operation: string; destination: string; category: string;
   company: string; cnpj: string; date: string; notes: string; items: BillingItem[];
 }
