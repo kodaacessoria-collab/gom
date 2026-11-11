@@ -272,6 +272,30 @@ assert.equal(billingTablePrice(operationPrices, { ...tableDraft, operationId: 'o
 assert.equal(billingTablePrice(operationPrices, tableDraft, { ...tableDraft.items[0], unit: 'PACOTE' }), undefined);
 console.log('OK: atualização explícita dos preços salvos, consolidados com múltiplas categorias, zero cadastrado, pendências e preservação de valores sem correspondência.');
 
+const foreignTableId = 'outra-operacao';
+const [firstTableItem, secondTableItem] = manualPriceDraft.items;
+const foreignPrices = {
+  ...operationPrices,
+  [billingOperationPriceKey(foreignTableId, firstTableItem.category, firstTableItem.product, firstTableItem.unit)]: { salePrice: 0 },
+  [billingOperationPriceKey(foreignTableId, secondTableItem.category, secondTableItem.product, 'PACOTE')]: { salePrice: 99 },
+};
+const foreignResult = applyBillingTablePrices(manualPriceDraft, foreignPrices, foreignTableId);
+assert.equal(foreignResult.updated, 1);
+assert.equal(foreignResult.missing, 1);
+assert.deepEqual(foreignResult.invoice.items.map(item => item.price), [0, 12]);
+assert.equal(foreignResult.invoice.operationId, manualPriceDraft.operationId);
+assert.deepEqual(foreignResult.invoice.location, manualPriceDraft.location);
+const reopened = JSON.parse(JSON.stringify(foreignResult.invoice));
+assert.equal(reopened.priceTableOperationId, foreignTableId);
+assert.equal(billingTablePrice(foreignPrices, reopened, reopened.items[0]), 0);
+assert.equal(billingTablePrice(foreignPrices, reopened, reopened.items[1]), undefined);
+assert.deepEqual(applyBillingTablePrices(reopened, foreignPrices, 'sem-tabela').invoice, reopened);
+const ownTableAgain = applyBillingTablePrices(reopened, foreignPrices, manualPriceDraft.operationId);
+assert.equal(ownTableAgain.invoice.priceTableOperationId, undefined);
+assert.equal(invoiceTotal(ownTableAgain.invoice), 36);
+console.log('OK: escolha da tabela de outra operação, reabertura e retorno à tabela original.');
+
+
 const categoryAdjustment = {
   ...structuredClone(base), category: 'Estocáveis, Proteínas',
   freight: { operationId: base.operationId, category: '', amount: 10 },

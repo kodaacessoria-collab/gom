@@ -96,7 +96,7 @@ Validação da inclusão: `node scripts/test-igeve-billing-add-products.mjs`. O 
 
 No editor de faturamento, cada preço indica **Tabela: R$ ...** quando existe cadastro correspondente à operação, categoria, produto e unidade, ou **Sem preço cadastrado na tabela** quando está pendente. Um preço zero cadastrado é válido e aparece como cadastrado. Itens com preço zero e sem cadastro exibem um aviso com os produtos pendentes; nesses casos, o custo final contém somente o frete até informar o preço.
 
-Use **Buscar preços na tabela** para consultar novamente os valores salvos no banco e aplicar os preços encontrados ao faturamento aberto, inclusive um faturamento antigo que tenha sido salvo antes do cadastro dos preços. Os valores sem correspondência são mantidos. Revise e salve o faturamento para confirmar; cancelar preserva o registro anterior. Alterações ainda não salvas na Tabela de preços precisam ser salvas antes desta busca. O botão não busca preços de outra operação, categoria ou unidade e não inventa valores para itens pendentes.
+No editor, selecione a **Tabela de preços** da operação atual ou de outra operação que já tenha preços salvos. Clique em **Buscar preços na tabela** para aplicar os valores encontrados pela categoria, produto e unidade. Itens sem correspondência mantêm o preço atual. Confira os valores e salve o faturamento para registrar os preços e a tabela escolhida. Alterações pendentes no cadastro de preços precisam ser salvas antes da busca.
 
 
 ## Romaneio

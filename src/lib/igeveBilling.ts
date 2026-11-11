@@ -21,6 +21,7 @@ export interface BillingInvoice {
   location?: LocationInvoiceContext;
   rubric?: RubricInvoiceContext;
   rubricDiscount?: RubricDiscount;
+  priceTableOperationId?: string;
   control: string; operationId: string; operation: string; destination: string; category: string;
   company: string; cnpj: string; date: string; notes: string; items: BillingItem[];
 }
@@ -121,17 +122,19 @@ export const billingPricesFromEntries = (entries: BillingPriceEntry[]): BillingP
 export const billingUnitPrice = (prices: BillingPrices, operationId: string, category: string, product: string, unit: string) =>
   prices[billingOperationPriceKey(operationId, category, product, unit)]?.salePrice ?? 0;
 export const billingTablePrice = (prices: BillingPrices, invoice: BillingInvoice, item: BillingItem) =>
-  prices[billingOperationPriceKey(invoice.operationId, item.category || invoice.category, item.product, item.unit)]?.salePrice;
-export function applyBillingTablePrices(invoice: BillingInvoice, prices: BillingPrices) {
+  prices[billingOperationPriceKey(invoice.priceTableOperationId || invoice.operationId, item.category || invoice.category, item.product, item.unit)]?.salePrice;
+
+export function applyBillingTablePrices(invoice: BillingInvoice, prices: BillingPrices, sourceOperationId = invoice.priceTableOperationId || invoice.operationId) {
+  const source = { ...invoice, priceTableOperationId: sourceOperationId === invoice.operationId ? undefined : sourceOperationId };
   let updated = 0;
   let missing = 0;
   const items = invoice.items.map(item => {
-    const price = billingTablePrice(prices, invoice, item);
+    const price = billingTablePrice(prices, source, item);
     if (price === undefined) { missing++; return { ...item }; }
     updated++;
     return { ...item, price };
   });
-  return { invoice: { ...invoice, items }, updated, missing };
+  return { invoice: updated ? { ...source, items } : invoice, updated, missing };
 }
 
 export function billingProductsToAdd(invoice: BillingInvoice, entries: BillingPriceEntry[]) {
