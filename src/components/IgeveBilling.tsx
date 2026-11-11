@@ -7,7 +7,7 @@ import * as XLSX from 'xlsx';
 import { supabase } from '../lib/supabase';
 import { getOrderControlNumber } from '../lib/orderControlNumber';
 import { addPdfHeader } from '../lib/pdfBranding';
-import { billingProductsToAdd, addBillingTableProduct, billingInvoiceType, BILLING_PREFIX, BILLING_PRICE_PREFIX, billingPriceCatalog, billingPricesFromEntries, parseBillingPrice, SOURCE_KEYS, billingCategoryOptions, billingCategoryMatches, billingInvoiceCategoryMatches, sortBillingRows, createLocationBillingInvoice, locationInvoiceConflict, effectiveBillingInvoices, createDeliveryBillingInvoice, locationBillingInvoices, locationTotals, companyTotals, billingDateInRange, invoiceTotal, isIgeveOperation, billingCostLines, billingQuantityAdjustment, applyBillingQuantityAdjustment, billingAdjustmentLines, billingTablePrice, applyBillingTablePrices, validateInvoice } from '../lib/igeveBilling';
+import { billingProductsToAdd, addBillingTableProduct, billingInvoiceType, BILLING_PREFIX, BILLING_PRICE_PREFIX, billingPriceCatalog, billingPricesFromEntries, parseBillingPrice, SOURCE_KEYS, billingCategoryOptions, billingCategoryMatches, billingInvoiceCategoryMatches, sortBillingRows, createLocationBillingInvoice, locationInvoiceConflict, effectiveBillingInvoices, createDeliveryBillingInvoice, locationBillingInvoices, locationTotals, companyTotals, billingDateInRange, invoiceTotal, isIgeveOperation, billingCostLines, billingQuantityAdjustment, applyBillingQuantityAdjustment, billingAdjustmentLines, billingTablePrice, billingTablePriceMatch, applyBillingTablePrices, validateInvoice } from '../lib/igeveBilling';
 import type { BillingInvoice, BillingOperation, BillingOrder, BillingPoint, SavedInvoice, BillingSort, SavedBillingPrice, BillingPriceEntry } from '../lib/igeveBilling';
 import type { Company } from '../types';
 import IgeveFreight from './IgeveFreight';
@@ -57,7 +57,7 @@ export default function IgeveBilling() {
   const [savedPrices, setSavedPrices] = useState<SavedBillingPrice[]>([]);
   const [importedPrices, setImportedPrices] = useState<BillingPriceEntry[]>([]);
   const [priceEdits, setPriceEdits] = useState<Record<string, string>>({});
-  const prices = billingPricesFromEntries(savedPrices.map(row => row.entry));
+  const prices = billingPricesFromEntries(savedPrices.map(row => row.entry), operations);
   const [companies, setCompanies] = useState<Company[]>([]);
   const [rawSaved, setSaved] = useState<SavedInvoice[]>([]);
   const [freights, setFreights] = useState<SavedFreight[]>([]);
@@ -351,7 +351,14 @@ export default function IgeveBilling() {
   const appliedPriceTable = draft?.priceTableOperationId
     ? otherPriceTables.find(operation => operation.id === draft.priceTableOperationId)?.name || 'Operação da tabela salva'
     : draft?.operation;
-  const draftMissingPrices = draft?.items.filter(item => item.price === 0 && billingTablePrice(prices, draft, item) === undefined) || [];
+  const draftPriceLabels = draft?.items.map(item => {
+    const match = billingTablePriceMatch(prices, draft, item);
+    if (!match) return '';
+    const source = match.operationId === (draft.priceTableOperationId || draft.operationId) ? '' :
+      operations.find(operation => operation.id === match.operationId)?.name;
+    return `Tabela: ${money(match.salePrice)}${source ? ` · ${source}` : ''}`;
+  }) || [];
+  const draftMissingPrices = draft?.items.filter((item, index) => item.price === 0 && !draftPriceLabels[index]) || [];
   function addDraftProduct(key: string, quantity: number) {
     if (!draft || busy) return false;
     try {
@@ -374,13 +381,13 @@ export default function IgeveBilling() {
     try {
       const rows = await loadInvoices(BILLING_PRICE_PREFIX);
       const entries = rows.map(row => ({ entry: row.value as BillingPriceEntry, version: row.updated_at }));
-      const latestPrices = billingPricesFromEntries(entries.map(row => row.entry));
+      const latestPrices = billingPricesFromEntries(entries.map(row => row.entry), operations);
       const result = applyBillingTablePrices(draft, latestPrices, priceTableSelection);
       setSavedPrices(entries);
       setDraft(current => current?.id === draft.id ? applyBillingTablePrices(current, latestPrices, priceTableSelection).invoice : current);
       const sourceName = operations.find(operation => operation.id === priceTableSelection)?.name || draft.operation;
       setMessage(result.updated
-        ? `${result.updated} produto(s) atualizado(s) pela tabela de ${sourceName}. ${result.missing ? `${result.missing} sem correspondência mantiveram o preço atual.` : 'Revise os valores e salve o faturamento.'}`
+        ? `${result.updated} produto(s) atualizado(s) na busca por ${sourceName}. ${result.missing ? `${result.missing} sem correspondência mantiveram o preço atual.` : 'Revise os valores e salve o faturamento.'}`
         : 'Nenhum produto tem preço correspondente na tabela selecionada. Os valores atuais foram mantidos.');
     } catch { setMessage('Não foi possível buscar os preços. Os valores do faturamento foram mantidos. Tente novamente.'); }
     finally { setBusy(false); }
@@ -518,7 +525,7 @@ export default function IgeveBilling() {
       </select></label>
       <div className="igeve-actions"><button type="button" className="button button-outline" disabled={busy} onClick={() => void refreshDraftPrices()}><RefreshCw size={16} /> Buscar preços na tabela</button></div>
     </div>
-    <small>Tabela em uso: {appliedPriceTable}. A busca compara categoria, produto e unidade. Itens sem correspondência mantêm o preço atual.</small>
+    <small>Tabela em uso: {appliedPriceTable}. Guaianases e Boituva consultam a tabela uma da outra quando falta um preço. Itens sem correspondência mantêm o valor atual.</small>
     {draftMissingPrices.length > 0 && <div role="alert" className="igeve-price-warning">{draftMissingPrices.length} produto(s) sem preço na tabela em uso e com valor zero neste faturamento: {draftMissingPrices.map(item => item.product).join(', ')}. Cadastre e salve os preços na tabela, ou informe-os abaixo. O custo final desses itens contém somente o frete enquanto o preço estiver zerado.</div>}
     {draftRubricError && <p role="alert" className="igeve-price-warning">{draftRubricError}</p>}
     {draftDiscount && <p role="status" className="igeve-rubric-status exceeded">{rubricDiscountNote(draftDiscount)}</p>}
@@ -544,7 +551,7 @@ export default function IgeveBilling() {
           if (price !== undefined) updated.price = price;
         }
         return updated;
-      }) }); }} />{field === 'billedQuantity' && <small>Qtd. faturada: {(item.billedQuantity ?? item.quantity).toLocaleString('pt-BR', { maximumFractionDigits: 6 })}</small>}{field === 'price' && <small className={billingTablePrice(prices, draft, item) === undefined ? 'igeve-price-missing' : ''}>{billingTablePrice(prices, draft, item) === undefined ? 'Sem preço cadastrado na tabela' : `Tabela: ${money(billingTablePrice(prices, draft, item)!)}`}</small>}{field === 'product' && item.addedForBilling && <small>Adicionado ao faturamento</small>}{(draft.location || draft.rubric) && field === 'product' && (draft.rubric && !adjustableDraft ? <select aria-label={`Categoria ${index + 1}`} className="input-field" value={item.category || ''} onChange={event => setDraft({ ...draft, items: draft.items.map(row => row.id === item.id ? { ...row, category: event.target.value, price: billingTablePrice(prices, draft, { ...row, category: event.target.value }) ?? 0 } : row) })}>{categories.map(category => <option key={category}>{category}</option>)}</select> : <small>{item.category || draft.category}</small>)}</td>)}
+      }) }); }} />{field === 'billedQuantity' && <small>Qtd. faturada: {(item.billedQuantity ?? item.quantity).toLocaleString('pt-BR', { maximumFractionDigits: 6 })}</small>}{field === 'price' && <small className={draftPriceLabels[index] ? '' : 'igeve-price-missing'}>{draftPriceLabels[index] || 'Sem preço cadastrado na tabela'}</small>}{field === 'product' && item.addedForBilling && <small>Adicionado ao faturamento</small>}{(draft.location || draft.rubric) && field === 'product' && (draft.rubric && !adjustableDraft ? <select aria-label={`Categoria ${index + 1}`} className="input-field" value={item.category || ''} onChange={event => setDraft({ ...draft, items: draft.items.map(row => row.id === item.id ? { ...row, category: event.target.value, price: billingTablePrice(prices, draft, { ...row, category: event.target.value }) ?? 0 } : row) })}>{categories.map(category => <option key={category}>{category}</option>)}</select> : <small>{item.category || draft.category}</small>)}</td>)}
       <td>{money(draftCosts[index].freight)}</td><td>{draftCosts[index].unitCost.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL', maximumFractionDigits: 6 })}</td><td>{money(draftCosts[index].total)}</td><td>{(!adjustableDraft || item.addedForBilling) && <button type="button" className="button button-outline" disabled={busy} aria-label={`Remover produto ${index + 1}`} onClick={() => setDraft({ ...draft, items: draft.items.filter(row => row.id !== item.id) })}><Trash2 size={16} /></button>}</td>
     </tr>)}</tbody></table></div>
       {!adjustableDraft && <button type="button" className="button button-outline" onClick={() => setDraft({ ...draft, items: [...draft.items, { ...newItem(), category: draft.rubric ? 'Estocáveis' : undefined }] })}><Plus size={16} /> Adicionar produto</button>}

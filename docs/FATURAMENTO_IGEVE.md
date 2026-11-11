@@ -98,6 +98,8 @@ No editor de faturamento, cada preço indica **Tabela: R$ ...** quando existe ca
 
 No editor, selecione a **Tabela de preços** da operação atual ou de outra operação que já tenha preços salvos. Clique em **Buscar preços na tabela** para aplicar os valores encontrados pela categoria, produto e unidade. Itens sem correspondência mantêm o preço atual. Confira os valores e salve o faturamento para registrar os preços e a tabela escolhida. Alterações pendentes no cadastro de preços precisam ser salvas antes da busca.
 
+Guaianases e Boituva podem reaproveitar os preços uma da outra. O preço cadastrado na tabela selecionada tem prioridade, inclusive quando é zero. Quando falta um preço, o faturamento consulta a outra operação e indica a origem junto ao preço do item. A busca também reconhece nomes equivalentes de categorias e apresentações como `Produto (350g)` e `Produto 350 g`, respeitando o tamanho da embalagem.
+
 
 ## Romaneio
 

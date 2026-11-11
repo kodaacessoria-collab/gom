@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import type { BillingInvoice, BillingOperation, BillingOrder, BillingPoint, BillingPriceEntry, SavedInvoice } from '../lib/igeveBilling';
-import { billingPricesFromEntries, invoiceTotal, lineTotal, normalizeBillingText } from '../lib/igeveBilling';
+import { billingPricesFromEntries, billingTablePrice, invoiceTotal, lineTotal, normalizeBillingText } from '../lib/igeveBilling';
 import { complementSuggestion, createRubricInvoice, reductionSuggestion, RUBRIC_BILLING_CATEGORIES, rubricBalance, rubricCategoryTotals, rubricDiscountNote, rubricProposal, rubricKey, rubricMonthInvoices, rubricOperationKind, rubricScopeInvoices, shiftRubricMonth } from '../lib/igeveRubrics';
 import type { MonthlyRubric, SavedRubric } from '../lib/igeveRubrics';
 import { readRubricWorkbook } from '../lib/igeveRubricWorkbook';
@@ -30,7 +30,8 @@ export default function IgeveRubrics({ operations, points, orders, invoices, cat
   const rubric = edits[key] || stored?.rubric || { key, operationId, pointId: byLocal ? pointId : '', month, amount: 0, previousAdjustment: 0, adjustmentNotes: '' };
   const dirty = !!edits[key];
   const valid = !!operation && !!month && (!byLocal || !!pointId);
-  const monthInvoices = month ? rubricMonthInvoices(orders, operations, points, billingPricesFromEntries(catalog), invoices.map(row => row.invoice), month).map(applyFreight) : [];
+  const prices = billingPricesFromEntries(catalog, operations);
+  const monthInvoices = month ? rubricMonthInvoices(orders, operations, points, prices, invoices.map(row => row.invoice), month).map(applyFreight) : [];
   const scoped = valid ? rubricScopeInvoices(monthInvoices, rubric, orders, points) : [];
   const balance = rubricBalance(rubric, scoped);
   const proposal = rubricProposal(rubric);
@@ -41,7 +42,7 @@ export default function IgeveRubrics({ operations, points, orders, invoices, cat
   const workbookSchool = workbookSelection[key] ?? (exactMatches.length === 1 ? exactMatches[0].school : '');
   const workbookRow = workbookRows.find(row => row.school === workbookSchool);
   const crossMonth = scoped.some(invoice => invoice.location && (invoice.location.start.slice(0, 7) !== month || invoice.location.end.slice(0, 7) !== month));
-  const missingPrices = scoped.flatMap(invoice => invoice.items.filter(item => !catalog.some(entry => entry.operationId === invoice.operationId && entry.category === (item.category || invoice.category) && entry.product === item.product && entry.unit === item.unit && entry.salePrice !== null) && item.price === 0));
+  const missingPrices = scoped.flatMap(invoice => invoice.items.filter(item => item.price === 0 && billingTablePrice(prices, invoice, item) === undefined));
   const suggestions = !rubric.proportional && balance.remaining > 0 ? complementSuggestion(catalog, rubric, balance.remaining) : [];
   const suggestedValue = suggestions.reduce((sum, item) => sum + lineTotal(item), 0);
   const previousMonth = month ? shiftRubricMonth(month, -1) : '';
