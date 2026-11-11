@@ -1,4 +1,4 @@
-import type { RubricInvoiceContext } from './igeveRubrics.ts';
+import type { RubricDiscount, RubricInvoiceContext } from './igeveRubrics.ts';
 import { getOrderControlNumber } from './orderControlNumber.ts';
 
 export const BILLING_PREFIX = 'gom_igeve_invoice_';
@@ -20,6 +20,8 @@ export interface BillingInvoice {
   freight?: { operationId: string; category: string; amount: number };
   location?: LocationInvoiceContext;
   rubric?: RubricInvoiceContext;
+  rubricDiscount?: RubricDiscount;
+  priceTableOperationId?: string;
   control: string; operationId: string; operation: string; destination: string; category: string;
   company: string; cnpj: string; date: string; notes: string; items: BillingItem[];
 }
@@ -114,23 +116,70 @@ export function canonicalBillingPrices(entries: BillingPriceEntry[]): BillingPri
   }
   return [...selected.entries()].map(([key, entry]) => ({ ...entry, key, product: billingProductName(entry.product) }));
 }
-export const billingPricesFromEntries = (entries: BillingPriceEntry[]): BillingPrices => Object.fromEntries(canonicalBillingPrices(entries)
-  .filter(entry => entry.salePrice !== null && Number.isFinite(entry.salePrice) && entry.salePrice >= 0)
-  .map(entry => [entry.key, { salePrice: entry.salePrice! }]));
+const priceLookup = Symbol('billingPriceLookup');
+const priceCategory = (category: string) => {
+  const normalized = normalizeBillingText(category);
+  if (['HORTIFRUTI', 'HORTIFRUTIGRANJEIRO', 'HORTIFRUTIGRANJEIROS'].includes(normalized)) return 'HORTIFRUTI';
+  if (['DIETA', 'DIETAS', 'FORMULA', 'FORMULAS', 'DIETAS E FORMULAS'].includes(normalized)) return 'DIETAS E FORMULAS';
+  if (normalized === 'PROTEINA') return 'PROTEINAS';
+  return normalized;
+};
+const priceLookupKey = (operationId: string, category: string, product: string, unit: string) => {
+  // Supplier descriptions sometimes put the package size in parentheses.
+  const name = product.replace(/\s*\(\s*(\d+(?:[.,]\d+)?\s*(?:KG|GR|G|ML|L))\s*\)\s*$/i, ' $1');
+  return billingOperationPriceKey(operationId, priceCategory(category), name, unit);
+};
+
+export function billingPricesFromEntries(entries: BillingPriceEntry[], operations: BillingOperation[] = []): BillingPrices {
+  const prices: BillingPrices = {};
+  const aliases = new Map<string, BillingPriceMatch | null>();
+  for (const entry of canonicalBillingPrices(entries)) {
+    if (entry.salePrice === null || !Number.isFinite(entry.salePrice) || entry.salePrice < 0) continue;
+    const price = { salePrice: entry.salePrice, operationId: entry.operationId };
+    prices[entry.key] = price;
+    const key = priceLookupKey(entry.operationId, entry.category, entry.product, entry.unit);
+    const previous = aliases.get(key);
+    aliases.set(key, previous !== undefined && previous?.salePrice !== price.salePrice ? null : price);
+  }
+
+  const operationWords = (operation: BillingOperation) => normalizeBillingText(`${operation.name} ${operation.city}`).split(/[^A-Z]+/);
+  const boituva = operations.filter(operation => operationWords(operation).includes('BOITUVA'));
+  const guaianases = operations.filter(operation => operationWords(operation).some(word => ['GUAIANASES', 'GAUIANASES', 'GUAIANAZES'].includes(word)));
+  const counterparts = new Map<string, string>();
+  if (guaianases.length === 1) for (const operation of boituva) counterparts.set(operation.id, guaianases[0].id);
+  if (boituva.length === 1) for (const operation of guaianases) counterparts.set(operation.id, boituva[0].id);
+  prices[priceLookup] = { aliases, counterparts };
+  return prices;
+}
+
+function findBillingPrice(prices: BillingPrices, operationId: string, category: string, product: string, unit: string): BillingPriceMatch | undefined {
+  const lookup = prices[priceLookup];
+  const find = (id: string) => prices[billingOperationPriceKey(id, category, product, unit)]
+    ?? lookup?.aliases.get(priceLookupKey(id, category, product, unit));
+  const own = find(operationId);
+  if (own !== undefined) return own || undefined;
+  const counterpart = lookup?.counterparts.get(operationId);
+  return counterpart ? find(counterpart) || undefined : undefined;
+}
+
 export const billingUnitPrice = (prices: BillingPrices, operationId: string, category: string, product: string, unit: string) =>
-  prices[billingOperationPriceKey(operationId, category, product, unit)]?.salePrice ?? 0;
+  findBillingPrice(prices, operationId, category, product, unit)?.salePrice ?? 0;
+export const billingTablePriceMatch = (prices: BillingPrices, invoice: BillingInvoice, item: BillingItem) =>
+  findBillingPrice(prices, invoice.priceTableOperationId || invoice.operationId, item.category || invoice.category, item.product, item.unit);
 export const billingTablePrice = (prices: BillingPrices, invoice: BillingInvoice, item: BillingItem) =>
-  prices[billingOperationPriceKey(invoice.operationId, item.category || invoice.category, item.product, item.unit)]?.salePrice;
-export function applyBillingTablePrices(invoice: BillingInvoice, prices: BillingPrices) {
+  billingTablePriceMatch(prices, invoice, item)?.salePrice;
+
+export function applyBillingTablePrices(invoice: BillingInvoice, prices: BillingPrices, sourceOperationId = invoice.priceTableOperationId || invoice.operationId) {
+  const source = { ...invoice, priceTableOperationId: sourceOperationId === invoice.operationId ? undefined : sourceOperationId };
   let updated = 0;
   let missing = 0;
   const items = invoice.items.map(item => {
-    const price = billingTablePrice(prices, invoice, item);
+    const price = billingTablePrice(prices, source, item);
     if (price === undefined) { missing++; return { ...item }; }
     updated++;
     return { ...item, price };
   });
-  return { invoice: { ...invoice, items }, updated, missing };
+  return { invoice: updated ? { ...source, items } : invoice, updated, missing };
 }
 
 export function billingProductsToAdd(invoice: BillingInvoice, entries: BillingPriceEntry[]) {
@@ -296,7 +345,10 @@ export function locationTotals(invoices: BillingInvoice[], orders: BillingOrder[
   return [...groups.values()].sort((a, b) => a.operation.localeCompare(b.operation, 'pt-BR') || a.destination.localeCompare(b.destination, 'pt-BR'));
 }
 
-type BillingPrices = Record<string, { salePrice: number }>;
+interface BillingPriceMatch { salePrice: number; operationId?: string }
+type BillingPrices = Record<string, BillingPriceMatch> & {
+  [priceLookup]?: { aliases: Map<string, BillingPriceMatch | null>; counterparts: Map<string, string> };
+};
 export function createDeliveryBillingInvoice(order: BillingOrder, delivery: BillingOrder['deliveries'][number], operation: BillingOperation | undefined, point: BillingPoint | undefined, prices: BillingPrices, date: string): BillingInvoice {
   return {
     id: `${BILLING_PREFIX}${order.id}_${delivery.id}`, sourceOrderId: order.id, sourceDeliveryId: delivery.id,

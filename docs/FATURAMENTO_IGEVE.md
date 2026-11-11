@@ -65,6 +65,12 @@ Se houver saldo, o sistema sugere produtos distribuídos entre Hortifrúti, Prot
 Rubricas ficam em `app_shared_state` com o prefixo `gom_igeve_rubric_`, por operação, local (quando aplicável) e mês. A gravação verifica a versão do registro para evitar sobrescrita de outro usuário. Complementos, reduções e aproveitamentos usam os faturamentos existentes, com contexto de rubrica e categorias por item; pedidos e estoque permanecem preservados. O editor mostra o resultado previsto na rubrica ao revisar um faturamento cujo mês/local tenha rubrica cadastrada. PDFs e planilhas preservam as quantidades ajustadas.
 
 
+### Rateio pela base mensal
+
+Selecione a operação, o mês e o local, quando aplicável. Em Maceió, use **Planilha de rubricas (.xlsx)** para carregar a linha da escola selecionada e depois salvar a rubrica. Também é possível preencher manualmente a referência, as Proteínas já faturadas e as bases mensais de Hortifrúti, Estocáveis e Dietas e Fórmulas.
+
+O saldo da referência após Proteínas e o ajuste anterior é distribuído conforme as bases. Hortifrúti e Fórmulas são arredondados a centavos, e Estocáveis recebe a diferença de arredondamento. Ao preparar um romaneio do mês, o editor compara o valor bruto por categoria com a meta disponível, considerando os faturamentos salvos daquele escopo. O excedente é registrado no faturamento como desconto a aplicar, com observação no PDF e detalhamento no Excel. Os totais do faturamento continuam brutos até a aplicação do desconto no fechamento.
+
 ## Frete de todos os romaneios filtrados
 
 Em **Faturamento por romaneio** ou **Frete**, selecione uma operação, uma ou mais categorias e o período de **entrega**. Informe **Valor total do frete (R$)** e clique em **Salvar frete dos romaneios filtrados**. O valor é único para todos os romaneios encontrados, somando todos os locais e categorias selecionados, inclusive entregas ainda sem faturamento preparado. Empresa não restringe este rateio.
@@ -90,7 +96,9 @@ Validação da inclusão: `node scripts/test-igeve-billing-add-products.mjs`. O 
 
 No editor de faturamento, cada preço indica **Tabela: R$ ...** quando existe cadastro correspondente à operação, categoria, produto e unidade, ou **Sem preço cadastrado na tabela** quando está pendente. Um preço zero cadastrado é válido e aparece como cadastrado. Itens com preço zero e sem cadastro exibem um aviso com os produtos pendentes; nesses casos, o custo final contém somente o frete até informar o preço.
 
-Use **Buscar preços na tabela** para consultar novamente os valores salvos no banco e aplicar os preços encontrados ao faturamento aberto, inclusive um faturamento antigo que tenha sido salvo antes do cadastro dos preços. Os valores sem correspondência são mantidos. Revise e salve o faturamento para confirmar; cancelar preserva o registro anterior. Alterações ainda não salvas na Tabela de preços precisam ser salvas antes desta busca. O botão não busca preços de outra operação, categoria ou unidade e não inventa valores para itens pendentes.
+No editor, selecione a **Tabela de preços** da operação atual ou de outra operação que já tenha preços salvos. Clique em **Buscar preços na tabela** para aplicar os valores encontrados pela categoria, produto e unidade. Itens sem correspondência mantêm o preço atual. Confira os valores e salve o faturamento para registrar os preços e a tabela escolhida. Alterações pendentes no cadastro de preços precisam ser salvas antes da busca.
+
+Guaianases e Boituva podem reaproveitar os preços uma da outra. O preço cadastrado na tabela selecionada tem prioridade, inclusive quando é zero. Quando falta um preço, o faturamento consulta a outra operação e indica a origem junto ao preço do item. A busca também reconhece nomes equivalentes de categorias e apresentações como `Produto (350g)` e `Produto 350 g`, respeitando o tamanho da embalagem.
 
 
 ## Romaneio

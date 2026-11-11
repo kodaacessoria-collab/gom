@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { isIgeveOperation, billingTablePrice, applyBillingTablePrices, billingCostLines, billingAdjustmentLines, billingQuantityAdjustment, applyBillingQuantityAdjustment, billingDateInRange, invoiceTotal, lineTotal, companyTotals, validateInvoice, sortBillingRows, locationTotals, locationBillingInvoices, billingOperationPriceKey, billingPriceCatalog, billingPricesFromEntries, parseBillingPrice, billingUnitPrice, createDeliveryBillingInvoice, createLocationBillingInvoice, locationInvoiceConflict, effectiveBillingInvoices, billingCategoryMatches, billingInvoiceCategoryMatches, billingCategoryOptions } from '../src/lib/igeveBilling.ts';
+import { isIgeveOperation, billingTablePrice, billingTablePriceMatch, applyBillingTablePrices, billingCostLines, billingAdjustmentLines, billingQuantityAdjustment, applyBillingQuantityAdjustment, billingDateInRange, invoiceTotal, lineTotal, companyTotals, validateInvoice, sortBillingRows, locationTotals, locationBillingInvoices, billingOperationPriceKey, billingPriceCatalog, billingPricesFromEntries, parseBillingPrice, billingUnitPrice, createDeliveryBillingInvoice, createLocationBillingInvoice, locationInvoiceConflict, effectiveBillingInvoices, billingCategoryMatches, billingInvoiceCategoryMatches, billingCategoryOptions } from '../src/lib/igeveBilling.ts';
 for (const city of ['Maceió', 'Gauianases', 'Guaianases', 'Guaianazes', 'Boituva', 'Mongaguá', 'Rio de Janeiro']) {
   assert.equal(isIgeveOperation({ id: city, name: `Operação ${city}`, city }), true, city);
 }
@@ -271,6 +271,65 @@ assert.equal(applyBillingTablePrices(manualPriceDraft, {}).missing, 2);
 assert.equal(billingTablePrice(operationPrices, { ...tableDraft, operationId: 'outra' }, tableDraft.items[0]), undefined);
 assert.equal(billingTablePrice(operationPrices, tableDraft, { ...tableDraft.items[0], unit: 'PACOTE' }), undefined);
 console.log('OK: atualização explícita dos preços salvos, consolidados com múltiplas categorias, zero cadastrado, pendências e preservação de valores sem correspondência.');
+
+const foreignTableId = 'outra-operacao';
+const [firstTableItem, secondTableItem] = manualPriceDraft.items;
+const foreignPrices = {
+  ...operationPrices,
+  [billingOperationPriceKey(foreignTableId, firstTableItem.category, firstTableItem.product, firstTableItem.unit)]: { salePrice: 0 },
+  [billingOperationPriceKey(foreignTableId, secondTableItem.category, secondTableItem.product, 'PACOTE')]: { salePrice: 99 },
+};
+const foreignResult = applyBillingTablePrices(manualPriceDraft, foreignPrices, foreignTableId);
+assert.equal(foreignResult.updated, 1);
+assert.equal(foreignResult.missing, 1);
+assert.deepEqual(foreignResult.invoice.items.map(item => item.price), [0, 12]);
+assert.equal(foreignResult.invoice.operationId, manualPriceDraft.operationId);
+assert.deepEqual(foreignResult.invoice.location, manualPriceDraft.location);
+const reopened = JSON.parse(JSON.stringify(foreignResult.invoice));
+assert.equal(reopened.priceTableOperationId, foreignTableId);
+assert.equal(billingTablePrice(foreignPrices, reopened, reopened.items[0]), 0);
+assert.equal(billingTablePrice(foreignPrices, reopened, reopened.items[1]), undefined);
+assert.deepEqual(applyBillingTablePrices(reopened, foreignPrices, 'sem-tabela').invoice, reopened);
+const ownTableAgain = applyBillingTablePrices(reopened, foreignPrices, manualPriceDraft.operationId);
+assert.equal(ownTableAgain.invoice.priceTableOperationId, undefined);
+assert.equal(invoiceTotal(ownTableAgain.invoice), 36);
+console.log('OK: escolha da tabela de outra operação, reabertura e retorno à tabela original.');
+
+const sharedOperations = [
+  { id: 'a', name: 'Operação Gauianases (SP)', city: '' },
+  { id: 'b', name: 'Operação - Boituva (SP)', city: '' },
+  { id: 'm', name: 'Operação Mongaguá (SP)', city: '' },
+];
+const priceEntry = (operationId, category, product, unit, salePrice) => ({
+  key: billingOperationPriceKey(operationId, category, product, unit), operationId, category, product, unit, salePrice,
+});
+const sharedEntries = [
+  priceEntry('a', 'Hortifrutigranjeiro', 'Suco (350ml)', 'UN', 7.5),
+  priceEntry('a', 'Estocáveis', 'Arroz', 'KG', 9),
+  priceEntry('b', 'Estocáveis', 'Arroz', 'KG', 0),
+  priceEntry('b', 'Dietas e Fórmulas', 'Fórmula 400g', 'UN', 24),
+];
+const sharedPrices = billingPricesFromEntries(sharedEntries, sharedOperations);
+const sharedDraft = { ...base, operationId: 'b' };
+const juice = { ...base.items[0], category: 'Hortifrúti', product: 'IG. Suco 350 ML', unit: 'UND' };
+assert.deepEqual(billingTablePriceMatch(sharedPrices, sharedDraft, juice), { salePrice: 7.5, operationId: 'a' });
+assert.equal(billingTablePrice(sharedPrices, sharedDraft, { ...juice, product: 'Suco 500ml' }), undefined);
+assert.equal(billingTablePrice(sharedPrices, sharedDraft, { ...juice, unit: 'CX' }), undefined);
+assert.equal(billingTablePrice(sharedPrices, sharedDraft, { ...juice, category: 'Estocáveis' }), undefined);
+assert.equal(billingTablePrice(sharedPrices, { ...sharedDraft, operationId: 'm' }, juice), undefined);
+assert.equal(billingTablePrice(sharedPrices, sharedDraft, base.items[0]), 0);
+assert.equal(billingTablePrice(sharedPrices, { ...sharedDraft, priceTableOperationId: 'a' }, base.items[0]), 9);
+assert.equal(billingUnitPrice(sharedPrices, 'a', 'Fórmulas', 'Fórmula', '0,4KG'), 24);
+const sharedResult = applyBillingTablePrices({ ...sharedDraft, items: [juice, base.items[0]] }, sharedPrices);
+assert.equal(sharedResult.updated, 2);
+assert.deepEqual(sharedResult.invoice.items.map(item => item.price), [7.5, 0]);
+const ambiguousPrices = billingPricesFromEntries([...sharedEntries,
+  priceEntry('a', 'Hortifrutigranjeiros', 'Suco', '350ML', 11),
+], sharedOperations);
+assert.equal(billingTablePrice(ambiguousPrices, sharedDraft, juice), undefined);
+console.log('OK: preços compartilhados entre Guaianases e Boituva, prioridade local, categorias equivalentes e embalagens.');
+
+
 
 const categoryAdjustment = {
   ...structuredClone(base), category: 'Estocáveis, Proteínas',
