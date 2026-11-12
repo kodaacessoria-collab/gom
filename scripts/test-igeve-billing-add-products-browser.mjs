@@ -38,6 +38,15 @@ try {
       const filter = url.searchParams.get('key') || '';
       const prefix = filter.replace(/^like\./, '').replace(/\\/g, '').replace(/%$/, '');
       body = [...db.values()].filter(row => filter.startsWith('in.') ? filter.includes(row.key) : row.key.startsWith(prefix));
+    } else if (req.method() === 'DELETE') {
+      const key = url.searchParams.get('key')?.replace(/^eq\./, '');
+      const version = url.searchParams.get('updated_at')?.replace(/^eq\./, '');
+      const record = db.get(key);
+      body = [];
+      if (record && record.updated_at === version) {
+        db.delete(key);
+        body = [{ key }];
+      }
     } else {
       const row = req.postDataJSON(); db.set(row.key, row); body = {updated_at:row.updated_at};
     }
@@ -127,6 +136,45 @@ try {
   await dialog.getByRole('button', {name:'Salvar faturamento',exact:true}).click();
   await dialog.waitFor({state:'hidden'});
   assert.equal(db.get(stored[0].key).value.items.length, 2, 'Remoção persiste após reabrir');
+  const originalOrders = structuredClone(db.get('gom_delivery_operation_orders'));
+  const invoiceKey = stored[0].key;
+  const locationName = db.get(invoiceKey).value.destination;
+  await page.locator('.igeve-category-filter summary').click();
+  await page.getByRole('checkbox', {name:'Estocáveis',exact:true}).uncheck();
+  await page.locator('.igeve-category-filter summary').click();
+  const savedRow = page.getByRole('row').filter({hasText:locationName}).filter({has:page.getByRole('button',{name:'Excluir faturamento',exact:true})});
+  const deleteButton = savedRow.getByRole('button', {name:'Excluir faturamento',exact:true});
+  await deleteButton.waitFor();
+  assert.equal(await page.getByRole('button', {name:'Excluir faturamento',exact:true}).count(), 1, 'Só o faturamento salvo pode ser excluído, mesmo com todas as categorias');
+  page.once('dialog', confirmation => confirmation.dismiss());
+  await deleteButton.click();
+  assert.ok(db.has(invoiceKey), 'Cancelar preserva o faturamento');
+
+  const dependentKey = 'gom_igeve_invoice_complemento_teste';
+  const originalInvoice = db.get(invoiceKey);
+  db.set(dependentKey, { ...originalInvoice, key: dependentKey,
+    value: { ...originalInvoice.value, id: dependentKey, location: undefined, parentId: invoiceKey, control: 'COMPLEMENTO TESTE' } });
+  page.once('dialog', confirmation => confirmation.accept());
+  await deleteButton.click();
+  await page.getByText('Exclua primeiro o faturamento vinculado COMPLEMENTO TESTE', {exact:false}).waitFor();
+  assert.ok(db.has(invoiceKey), 'Um complemento impede a exclusão da origem');
+  db.delete(dependentKey);
+
+  db.set(invoiceKey, { ...originalInvoice, updated_at: '2026-11-12T22:00:00.000Z' });
+  page.once('dialog', confirmation => confirmation.accept());
+  await deleteButton.click();
+  await page.getByText('O faturamento já foi alterado ou excluído.', {exact:false}).waitFor();
+  assert.ok(db.has(invoiceKey), 'Uma versão diferente impede a exclusão');
+  await page.getByRole('button', {name:'Atualizar',exact:true}).click();
+  await deleteButton.waitFor();
+  page.once('dialog', confirmation => confirmation.accept());
+  await deleteButton.click();
+  await page.getByText('Faturamento excluído com sucesso.', {exact:true}).waitFor();
+  assert.equal(db.has(invoiceKey), false);
+  assert.deepEqual(db.get('gom_delivery_operation_orders'), originalOrders, 'Os romaneios da operação são preservados');
+  await page.getByRole('row').filter({hasText:locationName}).getByRole('button', {name:'Preparar faturamento',exact:true}).waitFor();
+  await page.getByRole('button', {name:'Relatório por empresas',exact:true}).click();
+  await page.getByText('Nenhum faturamento encontrado para os filtros.', {exact:true}).waitFor();
   assert.deepEqual(errors, []);
-  console.log('OK: cadastro, validação, duplicidade e reuso da empresa. Inclusão e gravação dos produtos no navegador.');
+  console.log('OK: cadastro, validação, duplicidade e reuso da empresa. Inclusão, gravação e exclusão de faturamento no navegador.');
 } finally { await browser.close(); }
