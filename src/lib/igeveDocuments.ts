@@ -48,7 +48,7 @@ export function documentFilename(supplier: DocumentSupplier, doc: NfeDocument, k
   const safe = (s: string) => s.normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-zA-Z0-9_-]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 100);
   const words = safe(supplier.name).split('_').filter(Boolean);
   const initials = supplier.layout === 'manu' ? 'MA' : words.length > 1 ? words.slice(0, 2).map(w => w[0]).join('') : words[0]?.slice(0, 2);
-  return `${(initials || 'FO').toUpperCase()}-${kind === 'quote' ? 'ORÇAMENTO' : `ROMANEIO_${safe(doc.number)}`}-${safe(doc.unitName)}.pdf`;
+  return `${(initials || 'FO').toUpperCase()}-${kind === 'quote' ? 'ORÇAMENTO' : `ROMANEIO_${safe(doc.deliveryDate)}`}-${safe(doc.unitName)}.pdf`;
 }
 export function documentTotal(items: NfeItem[], prices?: Record<string, number | null>) {
   return items.reduce((sum, item) => sum + Math.round(round2(item.quantity * (prices ? prices[item.id] ?? 0 : item.price)) * 100), 0) / 100;
