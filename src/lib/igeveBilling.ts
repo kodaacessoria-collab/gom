@@ -401,6 +401,9 @@ export function locationBillingInvoices({ orders, operations, points, prices, in
   return result;
 }
 
+const locationItemKey = (category: string, product: string, unit: string) =>
+  JSON.stringify([normalizeBillingText(category), normalizeBillingText(product), normalizeBillingText(unit || 'UN')]);
+
 export function createLocationBillingInvoice(group: LocationBillingTotal, orders: BillingOrder[], prices: BillingPrices, start: string, end: string, category: BillingCategorySelection, date: string): BillingInvoice {
   if (!group.invoices.length) throw new Error('Nenhum romaneio disponível para faturar este local.');
   const sources = new Map(orders.flatMap(order => order.deliveries.map(delivery => [JSON.stringify([order.id, delivery.id]), delivery] as const)));
@@ -414,7 +417,7 @@ export function createLocationBillingInvoice(group: LocationBillingTotal, orders
     const sourceItems = invoice.rubric ? invoice.items : !invoice.parentId ? sources.get(sourceKey)?.items || invoice.items : invoice.items;
     for (const sourceItem of sourceItems) {
       const itemCategory = ('category' in sourceItem ? sourceItem.category as string : '') || invoice.category;
-      const key = JSON.stringify([normalizeBillingText(itemCategory), normalizeBillingText(sourceItem.product), normalizeBillingText(sourceItem.unit || 'UN')]);
+      const key = locationItemKey(itemCategory, sourceItem.product, sourceItem.unit);
       const row = items.get(key) || { id: key, product: sourceItem.product, unit: sourceItem.unit || 'UN', quantity: 0, billedQuantity: 0, category: itemCategory, price: billingUnitPrice(prices, invoice.operationId, itemCategory, sourceItem.product, sourceItem.unit) };
       row.quantity = Math.round((row.quantity + sourceItem.quantity) * 1e6) / 1e6;
       row.billedQuantity = Math.round(((row.billedQuantity || 0) + (invoice.rubric && 'billedQuantity' in sourceItem && typeof sourceItem.billedQuantity === 'number' ? sourceItem.billedQuantity : sourceItem.quantity)) * 1e6) / 1e6;
@@ -437,6 +440,49 @@ export function createLocationBillingInvoice(group: LocationBillingTotal, orders
   };
 }
 
+export function refreshLocationBillingInvoices(saved: SavedInvoice[], orders: BillingOrder[], prices: BillingPrices): SavedInvoice[] {
+  const ordersById = new Map(orders.map(order => [order.id, order]));
+  const invoicesById = new Map(saved.map(({ invoice }) => [invoice.id, invoice]));
+  return saved.map(row => {
+    const { invoice } = row;
+    const context = invoice.location;
+    if (!context?.deliveryKeys.length) return row;
+
+    const origins: BillingInvoice[] = [];
+    const linkedOrders = new Map<string, BillingOrder>();
+    for (const key of context.deliveryKeys) {
+      const [orderId, deliveryId] = JSON.parse(key) as [string, string];
+      const order = ordersById.get(orderId);
+      if (!order || order.operationId !== invoice.operationId) return row;
+      const delivery = order.deliveries.find(entry => entry.id === deliveryId)
+        // Older edits could recreate a delivery for the same point with a new ID.
+        ?? order.deliveries.find(entry => entry.deliveryPointId === invoice.deliveryPointId);
+      if (!delivery || (invoice.deliveryPointId && delivery.deliveryPointId !== invoice.deliveryPointId)) return row;
+      linkedOrders.set(order.id, order);
+      const origin = createDeliveryBillingInvoice(order, delivery, undefined, undefined, prices, invoice.date);
+      origins.push(origin);
+    }
+    for (const id of context.sourceIds) {
+      const complement = invoicesById.get(id);
+      if (complement?.parentId) origins.push(complement);
+    }
+    const group = { key: context.groupKey, operation: invoice.operation, destination: invoice.destination,
+      count: 0, complementCount: 0, base: 0, complement: 0, total: 0, invoices: origins };
+    const latest = createLocationBillingInvoice(group, [...linkedOrders.values()], prices, context.start, context.end, context.categories || context.category, invoice.date);
+    const previous = new Map(invoice.items.filter(item => !item.addedForBilling).map(item => [locationItemKey(item.category || invoice.category, item.product, item.unit), item]));
+    const items = latest.items.map(item => {
+      const old = previous.get(item.id);
+      if (!old) return { ...item, price: billingTablePrice(prices, invoice, item) ?? item.price };
+      const billedQuantity = Math.max(0, Math.round((item.quantity + billingQuantityAdjustment(old)) * 1e6) / 1e6);
+      return { ...old, quantity: item.quantity, billedQuantity };
+    });
+    items.push(...invoice.items.filter(item => item.addedForBilling));
+    return { ...row, invoice: { ...invoice, items, location: { ...context,
+      deliveryKeys: latest.location!.deliveryKeys, sourceIds: [...new Set([...context.sourceIds, ...latest.location!.sourceIds])], count: latest.location!.count,
+    } } };
+  });
+}
+
 export function locationInvoiceConflict(invoice: BillingInvoice, saved: BillingInvoice[]): boolean {
   if (!invoice.location) return false;
   const keys = new Set(invoice.location.deliveryKeys);
@@ -447,6 +493,8 @@ export function locationInvoiceConflict(invoice: BillingInvoice, saved: BillingI
 
 // A consolidated local invoice replaces its source invoices in financial reports.
 export function effectiveBillingInvoices(invoices: BillingInvoice[]): BillingInvoice[] {
-  const covered = new Set(invoices.flatMap(invoice => invoice.location?.sourceIds || []));
-  return invoices.filter(invoice => invoice.location || !covered.has(invoice.id));
+  const coveredIds = new Set(invoices.flatMap(invoice => invoice.location?.sourceIds || []));
+  const coveredDeliveries = new Set(invoices.flatMap(invoice => invoice.location?.deliveryKeys || []));
+  return invoices.filter(invoice => invoice.location || (!coveredIds.has(invoice.id) &&
+    (invoice.parentId || !coveredDeliveries.has(JSON.stringify([invoice.sourceOrderId, invoice.sourceDeliveryId])))));
 }

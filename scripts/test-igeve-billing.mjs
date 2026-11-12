@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { isIgeveOperation, billingTablePrice, billingTablePriceMatch, applyBillingTablePrices, billingCostLines, billingAdjustmentLines, billingQuantityAdjustment, applyBillingQuantityAdjustment, billingDateInRange, invoiceTotal, lineTotal, companyTotals, validateInvoice, sortBillingRows, locationTotals, locationBillingInvoices, billingOperationPriceKey, billingPriceCatalog, billingPricesFromEntries, parseBillingPrice, billingUnitPrice, createDeliveryBillingInvoice, createLocationBillingInvoice, locationInvoiceConflict, effectiveBillingInvoices, billingCategoryMatches, billingInvoiceCategoryMatches, billingCategoryOptions } from '../src/lib/igeveBilling.ts';
+import { isIgeveOperation, billingTablePrice, billingTablePriceMatch, applyBillingTablePrices, billingCostLines, billingAdjustmentLines, billingQuantityAdjustment, applyBillingQuantityAdjustment, billingDateInRange, invoiceTotal, lineTotal, companyTotals, validateInvoice, sortBillingRows, locationTotals, locationBillingInvoices, billingOperationPriceKey, billingPriceCatalog, billingPricesFromEntries, parseBillingPrice, billingUnitPrice, createDeliveryBillingInvoice, createLocationBillingInvoice, refreshLocationBillingInvoices, locationInvoiceConflict, effectiveBillingInvoices, billingCategoryMatches, billingInvoiceCategoryMatches, billingCategoryOptions } from '../src/lib/igeveBilling.ts';
 for (const city of ['Maceió', 'Gauianases', 'Guaianases', 'Guaianazes', 'Boituva', 'Mongaguá', 'Rio de Janeiro']) {
   assert.equal(isIgeveOperation({ id: city, name: `Operação ${city}`, city }), true, city);
 }
@@ -138,6 +138,26 @@ assert.equal(riceKg.price, 2.55);
 assert.equal(consolidated.location.count, 2);
 const adjusted = { ...consolidated, company: 'Empresa de teste', items: consolidated.items.map(item => item.id === riceKg.id ? { ...item, billedQuantity: 8, price: 6 } : { ...item, billedQuantity: 0, price: 100 }) };
 assert.equal(invoiceTotal(adjusted), 48, 'Total usa ajuste faturamento vezes preço, sem cobrar quantidade entregue');
+const manualItem = { id: 'manual', category: 'Estocáveis', product: 'Sal', unit: 'KG', quantity: 0, billedQuantity: 2, price: 5, addedForBilling: true };
+const savedLocal = { invoice: { ...adjusted, items: [...adjusted.items, manualItem] }, version: 'v1' };
+const updatedOrders = [octoberOrder, { ...rawSecond, deliveries: [{ ...rawSecond.deliveries[0], id: 'recreated-delivery', items: [
+  { product: 'Arroz', unit: 'KG', quantity: 12 }, { product: 'Feijão', unit: 'UN', quantity: 4 },
+] }] }];
+const updatedPrices = { ...reportSource.prices, [billingOperationPriceKey('maceio', 'Estocáveis', 'Feijão', 'UN')]: { salePrice: 3 } };
+const [refreshedLocal] = refreshLocationBillingInvoices([savedLocal], updatedOrders, updatedPrices);
+assert.equal(refreshedLocal.invoice.id, savedLocal.invoice.id);
+assert.equal(refreshedLocal.version, 'v1');
+assert.equal(refreshedLocal.invoice.company, savedLocal.invoice.company);
+assert.deepEqual(refreshedLocal.invoice.items.map(item => [item.product, item.unit, item.quantity, item.billedQuantity, item.price]), [
+  ['Arroz', 'KG', 15, 13, 6], ['Feijão', 'UN', 4, 4, 3], ['Sal', 'KG', 0, 2, 5],
+], 'Atualiza quantidades, adiciona e remove itens, e preserva o ajuste, preço e produto avulso');
+assert.equal(invoiceTotal(refreshedLocal.invoice), 100);
+assert.ok(refreshedLocal.invoice.location.deliveryKeys.includes(JSON.stringify([rawSecond.id, 'recreated-delivery'])));
+const updatedSources = locationBillingInvoices({ ...reportSource, orders: updatedOrders });
+assert.deepEqual(effectiveBillingInvoices([...localSource, ...updatedSources, refreshedLocal.invoice]), [refreshedLocal.invoice], 'A entrega antiga e a entrega com novo ID não aparecem como faturamentos pendentes');
+assert.deepEqual(refreshLocationBillingInvoices([refreshedLocal], updatedOrders, updatedPrices), [refreshedLocal], 'Atualizar duas vezes não duplica itens ou reaplica o ajuste');
+assert.deepEqual(refreshLocationBillingInvoices([savedLocal], [], updatedPrices), [savedLocal], 'Preserva o faturamento se a origem não puder ser encontrada');
+assert.equal(savedLocal.invoice.items.find(item => item.id === riceKg.id).quantity, 10, 'Consultar o faturamento não grava as novas quantidades');
 assert.equal(lineTotal({ ...riceKg, billedQuantity: 0, price: 100 }), 0, 'Ajuste zero não volta à quantidade entregue');
 assert.equal(validateInvoice(adjusted), '');
 for (const badQuantity of [-1, NaN, Infinity, undefined]) {

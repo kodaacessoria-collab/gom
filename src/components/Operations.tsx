@@ -1251,6 +1251,11 @@ const Operations: React.FC = () => {
     };
     if (editingDraftItem) {
       setDraftDeliveries(prev => {
+        if (editingDraftItem.deliveryPointId === orderForm.deliveryPointId) {
+          return prev.map(delivery => delivery.deliveryPointId === editingDraftItem.deliveryPointId
+            ? { ...delivery, items: delivery.items.map((current, index) => index === editingDraftItem.itemIndex ? item : current) }
+            : delivery);
+        }
         const next = prev
           .map(delivery => delivery.deliveryPointId === editingDraftItem.deliveryPointId
             ? { ...delivery, items: delivery.items.filter((_, index) => index !== editingDraftItem.itemIndex) }

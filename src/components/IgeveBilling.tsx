@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import type { FormEvent } from 'react';
 import { ArrowDown, ArrowUp, ArrowUpDown, FileText, Plus, RefreshCw, Save, Trash2 } from 'lucide-react';
 import jsPDF from 'jspdf';
@@ -8,7 +8,7 @@ import { supabase } from '../lib/supabase';
 import { getOrderControlNumber } from '../lib/orderControlNumber';
 import { addPdfHeader } from '../lib/pdfBranding';
 import { digits, validCnpj } from '../lib/igeveDocuments';
-import { billingProductsToAdd, addBillingTableProduct, billingInvoiceType, BILLING_PREFIX, BILLING_PRICE_PREFIX, billingPriceCatalog, billingPricesFromEntries, parseBillingPrice, SOURCE_KEYS, billingCategoryOptions, billingCategoryMatches, billingInvoiceCategoryMatches, sortBillingRows, createLocationBillingInvoice, locationInvoiceConflict, effectiveBillingInvoices, createDeliveryBillingInvoice, locationBillingInvoices, locationTotals, companyTotals, billingDateInRange, invoiceTotal, isIgeveOperation, billingCostLines, billingQuantityAdjustment, applyBillingQuantityAdjustment, billingAdjustmentLines, billingTablePrice, billingTablePriceMatch, applyBillingTablePrices, validateInvoice } from '../lib/igeveBilling';
+import { billingProductsToAdd, addBillingTableProduct, billingInvoiceType, BILLING_PREFIX, BILLING_PRICE_PREFIX, billingPriceCatalog, billingPricesFromEntries, parseBillingPrice, SOURCE_KEYS, billingCategoryOptions, billingCategoryMatches, billingInvoiceCategoryMatches, sortBillingRows, createLocationBillingInvoice, refreshLocationBillingInvoices, locationInvoiceConflict, effectiveBillingInvoices, createDeliveryBillingInvoice, locationBillingInvoices, locationTotals, companyTotals, billingDateInRange, invoiceTotal, isIgeveOperation, billingCostLines, billingQuantityAdjustment, applyBillingQuantityAdjustment, billingAdjustmentLines, billingTablePrice, billingTablePriceMatch, applyBillingTablePrices, validateInvoice } from '../lib/igeveBilling';
 import type { BillingInvoice, BillingOperation, BillingOrder, BillingPoint, SavedInvoice, BillingSort, SavedBillingPrice, BillingPriceEntry } from '../lib/igeveBilling';
 import type { Company } from '../types';
 import IgeveFreight from './IgeveFreight';
@@ -60,7 +60,7 @@ export default function IgeveBilling() {
   const [savedPrices, setSavedPrices] = useState<SavedBillingPrice[]>([]);
   const [importedPrices, setImportedPrices] = useState<BillingPriceEntry[]>([]);
   const [priceEdits, setPriceEdits] = useState<Record<string, string>>({});
-  const prices = billingPricesFromEntries(savedPrices.map(row => row.entry), operations);
+  const prices = useMemo(() => billingPricesFromEntries(savedPrices.map(row => row.entry), operations), [savedPrices, operations]);
   const [companies, setCompanies] = useState<Company[]>([]);
   const [companyNotice, setCompanyNotice] = useState<{ text: string; error?: boolean } | null>(null);
   const [rawSaved, setSaved] = useState<SavedInvoice[]>([]);
@@ -88,7 +88,8 @@ export default function IgeveBilling() {
 
   const freightSource = { orders, operations, points, prices, date: today(), invoices: draft ? [...rawSaved.filter(row => row.invoice.id !== draft.id).map(row => row.invoice), draft] : rawSaved.map(row => row.invoice) };
   const applyFreight = billingFreightApplier(freightSource, freights.map(row => row.freight));
-  const saved = rawSaved.map(row => ({ ...row, invoice: applyFreight(row.invoice) }));
+  const refreshedSaved = useMemo(() => refreshLocationBillingInvoices(rawSaved, orders, prices), [rawSaved, orders, prices]);
+  const saved = refreshedSaved.map(row => ({ ...row, invoice: applyFreight(row.invoice) }));
   async function saveFreight(freight: BillingFreight, previousVersion: string | null) {
     if (busy || !ready) return false;
     if (freights.some(row => freightScopesOverlap(row.freight, freight))) {
