@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { isIgeveOperation, billingTablePrice, billingTablePriceMatch, applyBillingTablePrices, billingCostLines, billingAdjustmentLines, billingQuantityAdjustment, applyBillingQuantityAdjustment, billingDateInRange, invoiceTotal, lineTotal, companyTotals, validateInvoice, sortBillingRows, locationTotals, locationBillingInvoices, billingOperationPriceKey, billingPriceCatalog, billingPricesFromEntries, parseBillingPrice, billingUnitPrice, createDeliveryBillingInvoice, createLocationBillingInvoice, refreshLocationBillingInvoices, locationInvoiceConflict, effectiveBillingInvoices, billingCategoryMatches, billingInvoiceCategoryMatches, billingCategoryOptions } from '../src/lib/igeveBilling.ts';
+import { isIgeveOperation, billingTablePrice, billingTablePriceMatch, applyBillingTablePrices, billingCostLines, billingAdjustmentLines, billingQuantityAdjustment, applyBillingQuantityAdjustment, billingDateInRange, invoiceTotal, lineTotal, companyTotals, validateInvoice, sortBillingRows, locationTotals, locationBillingInvoices, billingOperationPriceKey, billingPriceCatalog, billingPricesFromEntries, parseBillingPrice, billingUnitPrice, createDeliveryBillingInvoice, createLocationBillingInvoice, refreshLocationBillingInvoices, currentLocationBillingInvoices, locationInvoiceConflict, effectiveBillingInvoices, billingCategoryMatches, billingInvoiceCategoryMatches, billingCategoryOptions } from '../src/lib/igeveBilling.ts';
 for (const city of ['Maceió', 'Gauianases', 'Guaianases', 'Guaianazes', 'Boituva', 'Mongaguá', 'Rio de Janeiro']) {
   assert.equal(isIgeveOperation({ id: city, name: `Operação ${city}`, city }), true, city);
 }
@@ -171,6 +171,18 @@ assert.equal(locationInvoiceConflict(adjusted, [adjusted]), false, 'Permite edit
 assert.equal(locationInvoiceConflict(base, [adjusted]), false);
 assert.deepEqual(effectiveBillingInvoices([billedInNovember, adjusted]), [adjusted], 'Relatório não soma consolidado e sua origem duas vezes');
 assert.equal(companyTotals(effectiveBillingInvoices([billedInNovember, adjusted]))[0].base, 48);
+const replacementOrder = { ...octoberOrder, id: 'reimported', deliveries: [{ ...delivery, id: 'replacement' }] };
+const historicalLocation = createLocationBillingInvoice(locationTotals([billedInNovember], [octoberOrder], reportPoints)[0], [octoberOrder], reportSource.prices, reportSource.start, reportSource.end, 'Estocáveis', reportSource.draftDate);
+const historicalInvoices = [billedInNovember, complementInNovember, historicalLocation];
+const currentInvoices = currentLocationBillingInvoices(historicalInvoices, [replacementOrder]);
+assert.deepEqual(currentInvoices, [], 'Retira da visão operacional os faturamentos cuja origem foi removida');
+const currentSources = locationBillingInvoices({ ...reportSource, orders: [replacementOrder], invoices: currentInvoices });
+assert.equal(currentSources.length, 1, 'O pedido reimportado aparece uma única vez');
+assert.equal(currentSources[0].sourceOrderId, replacementOrder.id);
+assert.equal(invoiceTotal(currentSources[0]), 7.65, 'Só o pedido vigente entra no total operacional');
+assert.ok(effectiveBillingInvoices(historicalInvoices).includes(historicalLocation), 'O faturamento salvo continua no histórico financeiro');
+assert.deepEqual(currentLocationBillingInvoices(historicalInvoices, [octoberOrder]), historicalInvoices, 'Mantém a origem, o complemento e o consolidado de uma entrega vigente');
+assert.deepEqual(currentLocationBillingInvoices([adjusted], [octoberOrder]), [], 'O total histórico de um consolidado incompleto não entra no total operacional');
 assert.equal(locationBillingInvoices({ ...reportSource, orders: localOrders, invoices: [billedInNovember, adjusted] }).length, 2, 'Não trata o consolidado como outro romaneio de origem');
 assert.deepEqual({ localGroup, localOrders }, localSnapshot, 'Consolidação preserva as entregas originais');
 assert.throws(() => createLocationBillingInvoice({ ...localGroup, invoices: [] }, [], {}, '', '', '', reportSource.draftDate));

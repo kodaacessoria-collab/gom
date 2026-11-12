@@ -491,6 +491,19 @@ export function locationInvoiceConflict(invoice: BillingInvoice, saved: BillingI
     (other.location.deliveryKeys.some(key => keys.has(key)) || other.location.sourceIds.some(id => ids.has(id))));
 }
 
+// The operational view uses live deliveries. Financial history can retain saved snapshots.
+export function currentLocationBillingInvoices(invoices: BillingInvoice[], orders: BillingOrder[]): BillingInvoice[] {
+  const activeKeys = new Set(orders.flatMap(order => order.deliveries.map(delivery => JSON.stringify([order.id, delivery.id]))));
+  const sourceKey = (invoice: BillingInvoice) => JSON.stringify([invoice.sourceOrderId, invoice.sourceDeliveryId]);
+  for (const invoice of invoices) {
+    // Standalone rubric invoices do not originate from an order in Operations.
+    if (invoice.rubric && invoice.sourceOrderId === invoice.id) activeKeys.add(sourceKey(invoice));
+  }
+  return invoices.filter(invoice => invoice.location
+    ? invoice.location.deliveryKeys.every(key => activeKeys.has(key))
+    : activeKeys.has(sourceKey(invoice)));
+}
+
 // A consolidated local invoice replaces its source invoices in financial reports.
 export function effectiveBillingInvoices(invoices: BillingInvoice[]): BillingInvoice[] {
   const coveredIds = new Set(invoices.flatMap(invoice => invoice.location?.sourceIds || []));
