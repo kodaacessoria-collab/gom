@@ -39,7 +39,7 @@ export function createIgeveDocumentPdf(doc: NfeDocument, supplier: DocumentSuppl
   y += 2;
   const title = 'ROMANEIO DE ENTREGA';
   pdf.setDrawColor(...color); pdf.setLineWidth(.5); pdf.line(left, y, 196, y); y += 7;
-  text(`${title} - NF-e ${doc.number}`, 13, true);
+  text(title, 13, true);
   text(`Data de entrega: ${date(doc.deliveryDate)}`, 9);
   const fields = [
     ['Cliente', doc.recipient], ['CNPJ do destinatário', doc.recipientCnpj], ['Unidade de atendimento', doc.unitName],
@@ -86,9 +86,9 @@ export function createIgeveDocumentPdf(doc: NfeDocument, supplier: DocumentSuppl
   const count = pdf.getNumberOfPages();
   for (let p = 1; p <= count; p++) {
     pdf.setPage(p); pdf.setFont('helvetica', 'normal'); pdf.setFontSize(8); pdf.setTextColor(90, 90, 90);
-    if (p > 1) { pdf.text(pdf.splitTextToSize(`${supplier.name} | ${title} | NF-e ${doc.number}`, width), left, 15); }
+    if (p > 1) { pdf.text(pdf.splitTextToSize(`${supplier.name} | ${title}`, width), left, 15); }
     pdf.setDrawColor(210, 210, 210); pdf.line(left, 278, 196, 278);
-    pdf.text(pdf.splitTextToSize(`NF-e ${doc.number} | ${doc.unitName}`, 152), left, 283);
+    pdf.text(pdf.splitTextToSize(doc.unitName, 152), left, 283);
     pdf.text(`${p}/${count}`, 196, 283, { align: 'right' });
   }
   return { pdf, filename: documentFilename(supplier, doc, kind) };

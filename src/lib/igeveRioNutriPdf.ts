@@ -26,7 +26,7 @@ export function createRioNutriPdf(doc: NfeDocument, supplier: DocumentSupplier, 
   y = Math.max(y + 3, 44);
   pdf.setDrawColor(...accent); pdf.line(15, y, 195, y); y += 8;
   text(title, 20, true);
-  text(quote ? `Data da cotação: ${quotation.date.split('-').reverse().join('/')}` : `NF-e: ${doc.number} | Data da entrega: ${doc.deliveryDate.split('-').reverse().join('/')}`);
+  text(quote ? `Data da cotação: ${quotation.date.split('-').reverse().join('/')}` : `Data da entrega: ${doc.deliveryDate.split('-').reverse().join('/')}`);
   if (doc.consumption) text(`Referência: ${doc.consumption}`);
   autoTable(pdf, { startY: y, margin: { left: 15, right: 15, top: 30, bottom: 25 }, theme: 'plain',
     body: [[`DESTINATÁRIO\n${doc.recipient}\nCNPJ: ${doc.recipientCnpj}\n${doc.unitName}`, `ENDEREÇO DO DESTINATÁRIO\n${doc.address || 'A preencher'}`]],
