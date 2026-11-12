@@ -7,6 +7,7 @@ import { downloadIgevePriceWorkbook, readIgevePriceWorkbook } from '../lib/igeve
 interface Props {
   operations: BillingOperation[]; categories: string[]; catalog: BillingPriceEntry[]; busy: boolean;
   onApply: (entries: BillingPriceEntry[]) => void;
+  onSaveExcel: (entries: BillingPriceEntry[]) => void;
 }
 type ImportFormat = 'pdf' | 'excel';
 interface PriceImportPreview {
@@ -15,7 +16,7 @@ interface PriceImportPreview {
   items: { id: string; product: string; unit: string; price: number }[];
   warnings: string[];
 }
-export default function IgevePriceImport({ operations, categories, catalog, busy, onApply }: Props) {
+export default function IgevePriceImport({ operations, categories, catalog, busy, onApply, onSaveExcel }: Props) {
   const [operationId, setOperation] = useState('');
   const [category, setCategory] = useState('');
   const [doc, setDoc] = useState<PriceImportPreview | null>(null);
@@ -69,7 +70,14 @@ export default function IgevePriceImport({ operations, categories, catalog, busy
       });
       if (!entries.length) throw new Error('Selecione ao menos um produto.');
       if (new Set(entries.map(entry => entry.key)).size !== entries.length) throw new Error('Há itens destinados ao mesmo produto. Ignore a repetição ou escolha produtos diferentes.');
-      onApply(entries); setDoc(null); setConfirmed(false); setMessage(`${entries.length} preço(s) preparado(s). Clique em Salvar preços para concluir.`);
+      if (doc.format === 'excel') {
+        onSaveExcel(entries);
+        setMessage('');
+      } else {
+        onApply(entries);
+        setMessage(`${entries.length} preço(s) preparado(s). Clique em Salvar preços para concluir.`);
+      }
+      setDoc(null); setConfirmed(false);
     } catch (error) { setMessage((error as Error).message); }
   }
   const unmatched = doc?.format === 'excel' ? doc.items.filter(item => !mapping[item.id] && targetKey(item) === 'skip').length : 0;
@@ -89,7 +97,7 @@ export default function IgevePriceImport({ operations, categories, catalog, busy
         {unmatched > 0 && <p>{unmatched} produto(s) sem correspondência. Selecione um produto da tabela ou escolha cadastrá-lo para incluí-lo na importação.</p>}
         <div className="table-container"><table><thead><tr><th>Produto do arquivo</th><th>Unidade</th><th>Produto na tabela</th><th>Preço de venda (R$)</th></tr></thead><tbody>{doc.items.map(item => <tr key={item.id}><td>{billingProductName(item.product)}</td><td>{item.unit}</td><td><select aria-label={`Destino ${item.product}`} className="input-field" value={targetKey(item)} onChange={e => { setMapping(current => ({ ...current, [item.id]: e.target.value })); setConfirmed(false); }}><option value="new">Cadastrar como novo produto</option><option value="skip">Ignorar item</option>{targets.map(row => <option key={row.key} value={row.key}>{row.product} / {row.unit}{row.salePrice === null ? '' : ` - atual R$ ${row.salePrice.toFixed(2)}`}</option>)}</select></td><td><input className="input-field" aria-label={`Preço importado ${item.product}`} type="number" min="0" step="0.01" value={values[item.id] ?? ''} onChange={e => { setValues(current => ({ ...current, [item.id]: e.target.value })); setConfirmed(false); }} /></td></tr>)}</tbody></table></div>
         <label className="igeve-check"><input type="checkbox" checked={confirmed} onChange={e => setConfirmed(e.target.checked)} />Conferi {doc.format === 'pdf' ? 'o PDF' : 'a planilha'}, a tabela de destino, as unidades e os preços. Os preços selecionados substituem os valores anteriores ao salvar.</label>
-        <div className="igeve-actions"><button type="button" className="button" disabled={!confirmed || !operationId || !category || !doc.items.length} onClick={apply}>Aplicar à tabela para revisão</button><button type="button" className="button button-outline" onClick={() => setDoc(null)}>Cancelar importação</button></div>
+        <div className="igeve-actions"><button type="button" className="button" disabled={!confirmed || !operationId || !category || !doc.items.length} onClick={apply}>{doc.format === 'excel' ? 'Salvar preços importados' : 'Aplicar à tabela para revisão'}</button><button type="button" className="button button-outline" onClick={() => setDoc(null)}>Cancelar importação</button></div>
       </>}
     </fieldset>
     {loading && <p role="status">{loading === 'pdf' ? 'Lendo o PDF...' : 'Lendo a planilha...'}</p>}{message && <p role="status">{message}</p>}
