@@ -1,15 +1,14 @@
 import * as XLSX from 'xlsx';
 import { parseDeliveryDate } from '../lib/deliveryDate.ts';
 
-type DeliveryCategory = 'Hortifrutigranjeiro' | 'Estocáveis' | 'Dietas e Fórmulas' | 'Proteínas' | 'Limpeza' | 'CESTA BASICA';
+import { DEFAULT_DELIVERY_CATEGORIES, deliveryCategoryKey } from '../lib/deliveryCategories.ts';
 interface DeliveryPointInput { id: string; code: string; name: string }
 interface DeliveryItem { product: string; unit: string; quantity: number; notes?: string }
 interface ParsedDelivery { id: string; deliveryPointId: string; items: DeliveryItem[] }
-interface ExcelOrderMetadata { deliveryDate: string; consumptionPeriod: string; category?: DeliveryCategory; categoryText: string; generalNotes: string }
-interface ParseExcelRequest { buffer: ArrayBuffer; deliveryPoints: DeliveryPointInput[] }
+interface ExcelOrderMetadata { deliveryDate: string; consumptionPeriod: string; category?: string; categoryText: string; generalNotes: string }
+interface ParseExcelRequest { buffer: ArrayBuffer; deliveryPoints: DeliveryPointInput[]; categories?: string[] }
 interface ParseExcelResponse { result?: { metadata: ExcelOrderMetadata; deliveries: ParsedDelivery[] }; error?: string; progress?: string }
 
-const CATEGORIES: DeliveryCategory[] = ['Hortifrutigranjeiro', 'Estocáveis', 'Dietas e Fórmulas', 'Proteínas', 'Limpeza', 'CESTA BASICA'];
 const normalizeText = (value: unknown) => String(value ?? '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/\s+/g, ' ').trim();
 const displayText = (value: unknown) => String(value ?? '').replace(/\s+/g, ' ').trim();
 const normalizeKey = (value: unknown) => normalizeText(value).toUpperCase();
@@ -21,7 +20,7 @@ const toNumber = (value: unknown) => {
 };
 const itemKey = (item: DeliveryItem) => `${normalizeKey(item.product)}|${normalizeKey(item.unit || 'UN')}|${normalizeKey(item.notes || '')}`;
 const makeId = () => `delivery_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-const ignoredHeaders = new Set(['TOTAL', 'COLUNAS1', 'COLUNAS2', 'COLUNAS3', 'VERDURAS', 'LEGUMES', 'HORTIFRUTI', 'HORTIFRUTIGRANJEIRO', ...CATEGORIES.map(normalizeKey)]);
+const ignoredHeaders = new Set(['TOTAL', 'COLUNAS1', 'COLUNAS2', 'COLUNAS3', 'VERDURAS', 'LEGUMES', 'HORTIFRUTI', 'HORTIFRUTIGRANJEIRO', ...DEFAULT_DELIVERY_CATEGORIES.filter(category => category !== 'PAPELARIA').map(normalizeKey)]);
 
 const isTotalRow = (product: string) => /^(?:TOTAL(?: GERAL)?|SUB ?TOTAL)\s*:?$/.test(normalizeKey(product));
 
@@ -120,7 +119,7 @@ const parseDate = (value: unknown) => {
   return parseDeliveryDate(displayText(value));
 };
 
-const extractMetadata = (rows: unknown[][]): ExcelOrderMetadata => {
+const extractMetadata = (rows: unknown[][], categories: string[]): ExcelOrderMetadata => {
   const result: ExcelOrderMetadata = { deliveryDate: '', consumptionPeriod: '', categoryText: '', generalNotes: '' };
   rows.slice(0, 20).forEach(row => row.forEach((cell, index) => {
     const label = normalizeKey(cell).split(':')[0].trim();
@@ -133,7 +132,7 @@ const extractMetadata = (rows: unknown[][]): ExcelOrderMetadata => {
     else if (['PERIODO DE CONSUMO', 'DATA DO CONSUMO'].includes(label) && !result.consumptionPeriod) result.consumptionPeriod = displayText(value);
     else if (label === 'CATEGORIA' && !result.categoryText) {
       result.categoryText = displayText(value);
-      result.category = CATEGORIES.find(category => normalizeKey(category) === normalizeKey(value));
+      result.category = categories.find(category => deliveryCategoryKey(category) === deliveryCategoryKey(result.categoryText));
     } else if ((label === 'OBSERVACAO' || label === 'OBSERVACOES') && !result.generalNotes) result.generalNotes = displayText(value);
   }));
   return result;
@@ -229,7 +228,7 @@ workerScope.onmessage = event => {
       });
       const rows = valueRows(worksheet);
       if (!rows.length) return;
-      const sheet = extractMetadata(rows);
+      const sheet = extractMetadata(rows, event.data.categories ?? DEFAULT_DELIVERY_CATEGORIES);
       metadata = { deliveryDate: metadata.deliveryDate || sheet.deliveryDate, consumptionPeriod: metadata.consumptionPeriod || sheet.consumptionPeriod, category: metadata.category || sheet.category, categoryText: metadata.categoryText || sheet.categoryText, generalNotes: metadata.generalNotes || sheet.generalNotes };
       const unit = parseUnitSheet(sheetName, rows, event.data.deliveryPoints);
       if (unit) deliveries.push(unit);
