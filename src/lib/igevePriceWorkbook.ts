@@ -1,6 +1,6 @@
 import * as XLSX from 'xlsx';
-import { normalizeBillingText, parseBillingPrice } from './igeveBilling.ts';
-import type { BillingPriceEntry } from './igeveBilling.ts';
+import { billingOperationPriceKey, normalizeBillingText, parseBillingPrice } from './igeveBilling.ts';
+import type { BillingInvoice, BillingPriceEntry } from './igeveBilling.ts';
 
 interface PriceWorkbookDestination { operation: string; category: string }
 
@@ -93,4 +93,28 @@ export function downloadIgevePriceWorkbook(entries: BillingPriceEntry[], destina
   const workbook = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(workbook, sheet, 'Preços');
   XLSX.writeFile(workbook, 'modelo-precos-igeve.xlsx');
+}
+
+export function applyIgeveWorkbookPrices(invoice: BillingInvoice, category: string, rows: ReturnType<typeof readIgevePriceWorkbook>['items']) {
+  const key = (item: { product: string; unit: string }) => billingOperationPriceKey(invoice.operationId, category, item.product, item.unit);
+  const targetCategory = normalizeBillingText(category);
+  const targets = new Set(invoice.items.filter(item => normalizeBillingText(item.category || invoice.category) === targetCategory).map(key));
+  const byKey = new Map<string, number>();
+  let ignored = 0;
+  for (const row of rows) {
+    const id = key(row);
+    if (!targets.has(id)) { ignored++; continue; }
+    if (byKey.has(id) && byKey.get(id) !== row.price) throw new Error(`A planilha tem preços diferentes para ${row.product} / ${row.unit}. Corrija a duplicidade e selecione o arquivo novamente.`);
+    byKey.set(id, row.price);
+  }
+  let updated = 0;
+  let missing = 0;
+  const items = invoice.items.map(item => {
+    if (normalizeBillingText(item.category || invoice.category) !== targetCategory) return item;
+    const price = byKey.get(key(item));
+    if (price === undefined) { missing++; return item; }
+    updated++;
+    return { ...item, price };
+  });
+  return { invoice: { ...invoice, items }, updated, missing, ignored };
 }

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import * as XLSX from 'xlsx';
 import { billingOperationPriceKey, billingPricesFromEntries, billingUnitPrice } from '../src/lib/igeveBilling.ts';
-import { readIgevePriceWorkbook } from '../src/lib/igevePriceWorkbook.ts';
+import { applyIgeveWorkbookPrices, readIgevePriceWorkbook } from '../src/lib/igevePriceWorkbook.ts';
 
 const destination = { operation: 'RIO DE JANEIRO', category: 'PAPELARIA' };
 const header = ['Operação', 'Categoria', 'Produto', 'Unidade', 'Preço unitário (R$)'];
@@ -42,4 +42,19 @@ const read = rows => readIgevePriceWorkbook(XLSX.write(workbook(rows), { type: '
 assert.throws(() => read([['Produto', 'Preço']]), /Não encontrei as colunas/);
 assert.throws(() => read([header, row('Cola', 'UN', '')]), /Nenhum preço unitário preenchido/);
 assert.throws(() => read([header, row('Cola', 'UN', '12,345')]), /até duas casas decimais/);
+const draft = {
+  operationId: 'rio', category: 'PAPELARIA, Limpeza',
+  items: [
+    { id: '1', category: 'PAPELARIA', product: 'BALÃO BUBBLE', unit: 'UN', price: 2, quantity: 5, billedQuantity: 4 },
+    { id: '2', category: 'PAPELARIA', product: 'PAPEL A4', unit: 'CX', price: 12, quantity: 1 },
+    { id: '3', category: 'Limpeza', product: 'BALÃO BUBBLE', unit: 'UN', price: 7, quantity: 2 },
+  ],
+};
+const pricesForDraft = read([header, row('Balão bubble', 'UND', 0), row('Papel A4', 'PCT', 10)]).items;
+const { invoice, updated, missing, ignored } = applyIgeveWorkbookPrices(draft, 'PAPELARIA', pricesForDraft);
+assert.deepEqual({ updated, missing, ignored }, { updated: 1, missing: 1, ignored: 1 });
+assert.deepEqual(invoice.items.map(item => item.price), [0, 12, 7]);
+assert.equal(invoice.items[0].billedQuantity, 4);
+assert.equal(draft.items[0].price, 2);
+assert.throws(() => applyIgeveWorkbookPrices(draft, 'PAPELARIA', [...pricesForDraft, { ...pricesForDraft[0], price: 3 }]), /preços diferentes/);
 console.log('OK: XLSX e XLS, preços brasileiros, zero, linhas inválidas e escopo do faturamento.');

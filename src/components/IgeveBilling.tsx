@@ -15,6 +15,7 @@ import { FREIGHT_PREFIX, billingFreightApplier, freightScopesOverlap } from '../
 import type { BillingFreight, SavedFreight } from '../lib/igeveFreight';
 import IgevePriceImport from './IgevePriceImport';
 import IgevePriceTable from './IgevePriceTable';
+import IgeveDraftPriceWorkbook from './IgeveDraftPriceWorkbook';
 import IgeveBillingProducts from './IgeveBillingProducts';
 import IgeveRubrics from './IgeveRubrics';
 import IgeveDocuments from './IgeveDocuments';
@@ -457,7 +458,7 @@ export default function IgeveBilling() {
       {tab !== 'romaneios' && tab !== 'locations' && tab !== 'prices' && tab !== 'freight' && <label>Empresa<select className="input-field" value={companyFilter} onChange={event => setCompanyFilter(event.target.value)}><option value="">Todas as empresas</option>{[...new Set(saved.map(row => row.invoice.company))].sort().map(name => <option key={name}>{name}</option>)}</select></label>}
       {tab === 'locations' && <label>Local<select className="input-field" value={locationFilter} onChange={event => setLocationFilter(event.target.value)}><option value="">Todos os locais</option>{locationFilter && !locationGroups.some(row => row.key === locationFilter) && <option value={locationFilter}>Local selecionado (sem faturamento nos filtros atuais)</option>}{locationGroups.map(row => <option key={row.key} value={row.key}>{row.operation} / {row.destination}</option>)}</select></label>}
     </div><small>Maceió, Guaianases, Boituva, Mongaguá e Rio de Janeiro. Alterações aqui são exclusivas do faturamento.</small></div>}
-    {message && <div className="card igeve-panel" role="status">{message}</div>}
+    {message && !draft && <div className="card igeve-panel" role="status">{message}</div>}
     {tab !== 'prices' && tab !== 'rubrics' && tab !== 'documents' && !validPeriod && <div role="alert">A data inicial deve ser anterior ou igual à data final.</div>}
     {busy && <p role="status">Processando...</p>}
     {ready && tab === 'rubrics' && <IgeveRubrics operations={operations} points={points} orders={orders} invoices={saved} catalog={priceCatalog} rubrics={rubrics} busy={busy} onSave={saveRubric} onOpen={open} applyFreight={applyFreight} />}
@@ -485,6 +486,8 @@ export default function IgeveBilling() {
       <label>Data do faturamento<input required type="date" className="input-field" value={draft.date} onChange={event => setDraft({ ...draft, date: event.target.value })} /></label>
     </div>
     <p>O frete é informado em <strong>Frete</strong> ou <strong>Faturamento por romaneio</strong>, nos filtros de operação, categorias e período de entrega. O rateio considera a soma das quantidades de todos os romaneios filtrados e aparece no custo final abaixo.</p>
+    {message && <p role="status">{message}</p>}
+    <IgeveDraftPriceWorkbook key={draft.id} invoice={draft} busy={busy} onApply={updated => { setDraft(updated); setMessage(''); }} />
     <div className="igeve-actions"><button type="button" className="button button-outline" disabled={busy} onClick={() => void refreshDraftPrices()}><RefreshCw size={16} /> Buscar preços na tabela</button></div>
     <small>Busca os preços salvos para a operação, categoria, produto e unidade de cada linha. Revise os valores antes de salvar o faturamento.</small>
     {draftMissingPrices.length > 0 && <div role="alert" className="igeve-price-warning">{draftMissingPrices.length} produto(s) sem preço cadastrado na Tabela de preços e com valor zero neste faturamento: {draftMissingPrices.map(item => item.product).join(', ')}. Cadastre e salve os preços na tabela, ou informe-os abaixo. O custo final desses itens contém somente o frete enquanto o preço estiver zerado.</div>}
@@ -516,7 +519,6 @@ export default function IgeveBilling() {
       {!adjustableDraft && <button type="button" className="button button-outline" onClick={() => setDraft({ ...draft, items: [...draft.items, { ...newItem(), category: draft.rubric ? 'Estocáveis' : undefined }] })}><Plus size={16} /> Adicionar produto</button>}
       <label>Observações<textarea className="input-field" value={draft.notes} onChange={event => setDraft({ ...draft, notes: event.target.value })} /></label><p>Produtos: {money(draftCosts.reduce((sum, row) => sum + row.subtotal, 0))} · Frete: {money(draftCosts.reduce((sum, row) => sum + row.freight, 0))}</p><strong>Total do faturamento com frete: {money(invoiceTotal(applyFreight(draft)))}</strong>
       <div className="igeve-actions"><button type="submit" className="button" disabled={busy}><Save size={18} /> Salvar faturamento</button>{draft.location && <button type="button" className="button button-outline" onClick={() => void exportPdf(draft)}>Exportar PDF</button>}<button type="button" className="button button-outline" disabled={busy} onClick={() => { setDraft(null); setMessage(''); }}>Cancelar</button></div>
-      {message && <div role="alert">{message}</div>}
     </form></div>}
   </section>;
 }
