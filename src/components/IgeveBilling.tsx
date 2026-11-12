@@ -187,20 +187,48 @@ export default function IgeveBilling() {
         return { ...item, salePrice: parseBillingPrice(value), identityVersion: 1 as const };
       });
     } catch (error) { setMessage(error instanceof Error ? error.message : 'Preço inválido.'); return; }
-    setBusy(true); setMessage('');
+    await persistPrices(entries);
+  }
+  function stagePrices(entries: BillingPriceEntry[]) {
+    const keys = new Set(entries.map(entry => entry.key));
+    setImportedPrices(current => [...current.filter(row => !keys.has(row.key)), ...entries]);
+    setPriceEdits(current => ({ ...current, ...Object.fromEntries(entries.map(entry => [entry.key, String(entry.salePrice)])) }));
+    setOperationId(entries[0].operationId);
+    setCategoryFilter([entries[0].category]);
+  }
+  async function persistPrices(entries: BillingPriceEntry[], batchSize = 1) {
+    if (busy || !ready) return;
+    setBusy(true); setMessage('Salvando preços na tabela...');
     let count = 0;
+    const existing = new Map(savedPrices.map(row => [row.entry.key, row.version]));
+    const recordSaved = (saved: SavedBillingPrice[]) => {
+      const keys = new Set(saved.map(row => row.entry.key));
+      setSavedPrices(current => [...current.filter(row => !keys.has(row.entry.key)), ...saved]);
+      setPriceEdits(current => Object.fromEntries(Object.entries(current).filter(([key]) => !keys.has(key))));
+      setImportedPrices(current => current.filter(item => !keys.has(item.key)));
+      count += saved.length;
+    };
+    const toRow = (entry: BillingPriceEntry) => ({ key: entry.key, value: entry, updated_at: new Date().toISOString() });
     try {
-      for (const entry of entries) {
-        const previous = savedPrices.find(row => row.entry.key === entry.key);
-        const row = { key: entry.key, value: entry, updated_at: new Date().toISOString() };
-        const result = previous
-          ? await supabase.from('app_shared_state').update(row).eq('key', entry.key).eq('updated_at', previous.version).select('updated_at').single()
-          : await supabase.from('app_shared_state').insert(row).select('updated_at').single();
-        if (result.error || !result.data) throw new Error(`Não foi possível salvar o preço de ${entry.product}. Ele pode ter sido alterado por outro usuário. Cancele as alterações pendentes e clique em Atualizar antes de tentar novamente.`);
-        setSavedPrices(current => [...current.filter(item => item.entry.key !== entry.key), { entry, version: result.data.updated_at }]);
-        setPriceEdits(current => { const next = { ...current }; delete next[entry.key]; return next; });
-        setImportedPrices(current => current.filter(item => item.key !== entry.key));
-        count++;
+      const newEntries = entries.filter(entry => !existing.has(entry.key));
+      for (let index = 0; index < newEntries.length; index += batchSize) {
+        const batch = newEntries.slice(index, index + batchSize);
+        if (batch.length === 1) {
+          const [entry] = batch;
+          const { data, error } = await supabase.from('app_shared_state').insert(toRow(entry)).select('updated_at').single();
+          if (error || !data) throw new Error(`Não foi possível salvar o preço de ${entry.product}. Atualize a tabela e tente novamente.`);
+          recordSaved([{ entry, version: data.updated_at }]);
+        } else {
+          const { data, error } = await supabase.from('app_shared_state').insert(batch.map(toRow)).select('key,updated_at');
+          const versions = new Map((data || []).map(row => [row.key, row.updated_at]));
+          if (error || batch.some(entry => !versions.has(entry.key))) throw new Error('Não foi possível gravar os novos preços. Confira a conexão ou atualize a tabela se outro usuário alterou os preços.');
+          recordSaved(batch.map(entry => ({ entry, version: versions.get(entry.key)! })));
+        }
+      }
+      for (const entry of entries.filter(entry => existing.has(entry.key))) {
+        const result = await supabase.from('app_shared_state').update(toRow(entry)).eq('key', entry.key).eq('updated_at', existing.get(entry.key)!).select('updated_at').single();
+        if (result.error || !result.data) throw new Error(`Não foi possível atualizar o preço de ${entry.product}. Atualize a tabela e confira se o valor foi alterado por outro usuário.`);
+        recordSaved([{ entry, version: result.data.updated_at }]);
       }
       setMessage(`${count} preço(s) salvo(s) com sucesso. Novos faturamentos usarão a tabela da operação e categoria.`);
     } catch (error) { setMessage(`${count ? `${count} preço(s) já salvo(s). ` : ''}${error instanceof Error ? error.message : 'Falha ao salvar preços. Tente novamente.'}`); }
@@ -547,7 +575,7 @@ export default function IgeveBilling() {
     {tab !== 'prices' && tab !== 'rubrics' && tab !== 'documents' && !validPeriod && <div role="alert">A data inicial deve ser anterior ou igual à data final.</div>}
     {busy && <p role="status">Processando...</p>}
     {ready && tab === 'rubrics' && <IgeveRubrics operations={operations} points={points} orders={orders} invoices={saved} catalog={priceCatalog} rubrics={rubrics} busy={busy} onSave={saveRubric} onOpen={open} applyFreight={applyFreight} />}
-    {ready && tab === 'prices' && <IgevePriceImport operations={operations} categories={categories} catalog={priceCatalog} busy={busy} onApply={entries => { setImportedPrices(current => [...current.filter(row => !entries.some(entry => entry.key === row.key)), ...entries]); setPriceEdits(current => ({ ...current, ...Object.fromEntries(entries.map(entry => [entry.key, String(entry.salePrice)])) })); setOperationId(entries[0].operationId); setCategoryFilter([entries[0].category]); }} />}
+    {ready && tab === 'prices' && <IgevePriceImport operations={operations} categories={categories} catalog={priceCatalog} busy={busy} onApply={stagePrices} onSaveExcel={entries => { stagePrices(entries); void persistPrices(entries, 200); }} />}
     {ready && tab === 'prices' && <IgevePriceTable rows={visiblePrices} edits={priceEdits} busy={busy} onEdit={editPrice} onSave={event => void savePrices(event)} onCancel={() => { setPriceEdits({}); setImportedPrices([]); }} header={header} />}
     {ready && (tab === 'romaneios' || tab === 'freight') && <IgeveFreight source={freightSource} scope={{ operationId, categories: categoryFilter, start, end }} saved={freights} busy={busy} detailed={tab === 'freight'} onSave={saveFreight} />}
     {ready && tab === 'romaneios' && <div className="card igeve-panel"><h2>Romaneios disponíveis</h2>{unifiedBilling && <p>As categorias selecionadas serão faturadas juntas, em um único faturamento por local no período de entrega informado.</p>}<div className="table-container"><table><thead><tr>{header('operation', 'Operação / local')}{header('control', 'Controle')}{header('date', 'Entrega')}{header('category', 'Categoria')}{header('action', 'Ação')}</tr></thead><tbody>
