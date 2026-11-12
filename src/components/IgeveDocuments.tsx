@@ -171,8 +171,7 @@ export default function IgeveDocuments() {
     else {
       const { zipSync } = await import('fflate');
       const files = Object.fromEntries(outputs.map((out, index) => [out.filename.replace(/\.pdf$/, `_${index + 1}.pdf`), new Uint8Array(out.pdf.output('arraybuffer'))]));
-      const reference = record.generatedKind === 'quote' ? doc.unitName : doc.number;
-      downloadBlob(new Blob([Uint8Array.from(zipSync(files))], { type: 'application/zip' }), `DOCUMENTOS_${reference.replace(/[^a-zA-Z0-9_-]/g, '_')}.zip`);
+      downloadBlob(new Blob([Uint8Array.from(zipSync(files))], { type: 'application/zip' }), `DOCUMENTOS_${doc.unitName.replace(/[^a-zA-Z0-9_-]/g, '_')}.zip`);
     }
     setMessage('Última geração recuperada com os dados e modelos arquivados na ocasião.');
   }
