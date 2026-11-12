@@ -168,7 +168,7 @@ assert.ok(validateNfeDocument({ ...doc, items: [{ ...doc.items[0], quantity: .00
 assert.ok(validateNfeDocument({ ...doc, deliveryDate: '2026-02-30' }, DEFAULT_DOCUMENT_SUPPLIERS, 'delivery'));
 assert.equal(documentTotal(doc.items), 56.68);
 assert.equal(documentFilename(DEFAULT_DOCUMENT_SUPPLIERS[0], doc, 'quote'), 'CD-ORÇAMENTO-GARCA_TORTA.pdf');
-assert.equal(documentFilename(DEFAULT_DOCUMENT_SUPPLIERS[0], { ...doc, number: '../../658' }, 'delivery'), 'CD-ROMANEIO_658-GARCA_TORTA.pdf');
+assert.equal(documentFilename(DEFAULT_DOCUMENT_SUPPLIERS[0], { ...doc, number: '../../658' }, 'delivery'), 'CD-ROMANEIO_2026-11-06-GARCA_TORTA.pdf');
 assert.deepEqual(doc, snapshot);
 
 mkdirSync('tmp/pdfs/igeve-documents', { recursive: true });
@@ -179,8 +179,8 @@ for (const supplier of DEFAULT_DOCUMENT_SUPPLIERS) {
   for (const kind of ['quote', 'delivery']) {
     const out = createIgeveDocumentPdf(sample, s, kind, q);
     assert.ok(out.pdf.getNumberOfPages() >= 1);
-    assert.equal(out.pdf.output().includes('927461805'), kind === 'delivery', 'Orçamentos não imprimem o número da nota, inclusive referências antigas');
-    assert.equal(out.filename.includes('927461805'), kind === 'delivery');
+    assert.doesNotMatch(out.pdf.output(), /NF-e|927461805/, `${s.layout}: ${kind} sem referência à nota de origem`);
+    assert.doesNotMatch(out.filename, /927461805/);
     writeFileSync(`tmp/pdfs/igeve-documents/${s.id}-${kind}.pdf`, new Uint8Array(out.pdf.output('arraybuffer')));
   }
 }
@@ -206,10 +206,13 @@ writeFileSync('tmp/pdfs/igeve-documents/long-quote.pdf', new Uint8Array(longPdf.
 for (const supplier of DEFAULT_DOCUMENT_SUPPLIERS) {
   const s = supplier.cnpj ? supplier : { ...supplier, cnpj: '66.036.822/0001-30' };
   const q = { ...long.quotations[0], supplierId: s.id };
-  const pdf = createIgeveDocumentPdf({ ...long, quotations: [q] }, s, 'quote', q).pdf;
-  assert.ok(pdf.getNumberOfPages() > 3);
-  assert.equal(pdf.output().includes('927461805'), false);
-  writeFileSync(`tmp/pdfs/igeve-documents/long-${s.id}.pdf`, new Uint8Array(pdf.output('arraybuffer')));
+  const sample = { ...long, quotations: [q], deliverySupplierId: s.id };
+  for (const kind of ['quote', 'delivery']) {
+    const pdf = createIgeveDocumentPdf(sample, s, kind, q).pdf;
+    assert.ok(pdf.getNumberOfPages() > 3);
+    assert.doesNotMatch(pdf.output(), /NF-e|927461805/, `${s.layout}: ${kind} sem referência à nota nas páginas de continuação`);
+    writeFileSync(`tmp/pdfs/igeve-documents/long-${s.id}-${kind}.pdf`, new Uint8Array(pdf.output('arraybuffer')));
+  }
 }
 assert.throws(() => createIgeveDocumentPdf({ ...doc, confirmed: false }, DEFAULT_DOCUMENT_SUPPLIERS[0], 'quote', doc.quotations[0]));
 assert.deepEqual(doc, snapshot, 'PDF não altera os dados salvos');
