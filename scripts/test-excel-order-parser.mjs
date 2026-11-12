@@ -10,12 +10,13 @@ const points = [
   { id: 'jose', code: '001', name: 'Escola Municipal José da Silva' },
   { id: 'maria', code: '002', name: 'Escola Municipal Maria de Souza' },
 ];
-const parse = (rows, name = 'Planilha1', registrations = points, expectedError = '') => {
+const parse = (rows, name = 'Planilha1', registrations = points, expectedError = '', categories) => {
   const workbook = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet(rows), name);
   self.onmessage({ data: {
     buffer: XLSX.write(workbook, { type: 'array', bookType: 'xlsx' }),
     deliveryPoints: registrations,
+    categories,
   } });
   if (expectedError) { assert.match(response.error || '', new RegExp(expectedError)); return; }
   assert(!response.error, response.error);
@@ -136,3 +137,17 @@ for (const registrations of [
 const exactRubi = parse(abbreviatedRows, 'Pedido', [...spPoints, { id: 'exact', code: '2A', name: 'CEI Rubi' }]);
 assert.equal(exactRubi.deliveries[0].deliveryPointId, 'exact');
 console.log('OK: CEI Rubi com sufixo no cadastro em matriz, linhas e unidade; nomes semelhantes e abreviações ambíguas continuam bloqueados.');
+
+const categorySheet = category => [
+  ['Categoria', category],
+  ['Data de Entrega', '26/10/2026'],
+  ['Local', '001'],
+  ['PRODUTO', 'UN', 'QTD'],
+  ['CADERNO', 'UN', 12],
+];
+assert.equal(parse(categorySheet(' papelaria ')).metadata.category, 'PAPELARIA');
+assert.equal(parse(categorySheet('material  pedagogico')).metadata.category, undefined);
+const customCategory = parse(categorySheet('material  pedagogico'), '001', points, '', ['Material Pedagógico']);
+assert.equal(customCategory.metadata.category, 'Material Pedagógico');
+assert.equal(customCategory.deliveries[0].items[0].quantity, 12);
+console.log('OK: PAPELARIA, categoria personalizada e rejeição de categoria não cadastrada.');

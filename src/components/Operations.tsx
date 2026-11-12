@@ -1,3 +1,4 @@
+import { DEFAULT_DELIVERY_CATEGORIES, deliveryCategoryKey } from '../lib/deliveryCategories';
 import MonthlyLocationReport from './MonthlyLocationReport';
 import { buildOperationBillingSummary, buildOperationBillingWorkbook, buildPeriodBillingArchive, selectOperationBillingOrders } from '../lib/operationBillingExcel';
 import { resolveDeliveryPointSectors } from '../lib/deliveryPointSectors';
@@ -48,8 +49,7 @@ import { addCanindeDelivery, addCanindeHeader } from '../lib/canindePdf';
 const basketDocuments = new WeakSet<jsPDF>();
 
 type SourceType = 'Manual' | 'Excel' | 'PDF';
-type DeliveryCategory = 'Hortifrutigranjeiro' | 'Estocáveis' | 'Dietas e Fórmulas' | 'Proteínas' | 'Limpeza' | 'CESTA BASICA';
-type OperationsModule = 'monthly-location-report' | 'operations' | 'locations' | 'order-entry' | 'orders' | 'history' | 'orders-summary-report' | 'deliveries-summary-report' | 'period-report' | 'romaneio-products-report' | 'purchase-period-report' | 'products-by-date-report';
+type OperationsModule = 'categories' | 'monthly-location-report' | 'operations' | 'locations' | 'order-entry' | 'orders' | 'history' | 'orders-summary-report' | 'deliveries-summary-report' | 'period-report' | 'romaneio-products-report' | 'purchase-period-report' | 'products-by-date-report';
 
 interface OperationContract {
   id: string;
@@ -94,7 +94,7 @@ interface OrderDelivery {
 interface OperationOrder {
   id: string;
   operationId: string;
-  category: DeliveryCategory;
+  category: string;
   sourceFileName: string;
   sourceType: SourceType;
   deliveryDate: string;
@@ -127,6 +127,8 @@ const SECTORS_KEY = 'gom_delivery_sectors';
 const DELIVERY_POINTS_KEY = 'gom_delivery_points';
 const ORDERS_KEY = 'gom_delivery_operation_orders';
 const PRODUCT_PRICES_KEY = 'gom_delivery_product_prices';
+const DELIVERY_CATEGORY_PREFIX = 'gom-delivery-category:';
+const DELIVERY_CATEGORIES_CACHE_KEY = 'gom_delivery_categories';
 const ACTIVE_OPERATION_KEY = 'gom_active_delivery_operation';
 type SharedStateKey = typeof OPERATIONS_KEY | typeof SECTORS_KEY | typeof DELIVERY_POINTS_KEY | typeof ORDERS_KEY | typeof PRODUCT_PRICES_KEY;
 interface ProductPrice {
@@ -152,7 +154,6 @@ const saveSharedState = (key: SharedStateKey, value: unknown) => {
 };
 const REPORT_FONT = 'courier';
 const REPORT_FONT_SIZE = 11;
-const DELIVERY_CATEGORIES: DeliveryCategory[] = ['Hortifrutigranjeiro', 'Estocáveis', 'Dietas e Fórmulas', 'Proteínas', 'Limpeza', 'CESTA BASICA'];
 const DEFAULT_LOGO_VARIANT: PdfLogoVariant = 'gom';
 const LOGO_OPTIONS: { value: PdfLogoVariant; label: string }[] = [
   { value: 'gom', label: 'Logo LM' },
@@ -226,7 +227,8 @@ const formatCurrency = (value: number) => value.toLocaleString('pt-BR', { style:
 
 const stockKey = (product: string, unit: string) => `${normalizeKey(product)}|${normalizeKey(unit || 'UN')}`;
 
-const categoryToInventoryCategory = (category: DeliveryCategory) => {
+const categoryToInventoryCategory = (category: string) => {
+  if (category === 'PAPELARIA') return 'PAPELARIA';
   if (category === 'Limpeza') return 'LIMPEZA';
   if (category === 'Dietas e Fórmulas') return 'DIETA';
   return 'Estocáveis';
@@ -235,12 +237,12 @@ const categoryToInventoryCategory = (category: DeliveryCategory) => {
 interface ExcelOrderMetadata {
   deliveryDate: string;
   consumptionPeriod: string;
-  category?: DeliveryCategory;
+  category?: string;
   categoryText: string;
   generalNotes: string;
 }
 
-const parseExcelInWorker = async (file: File, deliveryPoints: DeliveryPoint[], onProgress: (message: string) => void): Promise<{ metadata: ExcelOrderMetadata; deliveries: OrderDelivery[] }> => {
+const parseExcelInWorker = async (file: File, deliveryPoints: DeliveryPoint[], categories: string[], onProgress: (message: string) => void): Promise<{ metadata: ExcelOrderMetadata; deliveries: OrderDelivery[] }> => {
   const buffer = await file.arrayBuffer();
   const worker = new Worker(new URL('../workers/excelOrderParser.worker.ts', import.meta.url), { type: 'module' });
 
@@ -268,7 +270,7 @@ const parseExcelInWorker = async (file: File, deliveryPoints: DeliveryPoint[], o
       worker.terminate();
       reject(new Error(event.message || 'Não foi possível processar a planilha.'));
     };
-    worker.postMessage({ buffer, deliveryPoints: deliveryPoints.map(({ id, code, name }) => ({ id, code, name })) }, [buffer]);
+    worker.postMessage({ buffer, categories, deliveryPoints: deliveryPoints.map(({ id, code, name }) => ({ id, code, name })) }, [buffer]);
   });
 };
 
@@ -419,6 +421,23 @@ const Operations: React.FC = () => {
   const deliveryPoints = useMemo(() => resolveDeliveryPointSectors(storedDeliveryPoints, sectors), [storedDeliveryPoints, sectors]);
   const [orders, setOrders] = useState<OperationOrder[]>(() => readStorage(ORDERS_KEY, []));
   const [productPrices, setProductPrices] = useState<ProductPrices>(() => readStorage(PRODUCT_PRICES_KEY, {}));
+  const [customCategories, setCustomCategories] = useState<string[]>(() => readStorage(DELIVERY_CATEGORIES_CACHE_KEY, []));
+  const [newCategory, setNewCategory] = useState('');
+  const [savingCategory, setSavingCategory] = useState(false);
+  const [categoryFeedback, setCategoryFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+  const deliveryCategories = useMemo(() => {
+    const byKey = new Map(DEFAULT_DELIVERY_CATEGORIES.map(name => [deliveryCategoryKey(name), name]));
+    const additionalNames = [...customCategories].sort((a, b) => a.localeCompare(b, 'pt-BR'));
+    for (const name of [...additionalNames, ...orders.map(order => order.category)]) {
+      const key = deliveryCategoryKey(name);
+      if (key && key !== 'TODAS' && !byKey.has(key)) byKey.set(key, name);
+    }
+    return [...byKey.values()];
+  }, [customCategories, orders]);
+  const filterCategories = useMemo(
+    () => [...new Set([...deliveryCategories, ...orders.map(order => order.category)])].filter(name => name && name !== 'Todas'),
+    [deliveryCategories, orders]
+  );
   const [products, setProducts] = useState<Product[]>([]);
   const [activeOperationId, setActiveOperationId] = useState(() => readStorage(ACTIVE_OPERATION_KEY, operations[0]?.id || 'boituva'));
   const [newOperation, setNewOperation] = useState<OperationForm>(() => emptyOperationForm());
@@ -433,7 +452,7 @@ const Operations: React.FC = () => {
   const [editingOrderId, setEditingOrderId] = useState<string | null>(null);
   const [monthlyDelivery, setMonthlyDelivery] = useState(false);
   const [orderForm, setOrderForm] = useState({
-    category: 'Estocáveis' as DeliveryCategory,
+    category: 'Estocáveis',
     deliveryDate: todayIso(),
     consumptionPeriod: '',
     generalNotes: '',
@@ -458,8 +477,8 @@ const Operations: React.FC = () => {
   const [deliverySortDirection, setDeliverySortDirection] = useState<'asc' | 'desc'>('desc');
   const [expandedOrderId, setExpandedOrderId] = useState<string | null>(null);
   const [pendingDeleteOrderId, setPendingDeleteOrderId] = useState<string | null>(null);
-  const [ordersCategoryFilter, setOrdersCategoryFilter] = useState<'Todas' | DeliveryCategory>('Todas');
-  const [reportCategory, setReportCategory] = useState<'Todas' | DeliveryCategory>('Todas');
+  const [ordersCategoryFilter, setOrdersCategoryFilter] = useState<string>('Todas');
+  const [reportCategory, setReportCategory] = useState<string>('Todas');
   const [purchaseOperationIds, setPurchaseOperationIds] = useState<string[]>([]);
   const [summaryOperationIds, setSummaryOperationIds] = useState<string[]>([]);
   const [reportStartDate, setReportStartDate] = useState(() => `${todayIso().slice(0, 8)}01`);
@@ -505,11 +524,22 @@ const Operations: React.FC = () => {
   }, []);
 
   useEffect(() => {
+    saveStorage(DELIVERY_CATEGORIES_CACHE_KEY, customCategories);
+  }, [customCategories]);
+
+  useEffect(() => {
     const channel = supabase
       .channel('app-shared-state')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'app_shared_state' }, payload => {
-        const row = payload.new as { key?: SharedStateKey; value?: unknown };
+        const row = payload.new as { key?: string; value?: unknown };
         if (!row?.key || row.value === undefined) return;
+        if (row.key.startsWith(DELIVERY_CATEGORY_PREFIX)) {
+          if (typeof row.value === 'string') {
+            const name = row.value;
+            setCustomCategories(current => current.includes(name) ? current : [...current, name]);
+          }
+          return;
+        }
         saveStorage(row.key, row.value);
         if (row.key === OPERATIONS_KEY) setOperations(row.value as OperationContract[]);
         if (row.key === SECTORS_KEY) setSectors(row.value as Sector[]);
@@ -537,7 +567,18 @@ const Operations: React.FC = () => {
 
   async function loadSharedState() {
     const keys: SharedStateKey[] = [OPERATIONS_KEY, SECTORS_KEY, DELIVERY_POINTS_KEY, ORDERS_KEY, PRODUCT_PRICES_KEY];
-    const { data, error } = await supabase.from('app_shared_state').select('key,value').in('key', keys);
+    const [{ data, error }, categoryRows] = await Promise.all([
+      supabase.from('app_shared_state').select('key,value').in('key', keys),
+      readAllRows<{ value: unknown }>((first, last) => supabase.from('app_shared_state')
+        .select('value').like('key', `${DELIVERY_CATEGORY_PREFIX}%`).order('key').range(first, last))
+        .catch(categoryError => {
+          console.error('Falha ao carregar categorias de pedidos:', categoryError);
+          setCategoryFeedback({ type: 'error', message: 'Não foi possível carregar as categorias compartilhadas. Atualize a página para tentar novamente.' });
+          return [];
+        }),
+    ]);
+    const loadedNames = categoryRows.map(row => row.value).filter((name): name is string => typeof name === 'string');
+    setCustomCategories(current => [...new Set([...current, ...loadedNames])]);
     if (error) {
       console.error('Falha ao carregar dados compartilhados:', error);
       setSharedStateError('Sem conexão com os dados compartilhados. Exibindo o cache deste navegador.');
@@ -569,6 +610,48 @@ const Operations: React.FC = () => {
   const reportSharedStateError = (error: unknown) => {
     console.error('Falha ao salvar dados compartilhados:', error);
     setSharedStateError('Não foi possível sincronizar a última alteração. Verifique a conexão antes de continuar.');
+  };
+
+  const createDeliveryCategory = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (savingCategory) return;
+
+    const name = newCategory.trim().replace(/\s+/g, ' ');
+    const normalized = deliveryCategoryKey(name);
+    if (!/[\p{L}\p{N}]/u.test(name) || normalized === 'TODAS') {
+      setCategoryFeedback({ type: 'error', message: 'Informe um nome válido para a categoria.' });
+      return;
+    }
+    if (deliveryCategories.some(category => deliveryCategoryKey(category) === normalized)) {
+      setCategoryFeedback({ type: 'error', message: 'Já existe uma categoria com esse nome.' });
+      return;
+    }
+
+    setSavingCategory(true);
+    setCategoryFeedback(null);
+    try {
+      const key = DELIVERY_CATEGORY_PREFIX + normalized;
+      const { error } = await supabase.from('app_shared_state').insert({ key, value: name });
+      if (error?.code === '23505') {
+        const { data, error: readError } = await supabase.from('app_shared_state').select('value').eq('key', key).single();
+        if (readError) throw readError;
+        if (typeof data.value === 'string') {
+          const existingName = data.value;
+          setCustomCategories(current => current.includes(existingName) ? current : [...current, existingName]);
+        }
+        setCategoryFeedback({ type: 'error', message: 'Já existe uma categoria com esse nome.' });
+        return;
+      }
+      if (error) throw error;
+      setCustomCategories(current => current.includes(name) ? current : [...current, name]);
+      setNewCategory('');
+      setCategoryFeedback({ type: 'success', message: `Categoria “${name}” cadastrada.` });
+    } catch (error) {
+      console.error('Falha ao cadastrar categoria de pedidos:', error);
+      setCategoryFeedback({ type: 'error', message: 'Não foi possível salvar a categoria. Verifique a conexão e tente novamente.' });
+    } finally {
+      setSavingCategory(false);
+    }
   };
 
   const configurePdfFolder = async (operation: OperationContract) => {
@@ -1303,7 +1386,7 @@ const Operations: React.FC = () => {
 
   const parseExcelOrder = async (file: File): Promise<OperationOrder> => {
     if (!activeOperation || operationPoints.length === 0) throw new Error('Cadastre ao menos um local de entrega antes de importar.');
-    const { metadata, deliveries: normalizedDeliveries } = await parseExcelInWorker(file, operationPoints, message => setImportFeedback({ type: 'progress', message }));
+    const { metadata, deliveries: normalizedDeliveries } = await parseExcelInWorker(file, operationPoints, deliveryCategories, message => setImportFeedback({ type: 'progress', message }));
     if (normalizedDeliveries.length === 0) {
       throw new Error('Não foi possível identificar entregas com quantidade positiva nesta planilha. Confira as colunas de produto, unidade e quantidade e o nome ou código do local no cabeçalho, na aba ou nas colunas. O endereço do local é opcional.');
     }
@@ -1312,7 +1395,7 @@ const Operations: React.FC = () => {
     }
     if (!metadata.category) {
       const receivedCategory = metadata.categoryText ? ` Valor encontrado: “${metadata.categoryText}”.` : '';
-      throw new Error(`Não encontrei uma Categoria válida no cabeçalho do Excel.${receivedCategory} Use uma das categorias cadastradas no sistema.`);
+      throw new Error(`Não encontrei uma Categoria válida no cabeçalho do Excel.${receivedCategory} Confira o nome no Excel ou cadastre a categoria em Categorias e importe novamente.`);
     }
     return {
       id: makeId('order'),
@@ -2746,7 +2829,7 @@ const Operations: React.FC = () => {
   const deliveriesSummaryReport = useMemo(() => {
     const groups = new Map<string, {
       operation: OperationContract;
-      category: DeliveryCategory;
+      category: string;
       deliveryDate: string;
       notes: Set<string>;
       orderIds: Set<string>;
@@ -2978,6 +3061,7 @@ const Operations: React.FC = () => {
         </div>
         <div className="operations-module-grid">
           <button type="button" className="operations-module-button" onClick={() => setActiveModule('operations')}><Building2 size={22} /><span><strong>Operações</strong><small>Cadastrar e editar operações</small></span></button>
+          <button type="button" className="operations-module-button" onClick={() => setActiveModule('categories')}><Plus size={22} /><span><strong>Categorias</strong><small>Cadastrar categorias de pedidos</small></span></button>
           <button type="button" className="operations-module-button" onClick={() => setActiveModule('locations')}><Layers size={22} /><span><strong>Setores e locais</strong><small>Organizar escolas e entregas</small></span></button>
           <button type="button" className="operations-module-button" onClick={() => setActiveModule('order-entry')}><PackagePlus size={22} /><span><strong>Entrada de pedidos</strong><small>Lançar itens por local</small></span></button>
           <button type="button" className="operations-module-button" onClick={() => setActiveModule('orders')}><FileText size={22} /><span><strong>Pedidos e arquivos</strong><small>Gerar PDF ou Excel</small></span></button>
@@ -2999,6 +3083,34 @@ const Operations: React.FC = () => {
       )}
 
       <div className="operations-layout operations-menu-layout" data-active-module={activeModule || undefined}>
+        {activeModule === 'categories' && (
+          <div className="card operations-module-window module-categories" style={{ padding: '1.25rem' }}>
+            <h3>Categorias de pedidos</h3>
+            <form onSubmit={createDeliveryCategory}>
+              <div className="form-group">
+                <label htmlFor="new-delivery-category">Nome da categoria</label>
+                <input
+                  id="new-delivery-category"
+                  className="input-field"
+                  value={newCategory}
+                  onChange={event => { setNewCategory(event.target.value); setCategoryFeedback(null); }}
+                  maxLength={80}
+                  required
+                  disabled={savingCategory}
+                />
+              </div>
+              <button type="submit" className="button" disabled={savingCategory}>
+                {savingCategory ? 'Salvando...' : 'Cadastrar categoria'}
+              </button>
+            </form>
+            {categoryFeedback && (
+              <p role={categoryFeedback.type === 'error' ? 'alert' : 'status'}>{categoryFeedback.message}</p>
+            )}
+            <ul aria-label="Categorias disponíveis">
+              {deliveryCategories.map(category => <li key={category}>{category}</li>)}
+            </ul>
+          </div>
+        )}
         <div className="card operations-module-window module-operations" style={{ maxWidth: 'none', padding: '1.25rem' }}>
           <h3 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '1rem' }}>
             <Building2 size={20} /> Operações
@@ -3247,8 +3359,8 @@ const Operations: React.FC = () => {
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '0.75rem', marginBottom: '1rem' }}>
               <div>
                 <label>Categoria</label>
-                <select className="input-field" value={orderForm.category} onChange={event => setOrderForm({ ...orderForm, category: event.target.value as DeliveryCategory })}>
-                  {DELIVERY_CATEGORIES.map(category => <option key={category} value={category}>{category}</option>)}
+                <select className="input-field" value={orderForm.category} onChange={event => setOrderForm({ ...orderForm, category: event.target.value })}>
+                  {[...new Set([...deliveryCategories, orderForm.category])].map(category => <option key={category} value={category}>{category}</option>)}
                 </select>
               </div>
               <div>
@@ -3351,9 +3463,9 @@ const Operations: React.FC = () => {
               </div>
               <div style={{ width: '260px', marginLeft: 'auto' }}>
                 <label>Filtrar por categoria</label>
-                <select className="input-field" value={ordersCategoryFilter} onChange={event => { setOrdersCategoryFilter(event.target.value as 'Todas' | DeliveryCategory); setExpandedOrderId(null); }}>
+                <select className="input-field" value={ordersCategoryFilter} onChange={event => { setOrdersCategoryFilter(event.target.value); setExpandedOrderId(null); }}>
                   <option value="Todas">Todas as categorias</option>
-                  {DELIVERY_CATEGORIES.map(category => <option key={category} value={category}>{category}</option>)}
+                  {filterCategories.map(category => <option key={category} value={category}>{category}</option>)}
                 </select>
               </div>
             </div>
@@ -3595,9 +3707,9 @@ const Operations: React.FC = () => {
             <div className="period-report-filters">
               <div>
                 <label>Categoria</label>
-                <select className="input-field" value={reportCategory} onChange={event => setReportCategory(event.target.value as 'Todas' | DeliveryCategory)}>
+                <select className="input-field" value={reportCategory} onChange={event => setReportCategory(event.target.value)}>
                   <option value="Todas">Todas as categorias</option>
-                  {DELIVERY_CATEGORIES.map(category => <option key={category} value={category}>{category}</option>)}
+                  {filterCategories.map(category => <option key={category} value={category}>{category}</option>)}
                 </select>
               </div>
               <div>
@@ -3680,9 +3792,9 @@ const Operations: React.FC = () => {
               </div>
               <div>
                 <label>Categoria</label>
-                <select className="input-field" value={reportCategory} onChange={event => setReportCategory(event.target.value as 'Todas' | DeliveryCategory)}>
+                <select className="input-field" value={reportCategory} onChange={event => setReportCategory(event.target.value)}>
                   <option value="Todas">Todas as categorias</option>
-                  {DELIVERY_CATEGORIES.map(category => <option key={category} value={category}>{category}</option>)}
+                  {filterCategories.map(category => <option key={category} value={category}>{category}</option>)}
                 </select>
               </div>
               <div>
@@ -3737,9 +3849,9 @@ const Operations: React.FC = () => {
             <div className="period-report-filters">
               <div>
                 <label>Categoria</label>
-                <select className="input-field" value={reportCategory} onChange={event => setReportCategory(event.target.value as 'Todas' | DeliveryCategory)}>
+                <select className="input-field" value={reportCategory} onChange={event => setReportCategory(event.target.value)}>
                   <option value="Todas">Todas as categorias</option>
-                  {DELIVERY_CATEGORIES.map(category => <option key={category} value={category}>{category}</option>)}
+                  {filterCategories.map(category => <option key={category} value={category}>{category}</option>)}
                 </select>
               </div>
               <div>
@@ -3825,9 +3937,9 @@ const Operations: React.FC = () => {
             <div className="period-report-filters">
               <div>
                 <label>Categoria</label>
-                <select className="input-field" value={reportCategory} onChange={event => setReportCategory(event.target.value as 'Todas' | DeliveryCategory)}>
+                <select className="input-field" value={reportCategory} onChange={event => setReportCategory(event.target.value)}>
                   <option value="Todas">Todas as categorias</option>
-                  {DELIVERY_CATEGORIES.map(category => <option key={category} value={category}>{category}</option>)}
+                  {filterCategories.map(category => <option key={category} value={category}>{category}</option>)}
                 </select>
               </div>
               <div>
@@ -3925,9 +4037,9 @@ const Operations: React.FC = () => {
               </div>
               <div>
                 <label>Categoria</label>
-                <select className="input-field" value={reportCategory} onChange={event => setReportCategory(event.target.value as 'Todas' | DeliveryCategory)}>
+                <select className="input-field" value={reportCategory} onChange={event => setReportCategory(event.target.value)}>
                   <option value="Todas">Todas as categorias</option>
-                  {DELIVERY_CATEGORIES.map(category => <option key={category} value={category}>{category}</option>)}
+                  {filterCategories.map(category => <option key={category} value={category}>{category}</option>)}
                 </select>
               </div>
               <div>
@@ -3981,9 +4093,9 @@ const Operations: React.FC = () => {
               </div>
               <div>
                 <label>Categoria</label>
-                <select className="input-field" value={reportCategory} onChange={event => { setReportCategory(event.target.value as 'Todas' | DeliveryCategory); setBillingOrderId(''); setBillingArchiveMessage(''); }}>
+                <select className="input-field" value={reportCategory} onChange={event => { setReportCategory(event.target.value); setBillingOrderId(''); setBillingArchiveMessage(''); }}>
                   <option value="Todas">Todas as categorias</option>
-                  {DELIVERY_CATEGORIES.map(category => <option key={category} value={category}>{category}</option>)}
+                  {filterCategories.map(category => <option key={category} value={category}>{category}</option>)}
                 </select>
               </div>
               <div>
