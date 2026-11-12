@@ -66,7 +66,7 @@ export const BILLING_PRICE_PREFIX = 'gom_igeve_price_';
 export interface BillingPriceEntry {
   key: string; operationId: string; category: string; product: string; unit: string; salePrice: number | null;
   identityVersion?: 1;
-  source?: { filename: string; hash: string; invoice: string; importedAt: string };
+  source?: { filename: string; hash: string; invoice: string; importedAt: string; format?: 'excel' };
 }
 export interface SavedBillingPrice { entry: BillingPriceEntry; version: string }
 export const billingOperationPriceKey = (operationId: string, category: string, product: string, unit: string) =>
