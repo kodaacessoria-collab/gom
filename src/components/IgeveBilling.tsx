@@ -195,7 +195,7 @@ export default function IgeveBilling() {
     setImportedPrices(current => [...current.filter(row => !keys.has(row.key)), ...entries]);
     setPriceEdits(current => ({ ...current, ...Object.fromEntries(entries.map(entry => [entry.key, String(entry.salePrice)])) }));
     setOperationId(entries[0].operationId);
-    setCategoryFilter([entries[0].category]);
+    setCategoryFilter([...new Set(entries.map(entry => entry.category))].sort());
   }
   async function persistPrices(entries: BillingPriceEntry[], batchSize = 1) {
     if (busy || !ready) return;
