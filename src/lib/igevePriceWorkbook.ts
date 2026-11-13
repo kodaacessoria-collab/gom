@@ -2,7 +2,7 @@ import * as XLSX from 'xlsx';
 import { normalizeBillingText, parseBillingPrice } from './igeveBilling.ts';
 import type { BillingPriceEntry } from './igeveBilling.ts';
 
-interface PriceWorkbookDestination { operation: string; category: string }
+type PriceWorkbookDestination = { operation: string } & ({ category: string } | { categories: string[] });
 
 const columns = {
   product: ['PRODUTO', 'NOME DO PRODUTO', 'DESCRICAO', 'DESCRICAO DO PRODUTO', 'ITEM'],
@@ -30,7 +30,9 @@ function spreadsheetPrice(value: unknown): number | null {
 
 export function readIgevePriceWorkbook(buffer: ArrayBuffer, destination: PriceWorkbookDestination) {
   const workbook = XLSX.read(buffer, { type: 'array' });
-  const items: { id: string; product: string; unit: string; price: number }[] = [];
+  const items: { id: string; product: string; unit: string; price: number; category?: string }[] = [];
+  const allowedCategories = new Map(('categories' in destination ? destination.categories : [destination.category])
+    .map(category => [normalizeBillingText(category), category]));
   const warnings: string[] = [];
   let foundTable = false;
   let blankPrices = 0;
@@ -59,6 +61,7 @@ export function readIgevePriceWorkbook(buffer: ArrayBuffer, destination: PriceWo
       const priceCell = row[priceColumn];
       const operation = cellText(row[operationColumn]);
       const category = cellText(row[categoryColumn]);
+      const selectedCategory = allowedCategories.get(normalizeBillingText(category));
       if (!product && !unit && priceCell == null) continue;
       if (!unit && /^(?:SUB\s*TOTAL|TOTAL)(?:\s+GERAL)?\s*:?$/i.test(product)) continue;
       const line = range.s.r + index + 1;
@@ -67,12 +70,12 @@ export function readIgevePriceWorkbook(buffer: ArrayBuffer, destination: PriceWo
         if (!cellText(priceCell)) { blankPrices++; continue; }
         if (!product || !unit) throw new Error('Preencha o produto e a unidade.');
         if ((operation && normalizeBillingText(operation) !== normalizeBillingText(destination.operation)) ||
-            (category && normalizeBillingText(category) !== normalizeBillingText(destination.category))) {
+            (category && !selectedCategory)) {
           throw new Error('A operação ou categoria da linha difere da tabela selecionada.');
         }
         const price = spreadsheetPrice(priceCell);
         if (price === null) throw new Error('Preencha o preço unitário.');
-        items.push({ id: `${name}:${line}`, product, unit, price });
+        items.push({ id: `${name}:${line}`, product, unit, price, category: selectedCategory });
       } catch (error) {
         warnings.push(`${location}. ${(error as Error).message}`);
       }
@@ -84,10 +87,10 @@ export function readIgevePriceWorkbook(buffer: ArrayBuffer, destination: PriceWo
   return { items, warnings };
 }
 
-export function downloadIgevePriceWorkbook(entries: BillingPriceEntry[], destination: PriceWorkbookDestination) {
+export function downloadIgevePriceWorkbook(entries: BillingPriceEntry[], destination: { operation: string }) {
   const sheet = XLSX.utils.aoa_to_sheet([
     ['Operação', 'Categoria', 'Produto', 'Unidade', 'Preço unitário (R$)'],
-    ...entries.map(entry => [destination.operation, destination.category, entry.product, entry.unit]),
+    ...entries.map(entry => [destination.operation, entry.category, entry.product, entry.unit]),
   ]);
   sheet['!cols'] = [{ wch: 28 }, { wch: 24 }, { wch: 64 }, { wch: 14 }, { wch: 22 }];
   const workbook = XLSX.utils.book_new();
