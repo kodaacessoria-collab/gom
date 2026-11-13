@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
 import { supabase } from '../lib/supabase';
-import { DEFAULT_DOCUMENT_SUPPLIERS, DEFAULT_IGEVE_UNITS, DOCUMENT_PREFIX, SUPPLIER_PREFIX, UNIT_PREFIX, createAutomaticQuotation, quotationPrices, decimal2, digits, documentToday, documentTotal, emptyNfeDocument, round2, unitsForCnpj, validCnpj, validateNfeDocument } from '../lib/igeveDocuments';
+import { DEFAULT_DOCUMENT_SUPPLIERS, DEFAULT_IGEVE_UNITS, DOCUMENT_PREFIX, SUPPLIER_PREFIX, UNIT_PREFIX, createAutomaticQuotation, createIssuerMirrorQuotation, quotationPrices, decimal2, digits, documentToday, documentTotal, emptyNfeDocument, round2, unitsForCnpj, validCnpj, validateNfeDocument } from '../lib/igeveDocuments';
 import type { DocumentLayout, DocumentSupplier, IgeveUnit, NfeDocument, NfeItem, Quotation } from '../lib/igeveDocuments';
 import { importNfePdf } from '../lib/nfePdfImport';
 import './IgeveDocuments.css';
@@ -33,7 +33,7 @@ async function imageData(file: File) {
   if (file.size > 512 * 1024 || !['image/png', 'image/jpeg'].includes(file.type)) throw new Error('Use um logotipo PNG ou JPG de até 512 KB.');
   return await new Promise<string>((resolve, reject) => { const reader = new FileReader(); reader.onload = () => resolve(String(reader.result)); reader.onerror = () => reject(new Error('Não foi possível ler o logotipo.')); reader.readAsDataURL(file); });
 }
-const blankSupplier = (): DocumentSupplier => ({ id: crypto.randomUUID(), name: '', cnpj: '', address: '', contact: '', layout: 'generic', color: '#203b50', payment: 'PIX / à vista', validity: 90, footer: '' });
+const blankSupplier = (id: string = crypto.randomUUID()): DocumentSupplier => ({ id, name: '', cnpj: '', address: '', contact: '', layout: 'generic', color: '#203b50', payment: 'PIX / à vista', validity: 90, footer: '' });
 const newItem = (): NfeItem => ({ id: crypto.randomUUID(), code: '', product: '', unit: 'UN', quantity: 1, price: 0, brand: '', notes: '' });
 const layoutNames: Record<DocumentLayout, string> = { caninde: 'Canindé - dados em quadro / cestas', nobre: 'Nobre - destaque em laranja / marcas', om: 'OM Logística - cabeçalho central', lm: 'LM - tabela comercial', red: 'RED - proposta comercial', delicias: 'Delícias - entrega simplificada', manu: 'Manu Alimentos - cabeçalho azul / quadro comercial', rionutri: 'Rio Nutri - cabeçalho e conferência de entrega', generic: 'Padrão personalizado' };
 
@@ -69,6 +69,11 @@ export default function IgeveDocuments() {
   const [mode, setMode] = useState<'editor' | 'suppliers' | 'units' | 'history'>('editor');
   const matches = unitsForCnpj(draft.recipientCnpj, units);
   const currentUnit = units.find(u => u.id === draft.unitId);
+  const issuerSupplier = validCnpj(draft.issuerCnpj)
+    ? suppliers.find(s => digits(s.cnpj) === digits(draft.issuerCnpj)) ?? (draft.issuer.trim() ? {
+      ...blankSupplier(`issuer-${digits(draft.issuerCnpj)}`), name: draft.issuer.trim(), cnpj: draft.issuerCnpj, payment: '', validity: 0,
+    } : undefined)
+    : undefined;
   const selectedSnapshot = records.find(r => r.value.document.id === draft.id)?.value;
   const change = (patch: Partial<NfeDocument>) => { setDraft(d => ({ ...d, ...patch, confirmed: patch.confirmed ?? false })); setDirty(true); };
   const run = async (action: () => Promise<void>) => {
@@ -114,26 +119,29 @@ export default function IgeveDocuments() {
     setVersion(existing?.version); setSource(file); setWarnings(result.warnings); setDirty(true); setMode('editor');
     setMessage('PDF importado. Confira todos os campos e os itens com o original.');
   }
-  async function save(kind?: 'quote' | 'delivery', selectedIds?: string[], generatedDocument = draft) {
+  async function save(kind?: 'quote' | 'delivery', selected: DocumentSupplier[] = [], generatedDocument = draft) {
     if (!ready) throw new Error('Aguarde o carregamento ou atualize os documentos.');
     if (!currentUnit || digits(currentUnit.cnpj) !== digits(draft.recipientCnpj)) throw new Error('A unidade selecionada deve corresponder ao CNPJ do destinatário.');
-    const error = validateNfeDocument(kind ? generatedDocument : draft, suppliers, kind);
+    const error = validateNfeDocument(kind ? generatedDocument : draft, selected, kind);
     if (error) throw new Error(error);
     const value: DocumentRecord = {
       ...records.find(r => r.value.document.id === draft.id)?.value,
       document: structuredClone(draft), savedAt: new Date().toISOString(),
-      ...(kind ? { generatedAt: new Date().toISOString(), generatedKind: kind, generatedDocument: structuredClone(generatedDocument), suppliers: suppliers.filter(s => selectedIds?.includes(s.id)).map(s => ({ ...s, referencePdf: undefined })) } : {}),
+      ...(kind ? { generatedAt: new Date().toISOString(), generatedKind: kind, generatedDocument: structuredClone(generatedDocument), suppliers: selected.map(s => ({ ...s, referencePdf: undefined })) } : {}),
     };
     const nextVersion = await writeRow(draft.id, value, version);
     setVersion(nextVersion); setRecords(rows => [{ value, version: nextVersion }, ...rows.filter(r => r.value.document.id !== draft.id)]); setDirty(false);
     return value;
   }
-  async function generate(kind: 'quote' | 'delivery', only?: string, previewOnly = false) {
-    const outputDoc = only && kind === 'quote' ? { ...draft, quotations: draft.quotations.filter(q => q.supplierId === only) } : draft;
-    const error = validateNfeDocument(outputDoc, suppliers, kind); if (error) throw new Error(error);
+  async function generate(kind: 'quote' | 'delivery', { only, previewOnly = false, mirrorSupplier }: { only?: string; previewOnly?: boolean; mirrorSupplier?: DocumentSupplier } = {}) {
+    const outputDoc = mirrorSupplier
+      ? { ...draft, quotations: [createIssuerMirrorQuotation(draft, mirrorSupplier)] }
+      : only && kind === 'quote' ? { ...draft, quotations: draft.quotations.filter(q => q.supplierId === only) } : draft;
+    const availableSuppliers = mirrorSupplier ? [mirrorSupplier] : suppliers;
+    const error = validateNfeDocument(outputDoc, availableSuppliers, kind); if (error) throw new Error(error);
     if (!currentUnit || digits(currentUnit.cnpj) !== digits(outputDoc.recipientCnpj)) throw new Error('A unidade selecionada deve corresponder ao CNPJ do destinatário.');
     const { createIgeveDocumentPdf } = await import('../lib/igeveDocumentPdf');
-    const selected = kind === 'delivery' ? [suppliers.find(s => s.id === draft.deliverySupplierId)!] : suppliers.filter(s => draft.quotations.some(q => q.supplierId === s.id) && (!only || s.id === only));
+    const selected = kind === 'delivery' ? [suppliers.find(s => s.id === draft.deliverySupplierId)!] : availableSuppliers.filter(s => outputDoc.quotations.some(q => q.supplierId === s.id));
     const outputs = selected.map(s => createIgeveDocumentPdf(outputDoc, s, kind, outputDoc.quotations.find(q => q.supplierId === s.id)));
     if (previewOnly) { setPreview({ url: outputs[0].pdf.output('bloburl').toString(), name: outputs[0].filename }); return; }
     // Generate locally first. A failure to archive must not prevent the download.
@@ -153,7 +161,7 @@ export default function IgeveDocuments() {
     downloadBlob(blob, filename);
     setMessage('Download gerado. Salvando dados no histórico...');
     let archiveError = '';
-    try { await save(kind, selected.map(s => s.id), outputDoc); }
+    try { await save(kind, selected, outputDoc); }
     catch (error) { archiveError = error instanceof Error ? error.message : 'Não foi possível salvar no histórico.'; }
     if (archiveError) {
       setMessageIsError(true);
@@ -277,6 +285,18 @@ export default function IgeveDocuments() {
       </div>
 
       <div className="card igeve-panel"><h3>4. Orçamentos de fornecedores</h3><p>Selecione o emitente e até dois parceiros. Escolha o acréscimo de cada parceiro: 8,75% ou 12,35% sobre o valor unitário de cada item da NF-e. Com dois parceiros, os percentuais ficam diferentes; ao trocar um, o outro é ajustado automaticamente. Alterar o acréscimo recalcula os preços do parceiro.</p>
+        <div className="igeve-document-quote">
+          <h4>Orçamento espelho da nota</h4>
+          {issuerSupplier ? <>
+            <p>{issuerSupplier.name} · {issuerSupplier.cnpj}</p>
+            <p>Usa os produtos, as quantidades e os preços conferidos na nota, sem acréscimo. Total: <strong>R$ {decimal2(documentTotal(draft.items))}</strong></p>
+            <label className="igeve-check"><input type="checkbox" checked={draft.confirmed} onChange={e => change({ confirmed: e.target.checked })} />Conferi a nota, a unidade, os produtos e os valores para gerar o orçamento espelho.</label>
+            <div className="igeve-actions">
+              <button className="button button-outline" onClick={() => void run(() => generate('quote', { previewOnly: true, mirrorSupplier: issuerSupplier }))}>Visualizar orçamento espelho</button>
+              <button className="button" onClick={() => void run(() => generate('quote', { mirrorSupplier: issuerSupplier }))}>Baixar orçamento espelho PDF</button>
+            </div>
+          </> : <p>Informe a razão social e um CNPJ válido do emitente na seção 1 para gerar o orçamento espelho.</p>}
+        </div>
         <div className="igeve-document-suppliers">{suppliers.map(s => <label className="igeve-check" key={s.id}><input type="checkbox" checked={draft.quotations.some(q => q.supplierId === s.id)} onChange={e => selectQuote(s.id, e.target.checked)} />{s.name}{digits(s.cnpj) === digits(draft.issuerCnpj) && digits(s.cnpj).length === 14 ? ' (emitente da NF-e)' : ''}</label>)}</div>
         {draft.quotations.map(q => { const s = suppliers.find(s => s.id === q.supplierId); return <div className="igeve-document-quote" key={q.supplierId}><h4>{s?.name || 'Fornecedor indisponível'}{q.markupPercent != null ? q.markupPercent === 0 ? ' — Valores da NF-e' : ` — Parceiro ${q.markupPercent === 8.75 ? '01' : '02'} (+${decimal2(q.markupPercent)}%)` : ''}</h4><div className="igeve-filters"><label>Data efetiva da cotação<input className="input-field" type="date" max={documentToday()} value={q.date} onChange={e => updateQuote(q.supplierId, { date: e.target.value })} /></label><label>Referência da cotação recebida<input className="input-field" placeholder="Ex.: proposta nº 123 / e-mail de 06/11/2026" value={q.reference} onChange={e => updateQuote(q.supplierId, { reference: e.target.value })} /></label></div>
           {!(digits(draft.issuerCnpj).length === 14 && digits(s?.cnpj || '') === digits(draft.issuerCnpj)) && <label>Acréscimo do parceiro<select className="input-field" aria-label={`Acréscimo ${s?.name}`} value={q.markupPercent ?? ''} onChange={e => changeQuoteMarkup(q.supplierId, Number(e.target.value))}><option value="" disabled>Selecione o acréscimo</option><option value="8.75">8,75%</option><option value="12.35">12,35%</option></select></label>}
@@ -285,11 +305,11 @@ export default function IgeveDocuments() {
           {q.markupPercent != null && <button className="button button-outline" onClick={() => updateQuote(q.supplierId, { automaticPrices: true, prices: quotationPrices(draft.items, q.markupPercent!) })}>Recalcular valores automaticamente</button>}
           <strong>Total: R$ {decimal2(documentTotal(draft.items, q.prices))}</strong>
           <label className="igeve-check"><input type="checkbox" aria-label={`Conferência do orçamento ${s?.name}`} checked={draft.confirmed} onChange={e => change({ confirmed: e.target.checked })} />Conferi a NF-e, a unidade, os produtos e os valores para gerar o orçamento.</label>
-          <div className="igeve-actions"><button className="button button-outline" onClick={() => void run(() => generate('quote', q.supplierId, true))}>Visualizar orçamento</button><button className="button" onClick={() => void run(() => generate('quote', q.supplierId))}>Baixar orçamento PDF</button></div>
+          <div className="igeve-actions"><button className="button button-outline" onClick={() => void run(() => generate('quote', { only: q.supplierId, previewOnly: true }))}>Visualizar orçamento</button><button className="button" onClick={() => void run(() => generate('quote', { only: q.supplierId }))}>Baixar orçamento PDF</button></div>
         </div>; })}
         <button className="button" disabled={!draft.quotations.length} onClick={() => void run(() => generate('quote'))}>Gerar orçamentos selecionados{draft.quotations.length > 1 ? ' (ZIP com PDFs)' : ' (PDF)'}</button>
       </div>
-      <div className="card igeve-panel"><h3>5. Romaneio de entrega</h3><div className="igeve-filters"><label>Empresa responsável<select className="input-field" value={draft.deliverySupplierId} onChange={e => change({ deliverySupplierId: e.target.value })}><option value="">Selecione a empresa</option>{suppliers.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}</select></label><label>Data de entrega<input className="input-field" type="date" value={draft.deliveryDate} onChange={e => change({ deliveryDate: e.target.value })} /></label></div><div className="igeve-actions"><button className="button button-outline" onClick={() => void run(() => generate('delivery', undefined, true))}>Visualizar romaneio</button><button className="button" onClick={() => void run(() => generate('delivery'))}>Gerar romaneio PDF</button></div><p><small>O romaneio inclui campos para recebimento e assinatura, sem preços dos produtos.</small></p></div>
+      <div className="card igeve-panel"><h3>5. Romaneio de entrega</h3><div className="igeve-filters"><label>Empresa responsável<select className="input-field" value={draft.deliverySupplierId} onChange={e => change({ deliverySupplierId: e.target.value })}><option value="">Selecione a empresa</option>{suppliers.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}</select></label><label>Data de entrega<input className="input-field" type="date" value={draft.deliveryDate} onChange={e => change({ deliveryDate: e.target.value })} /></label></div><div className="igeve-actions"><button className="button button-outline" onClick={() => void run(() => generate('delivery', { previewOnly: true }))}>Visualizar romaneio</button><button className="button" onClick={() => void run(() => generate('delivery'))}>Gerar romaneio PDF</button></div><p><small>O romaneio inclui campos para recebimento e assinatura, sem preços dos produtos.</small></p></div>
       <div className="card igeve-panel"><h3>6. Conferência e gravação</h3><label className="igeve-check"><input type="checkbox" checked={draft.confirmed} onChange={e => change({ confirmed: e.target.checked })} />Conferi a NF-e, o CNPJ, a unidade, os itens e os valores informados.</label><button className="button" onClick={() => void run(async () => { await save(); setMessage('Dados da NF-e salvos.'); })}>Salvar dados da NF-e</button></div>
       {selectedSnapshot?.generatedAt && <p><small>Última geração salva: {new Date(selectedSnapshot.generatedAt).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' })}</small></p>}
     </>}
