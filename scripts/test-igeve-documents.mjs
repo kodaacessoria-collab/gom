@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { jsPDF } from 'jspdf';
-import { DEFAULT_DOCUMENT_SUPPLIERS, DEFAULT_IGEVE_UNITS, decimal2, createAutomaticQuotation, quotationPrices, documentFilename, documentTotal, emptyNfeDocument, round2, parseBrazilianNumber, unitsForCnpj, validCnpj, validDocumentDate, validateNfeDocument } from '../src/lib/igeveDocuments.ts';
+import { DEFAULT_DOCUMENT_SUPPLIERS, DEFAULT_IGEVE_UNITS, decimal2, createAutomaticQuotation, createIssuerMirrorQuotation, quotationPrices, documentFilename, documentTotal, emptyNfeDocument, round2, parseBrazilianNumber, unitsForCnpj, validCnpj, validDocumentDate, validateNfeDocument } from '../src/lib/igeveDocuments.ts';
 import { parseNfePages } from '../src/lib/nfePdfImport.ts';
 import { createIgeveDocumentPdf } from '../src/lib/igeveDocumentPdf.ts';
 
@@ -170,6 +170,18 @@ assert.equal(documentTotal(doc.items), 56.68);
 assert.equal(documentFilename(DEFAULT_DOCUMENT_SUPPLIERS[0], doc, 'quote'), 'CD-ORÇAMENTO-GARCA_TORTA.pdf');
 assert.equal(documentFilename(DEFAULT_DOCUMENT_SUPPLIERS[0], { ...doc, number: '../../658' }, 'delivery'), 'CD-ROMANEIO_2026-11-06-GARCA_TORTA.pdf');
 assert.deepEqual(doc, snapshot);
+
+const mirrorSupplier = DEFAULT_DOCUMENT_SUPPLIERS[0];
+const mirror = createIssuerMirrorQuotation(doc, mirrorSupplier);
+assert.equal(documentTotal(doc.items, mirror.prices), 56.68);
+assert.throws(() => createIssuerMirrorQuotation(doc, DEFAULT_DOCUMENT_SUPPLIERS[1]), /emitente/);
+const mirrorDoc = { ...doc, number: '927461805', quotations: [mirror] };
+assert.equal(validateNfeDocument(mirrorDoc, [mirrorSupplier], 'quote'), '');
+assert.match(validateNfeDocument({ ...mirrorDoc, items: [{ ...doc.items[0], price: 99 }] }, [mirrorSupplier], 'quote'), /espelho/);
+const mirrorPdf = createIgeveDocumentPdf(mirrorDoc, mirrorSupplier, 'quote', mirror).pdf.output();
+assert.match(mirrorPdf, /Valor unitário/);
+assert.match(mirrorPdf, /56,68/);
+assert.doesNotMatch(mirrorPdf, /NF-e|927461805/);
 
 mkdirSync('tmp/pdfs/igeve-documents', { recursive: true });
 for (const supplier of DEFAULT_DOCUMENT_SUPPLIERS) {
