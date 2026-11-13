@@ -11,6 +11,7 @@ export interface IgeveUnit { id: string; name: string; cnpj: string; city: strin
 export interface NfeItem { id: string; code: string; product: string; unit: string; quantity: number; price: number; brand: string; notes: string }
 export interface Quotation {
   supplierId: string; date: string; reference: string; markupPercent?: number; automaticPrices?: boolean; prices: Record<string, number | null>;
+  mirrorsInvoice?: boolean;
 }
 export interface NfeDocument {
   id: string; number: string; issuedAt: string; issuer: string; issuerCnpj: string;
@@ -57,6 +58,18 @@ export function documentTotal(items: NfeItem[], prices?: Record<string, number |
 export function quotationPrices(items: NfeItem[], markupPercent: number) {
   return Object.fromEntries(items.map(item => [item.id, Number.isFinite(item.price) ? round2(item.price * (1 + markupPercent / 100)) : null]));
 }
+export function createIssuerMirrorQuotation(doc: NfeDocument, supplier: DocumentSupplier): Quotation {
+  if (!validCnpj(doc.issuerCnpj) || digits(supplier.cnpj) !== digits(doc.issuerCnpj)) {
+    throw new Error('O orçamento espelho deve usar o CNPJ da empresa emitente da NF-e.');
+  }
+  return {
+    supplierId: supplier.id,
+    date: documentToday(),
+    reference: 'Orçamento espelho do emitente',
+    mirrorsInvoice: true,
+    prices: Object.fromEntries(doc.items.map(item => [item.id, item.price])),
+  };
+}
 export function createAutomaticQuotation(doc: NfeDocument, supplier: DocumentSupplier, suppliers: DocumentSupplier[]): Quotation {
   const isIssuer = (id: string) => {
     const company = suppliers.find(s => s.id === id);
@@ -86,9 +99,11 @@ export function validateNfeDocument(doc: NfeDocument, suppliers: DocumentSupplie
     if (!doc.quotations.length || doc.quotations.length > 3) return 'Selecione de um a três fornecedores para os orçamentos.';
     if (new Set(doc.quotations.map(q => q.supplierId)).size !== doc.quotations.length) return 'Selecione fornecedores diferentes.';
     for (const q of doc.quotations) {
-      if (!suppliers.some(s => s.id === q.supplierId && validCnpj(s.cnpj))) return 'Confira o cadastro e o CNPJ de cada fornecedor selecionado.';
+      const supplier = suppliers.find(s => s.id === q.supplierId);
+      if (!supplier || !validCnpj(supplier.cnpj)) return 'Confira o cadastro e o CNPJ de cada fornecedor selecionado.';
       if (!validDocumentDate(q.date) || q.date > documentToday()) return 'Informe a data efetiva de cada cotação, até a data de hoje.';
       if (!q.reference.trim()) return 'Informe a referência da cotação recebida de cada fornecedor.';
+      if (q.mirrorsInvoice && (digits(supplier.cnpj) !== digits(doc.issuerCnpj) || doc.items.some(i => q.prices[i.id] !== i.price))) return 'Confira a empresa emitente e os preços do orçamento espelho.';
       if (doc.items.some(i => q.prices[i.id] == null || !Number.isFinite(q.prices[i.id]) || q.prices[i.id]! < 0 || round2(q.prices[i.id]!) !== q.prices[i.id])) return 'Informe o preço real de todos os itens de cada fornecedor, com até duas casas decimais.';
     }
   }

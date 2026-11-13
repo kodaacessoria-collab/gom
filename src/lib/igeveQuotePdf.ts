@@ -90,12 +90,13 @@ export function createQuotationPdf(doc: NfeDocument, supplier: DocumentSupplier,
     addLogo(left, 12, 35, 16); if (logo) y = 35;
     text(supplier.name, 14, true); text(`CNPJ: ${supplier.cnpj}`, 9);
     if (supplier.address) text(supplier.address, 8);
-    text('ORÇAMENTO', 15, true); text(`Data: ${date} | Validade: ${supplier.validity} dias`, 9);
+    text('ORÇAMENTO', 15, true);
+    text(supplier.validity ? `Data: ${date} | Validade: ${supplier.validity} dias` : `Data: ${date}`, 9);
     table({ theme: 'plain', body: client, columnStyles: { 0: { cellWidth: 28, fontStyle: 'bold' }, 1: { cellWidth: 154 } } });
   }
   pdf.setTextColor(35, 35, 35);
   // Basket templates use the proposal summary for prices, as in the originals.
-  const basketSummary = basket && (layout === 'nobre' || layout === 'caninde');
+  const basketSummary = basket && !quotation.mirrorsInvoice && (layout === 'nobre' || layout === 'caninde');
   const hasBrand = layout === 'nobre' || layout === 'generic';
   const columns = [
     ...(showCodes ? [{ header: 'Cód.', dataKey: 'code' }] : []),
@@ -127,8 +128,8 @@ export function createQuotationPdf(doc: NfeDocument, supplier: DocumentSupplier,
     if (layout === 'om') text('VALOR DO FORNECIMENTO', 11, true);
     text(`VALOR TOTAL: R$ ${decimal2(total)}`, 13, true, 105, width, 'center');
     if (basket) text(`Quantidade de cestas: ${decimal2(doc.baskets)} | Valor por cesta: R$ ${decimal2(total / doc.baskets)}`, 9, false, 105, width, 'center');
-    text(`Condições de pagamento: ${supplier.payment}`, 9, false, 105, width, 'center');
-    text(`Validade da proposta: ${supplier.validity} dias`, 9, false, 105, width, 'center');
+    if (supplier.payment) text(`Condições de pagamento: ${supplier.payment}`, 9, false, 105, width, 'center');
+    if (supplier.validity) text(`Validade da proposta: ${supplier.validity} dias`, 9, false, 105, width, 'center');
   }
   const notes = [doc.notes, supplier.footer].filter(Boolean).join('\n');
   if (notes) {
