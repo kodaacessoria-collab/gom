@@ -49,7 +49,7 @@ import { addCanindeDelivery, addCanindeHeader } from '../lib/canindePdf';
 const basketDocuments = new WeakSet<jsPDF>();
 
 type SourceType = 'Manual' | 'Excel' | 'PDF';
-type OperationsModule = 'categories' | 'monthly-location-report' | 'operations' | 'locations' | 'order-entry' | 'orders' | 'history' | 'orders-summary-report' | 'deliveries-summary-report' | 'period-report' | 'romaneio-products-report' | 'purchase-period-report' | 'products-by-date-report';
+type OperationsModule = 'edit-romaneio-products' | 'categories' | 'monthly-location-report' | 'operations' | 'locations' | 'order-entry' | 'orders' | 'history' | 'orders-summary-report' | 'deliveries-summary-report' | 'period-report' | 'romaneio-products-report' | 'purchase-period-report' | 'products-by-date-report';
 
 interface OperationContract {
   id: string;
@@ -318,6 +318,65 @@ const normalizeOrderDeliveries = (deliveries: OrderDelivery[]) => {
     .filter(delivery => delivery.items.length > 0);
 };
 
+interface RomaneioProductGroup {
+  key: string;
+  product: string;
+  unit: string;
+  romaneios: number;
+}
+
+const getRomaneioProductGroups = (orders: OperationOrder[]) => {
+  const groups = new Map<string, RomaneioProductGroup>();
+  for (const order of orders) {
+    for (const delivery of order.deliveries) {
+      const counted = new Set<string>();
+      for (const item of delivery.items) {
+        const product = displayText(item.product);
+        if (!product) continue;
+        const unit = displayText(item.unit) || 'UN';
+        const key = stockKey(product, unit);
+        if (counted.has(key)) continue;
+        counted.add(key);
+        const group = groups.get(key);
+        if (group) group.romaneios += 1;
+        else groups.set(key, { key, product, unit, romaneios: 1 });
+      }
+    }
+  }
+  return [...groups.values()].sort((a, b) => a.product.localeCompare(b.product, 'pt-BR') || a.unit.localeCompare(b.unit, 'pt-BR'));
+};
+
+const replaceRomaneioProduct = (
+  orders: OperationOrder[],
+  operationId: string,
+  sourceKey: string,
+  product: string,
+  unit: string,
+) => {
+  const affected: Array<{ orderId: string; deliveryId: string; items: DeliveryItem[] }> = [];
+  const updated = orders.map(order => {
+    if (operationId && order.operationId !== operationId) return order;
+    let orderChanged = false;
+    const deliveries = order.deliveries.map(delivery => {
+      const changedItems: DeliveryItem[] = [];
+      const items = delivery.items.map(item => {
+        if (stockKey(item.product, item.unit) !== sourceKey) return item;
+        const nextProduct = product || item.product;
+        const nextUnit = unit || item.unit;
+        if (nextProduct === item.product && nextUnit === item.unit) return item;
+        changedItems.push(item);
+        return { ...item, product: nextProduct, unit: nextUnit };
+      });
+      if (changedItems.length === 0) return delivery;
+      affected.push({ orderId: order.id, deliveryId: delivery.id, items: changedItems });
+      orderChanged = true;
+      return { ...delivery, items };
+    });
+    return orderChanged ? { ...order, deliveries } : order;
+  });
+  return { updated, affected };
+};
+
 const getOperationTitle = (operation: OperationContract) =>
   `${operation.name} (${operation.city}${operation.uf ? `/${operation.uf}` : ''})`;
 
@@ -479,6 +538,13 @@ const Operations: React.FC = () => {
   const [pendingDeleteOrderId, setPendingDeleteOrderId] = useState<string | null>(null);
   const [deliveryEdit, setDeliveryEdit] = useState<{ orderId: string; delivery: OrderDelivery; items: DeliveryItem[] } | null>(null);
   const [savingDeliveryEdit, setSavingDeliveryEdit] = useState(false);
+  const [batchOperationId, setBatchOperationId] = useState('');
+  const [batchSearch, setBatchSearch] = useState('');
+  const [batchProductKey, setBatchProductKey] = useState('');
+  const [batchName, setBatchName] = useState('');
+  const [batchUnit, setBatchUnit] = useState('');
+  const [savingBatchEdit, setSavingBatchEdit] = useState(false);
+  const [batchEditFeedback, setBatchEditFeedback] = useState<{ error: boolean; message: string } | null>(null);
   const [deliveryEditError, setDeliveryEditError] = useState('');
   const [ordersCategoryFilter, setOrdersCategoryFilter] = useState<string>('Todas');
   const [reportCategory, setReportCategory] = useState<string>('Todas');
@@ -504,6 +570,17 @@ const Operations: React.FC = () => {
   const operationOrders = useMemo(
     () => orders.filter(order => order.operationId === activeOperation?.id).sort((a, b) => b.importedAt.localeCompare(a.importedAt)),
     [orders, activeOperation?.id]
+  );
+  const batchProductGroups = useMemo(() => activeModule === 'edit-romaneio-products'
+    ? getRomaneioProductGroups(orders.filter(order => !batchOperationId || order.operationId === batchOperationId))
+    : [], [activeModule, batchOperationId, orders]);
+  const batchProduct = batchProductGroups.find(group => group.key === batchProductKey);
+  const batchResults = batchProductGroups.filter(group => normalizeKey(group.product).includes(normalizeKey(batchSearch)));
+  const batchPreview = useMemo(
+    () => batchProductKey && (displayText(batchName) || displayText(batchUnit))
+      ? replaceRomaneioProduct(orders, batchOperationId, batchProductKey, displayText(batchName), displayText(batchUnit)).affected
+      : [],
+    [orders, batchOperationId, batchProductKey, batchName, batchUnit],
   );
   const sortedOperationOrders = useMemo(
     () => [...operationOrders].sort((a, b) => {
@@ -1190,6 +1267,68 @@ const Operations: React.FC = () => {
       ...delivery,
       items: delivery.items.map(item => ({ ...item })),
     })));
+  };
+
+  const selectBatchProduct = (key: string) => {
+    setBatchProductKey(key);
+    setBatchName('');
+    setBatchUnit('');
+    setBatchEditFeedback(null);
+  };
+
+  const openBatchEdit = () => {
+    setBatchOperationId(activeOperation?.id || '');
+    setBatchSearch('');
+    selectBatchProduct('');
+    setActiveModule('edit-romaneio-products');
+  };
+
+  const saveBatchEdit = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (savingBatchEdit || !batchProduct || batchPreview.length === 0) return;
+    setSavingBatchEdit(true);
+    setBatchEditFeedback(null);
+    const conflict = 'Os romaneios foram atualizados em outra sessão. Reabra a edição para conferir os dados atuais.';
+    const write = sharedStateWriteQueue.catch(() => undefined).then(async () => {
+      const { data: current, error: loadError } = await supabase.from('app_shared_state')
+        .select('value,updated_at').eq('key', ORDERS_KEY).single();
+      if (loadError) throw loadError;
+
+      const { updated, affected } = replaceRomaneioProduct(
+        current.value as OperationOrder[], batchOperationId, batchProductKey, displayText(batchName), displayText(batchUnit),
+      );
+      const signature = (deliveries: typeof affected) =>
+        deliveries.map(({ orderId, deliveryId, items }) =>
+          JSON.stringify([orderId, deliveryId, items.map(item => [item.product, item.unit, item.quantity, item.notes])]),
+        ).sort().join('\n');
+      if (signature(affected) !== signature(batchPreview)) {
+        setOrders(current.value as OperationOrder[]);
+        saveStorage(ORDERS_KEY, current.value);
+        throw new Error(conflict);
+      }
+
+      const { data: saved, error: saveError } = await supabase.from('app_shared_state')
+        .update({ value: updated, updated_at: new Date().toISOString() })
+        .eq('key', ORDERS_KEY).eq('updated_at', current.updated_at).select('key').maybeSingle();
+      if (saveError) throw saveError;
+      if (!saved) throw new Error(conflict);
+      setOrders(updated);
+      saveStorage(ORDERS_KEY, updated);
+      return affected.length;
+    });
+    sharedStateWriteQueue = write.then(() => undefined, () => undefined);
+    try {
+      const count = await write;
+      selectBatchProduct('');
+      setBatchEditFeedback({ error: false, message: `${count} romaneio(s) atualizado(s).` });
+    } catch (error) {
+      console.error('Falha ao atualizar romaneios em lote:', error);
+      const message = error instanceof Error && error.message === conflict
+        ? conflict : 'Não foi possível salvar as alterações. Verifique a conexão e tente novamente.';
+      setBatchEditFeedback({ error: true, message });
+    } finally {
+      setSavingBatchEdit(false);
+    }
   };
 
   const startEditDelivery = (order: OperationOrder, delivery: OrderDelivery) => {
@@ -3121,6 +3260,7 @@ const Operations: React.FC = () => {
           <button type="button" className="operations-module-button" onClick={() => setActiveModule('locations')}><Layers size={22} /><span><strong>Setores e locais</strong><small>Organizar escolas e entregas</small></span></button>
           <button type="button" className="operations-module-button" onClick={() => setActiveModule('order-entry')}><PackagePlus size={22} /><span><strong>Entrada de pedidos</strong><small>Lançar itens por local</small></span></button>
           <button type="button" className="operations-module-button" onClick={() => setActiveModule('orders')}><FileText size={22} /><span><strong>Pedidos e arquivos</strong><small>Gerar PDF ou Excel</small></span></button>
+          <button type="button" className="operations-module-button" onClick={openBatchEdit}><Edit3 size={22} /><span><strong>Editar produtos dos romaneios</strong><small>Corrigir nome ou unidade em lote</small></span></button>
           <button type="button" className="operations-module-button" onClick={() => setActiveModule('history')}><History size={22} /><span><strong>Histórico</strong><small>Consultar entregas anteriores</small></span></button>
           <button type="button" className="operations-module-button" onClick={() => setActiveModule('orders-summary-report')}><FileSpreadsheet size={22} /><span><strong>Relatório de pedidos</strong><small>Resumo sintético dos pedidos</small></span></button>
           <button type="button" className="operations-module-button" onClick={() => setActiveModule('deliveries-summary-report')}><FileText size={22} /><span><strong>Relatório de entregas</strong><small>Sintético por operação e categoria</small></span></button>
@@ -3133,8 +3273,8 @@ const Operations: React.FC = () => {
 
       {activeModule && (
         <>
-          <button type="button" className="operations-modal-backdrop" aria-label="Fechar janela" onClick={() => setActiveModule(null)} />
-          <button type="button" className="operations-modal-close" title="Fechar janela" onClick={() => setActiveModule(null)}><X size={20} /> Fechar</button>
+          <button type="button" className="operations-modal-backdrop" aria-label="Fechar janela" disabled={savingBatchEdit} onClick={() => setActiveModule(null)} />
+          <button type="button" className="operations-modal-close" title="Fechar janela" disabled={savingBatchEdit} onClick={() => setActiveModule(null)}><X size={20} /> Fechar</button>
         </>
       )}
 
@@ -3166,6 +3306,60 @@ const Operations: React.FC = () => {
               {deliveryCategories.map(category => <li key={category}>{category}</li>)}
             </ul>
           </div>
+        )}
+        {activeModule === 'edit-romaneio-products' && (
+          <section role="dialog" aria-modal="true" aria-labelledby="batch-romaneio-title" className="card" style={{ position: 'fixed', inset: '5.5rem max(1rem, calc((100vw - 880px) / 2)) auto', maxHeight: 'calc(100vh - 7rem)', overflow: 'auto', padding: '1.5rem', zIndex: 10001 }}>
+            <h2 id="batch-romaneio-title">Editar produtos dos romaneios</h2>
+            <form onSubmit={saveBatchEdit}>
+              <fieldset disabled={savingBatchEdit} style={{ border: 0, padding: 0, margin: '1rem 0', minWidth: 0 }}>
+                <div className="period-report-filters">
+                  <div>
+                    <label htmlFor="batch-romaneio-operation">Operação</label>
+                    <select id="batch-romaneio-operation" className="input-field" value={batchOperationId} onChange={event => {
+                      setBatchOperationId(event.target.value);
+                      selectBatchProduct('');
+                    }}>
+                      <option value="">Todas as operações</option>
+                      {operations.map(operation => <option key={operation.id} value={operation.id}>{operation.name}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <label htmlFor="batch-romaneio-search">Buscar produto</label>
+                    <input id="batch-romaneio-search" type="search" className="input-field" value={batchSearch} onChange={event => setBatchSearch(event.target.value)} />
+                  </div>
+                </div>
+                <div style={{ margin: '0.75rem 0' }}>
+                  <label htmlFor="batch-romaneio-product">Produto e unidade atuais</label>
+                  <select id="batch-romaneio-product" className="input-field" value={batchProductKey} onChange={event => selectBatchProduct(event.target.value)}>
+                    <option value="">{batchResults.length ? 'Selecione um produto' : 'Nenhum produto encontrado'}</option>
+                    {batchProduct && !batchResults.includes(batchProduct) && (
+                      <option value={batchProduct.key}>{batchProduct.product} · {batchProduct.unit} ({batchProduct.romaneios} romaneio(s))</option>
+                    )}
+                    {batchResults.map(group => <option key={group.key} value={group.key}>{group.product} · {group.unit} ({group.romaneios} romaneio(s))</option>)}
+                  </select>
+                </div>
+                {batchProduct && (
+                  <>
+                    <div className="period-report-filters">
+                      <div>
+                        <label htmlFor="batch-romaneio-name">Novo nome</label>
+                        <input id="batch-romaneio-name" className="input-field" value={batchName} placeholder={batchProduct.product} onChange={event => setBatchName(event.target.value)} />
+                      </div>
+                      <div>
+                        <label htmlFor="batch-romaneio-unit">Nova unidade</label>
+                        <input id="batch-romaneio-unit" className="input-field" value={batchUnit} placeholder={batchProduct.unit} onChange={event => setBatchUnit(event.target.value)} />
+                      </div>
+                    </div>
+                    <p style={{ textAlign: 'left', margin: '0.75rem 0' }}>Preencha apenas os campos que deseja alterar. As quantidades e as movimentações de estoque já registradas são preservadas.</p>
+                    <button type="submit" className="button" disabled={batchPreview.length === 0} style={{ width: 'auto' }}>
+                      {savingBatchEdit ? 'Salvando…' : batchPreview.length ? `Atualizar ${batchPreview.length} romaneio(s)` : 'Atualizar romaneios'}
+                    </button>
+                  </>
+                )}
+              </fieldset>
+              {batchEditFeedback && <p role={batchEditFeedback.error ? 'alert' : 'status'}>{batchEditFeedback.message}</p>}
+            </form>
+          </section>
         )}
         <div className="card operations-module-window module-operations" style={{ maxWidth: 'none', padding: '1.25rem' }}>
           <h3 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '1rem' }}>
