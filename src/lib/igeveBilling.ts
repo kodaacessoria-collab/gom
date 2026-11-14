@@ -14,6 +14,12 @@ export interface LocationInvoiceContext {
   groupKey: string; start: string; end: string; category: string; categories?: string[];
   sourceIds: string[]; deliveryKeys: string[]; count: number;
 }
+export interface IndividualBillingRubric {
+  month: string;
+  amount: number | null;
+  proteins: number | null;
+  targets: Record<string, number | null>;
+}
 export interface BillingInvoice {
   id: string; parentId?: string; deliveryPointId?: string; deliveryDate?: string; sourceOrderId: string; sourceDeliveryId: string;
   batchFreight?: Record<string, number>;
@@ -21,6 +27,7 @@ export interface BillingInvoice {
   location?: LocationInvoiceContext;
   rubric?: RubricInvoiceContext;
   rubricDiscount?: RubricDiscount;
+  individualRubric?: IndividualBillingRubric;
   priceTableOperationId?: string;
   control: string; operationId: string; operation: string; destination: string; category: string;
   company: string; cnpj: string; date: string; notes: string; items: BillingItem[];
@@ -257,7 +264,48 @@ export function billingCostLines(invoice: BillingInvoice) {
 export const billingAdjustmentLines = (invoice: BillingInvoice, category: string) =>
   billingCostLines(invoice).filter(row => (row.item.category || invoice.category) === category && billingQuantityAdjustment(row.item) !== 0);
 
-export const invoiceTotal = (invoice: BillingInvoice) => Math.round(billingCostLines(invoice).reduce((sum, row) => sum + row.total, 0) * 100) / 100;
+export const sumBillingMoney = (amounts: number[]) =>
+  amounts.reduce((cents, amount) => cents + Math.round(amount * 100), 0) / 100;
+
+export function individualRubricRows(invoice: BillingInvoice) {
+  const rubric = invoice.individualRubric;
+  if (!rubric) return [];
+
+  const groups = new Map<string, { key: string; category: string; grossCents: number }>();
+  for (const item of invoice.items) {
+    const category = (item.category || invoice.category).trim() || 'Sem categoria';
+    const key = normalizeBillingText(category);
+    const group = groups.get(key) || { key, category, grossCents: 0 };
+    group.grossCents += Math.round(lineTotal(item) * 100);
+    groups.set(key, group);
+  }
+  return [...groups.values()].map(({ key, category, grossCents }) => {
+    const target = rubric.targets[key] ?? null;
+    const discount = target === null ? 0 : Math.max(0, grossCents - Math.round(target * 100));
+    return { key, category, gross: grossCents / 100, target, discount: discount / 100 };
+  }).sort((a, b) => a.category.localeCompare(b.category, 'pt-BR'));
+}
+
+export const invoiceRubricDiscount = (invoice: BillingInvoice) =>
+  sumBillingMoney(individualRubricRows(invoice).map(row => row.discount));
+
+export const invoiceGrossTotal = (invoice: BillingInvoice) => sumBillingMoney(billingCostLines(invoice).map(row => row.total));
+export const invoiceTotal = (invoice: BillingInvoice) => sumBillingMoney([invoiceGrossTotal(invoice), -invoiceRubricDiscount(invoice)]);
+
+export function validateIndividualRubric(invoice: BillingInvoice) {
+  const rubric = invoice.individualRubric;
+  if (!rubric) return '';
+  const validMoney = (value: number | null): value is number => value !== null && Number.isSafeInteger(Math.round(value * 100)) &&
+    value >= 0 && Math.abs(value * 100 - Math.round(value * 100)) < 1e-6;
+  if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(rubric.month)) return 'Informe o mês de referência da rubrica.';
+  if (!validMoney(rubric.amount) || rubric.amount === 0) return 'Informe o valor da rubrica do mês, maior que zero.';
+  if (!validMoney(rubric.proteins)) return 'Informe o valor atualizado de proteínas, mesmo que seja zero.';
+  for (const { category, gross, target } of individualRubricRows(invoice)) {
+    if (!validMoney(target)) return `Informe o valor a faturar de ${category}, mesmo que seja zero.`;
+    if (target > gross) return `O valor a faturar de ${category} deve ser de até ${gross.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}, o total dos produtos.`;
+  }
+  return '';
+}
 export const validateInvoice = (invoice: BillingInvoice) => {
   if (!invoice.company.trim()) return 'Informe a empresa para faturamento.';
   if (!/^\d{4}-\d{2}-\d{2}$/.test(invoice.date)) return 'Informe a data do faturamento.';
