@@ -477,6 +477,9 @@ const Operations: React.FC = () => {
   const [deliverySortDirection, setDeliverySortDirection] = useState<'asc' | 'desc'>('desc');
   const [expandedOrderId, setExpandedOrderId] = useState<string | null>(null);
   const [pendingDeleteOrderId, setPendingDeleteOrderId] = useState<string | null>(null);
+  const [deliveryEdit, setDeliveryEdit] = useState<{ orderId: string; delivery: OrderDelivery; items: DeliveryItem[] } | null>(null);
+  const [savingDeliveryEdit, setSavingDeliveryEdit] = useState(false);
+  const [deliveryEditError, setDeliveryEditError] = useState('');
   const [ordersCategoryFilter, setOrdersCategoryFilter] = useState<string>('Todas');
   const [reportCategory, setReportCategory] = useState<string>('Todas');
   const [purchaseOperationIds, setPurchaseOperationIds] = useState<string[]>([]);
@@ -834,8 +837,8 @@ const Operations: React.FC = () => {
     await fetchProducts();
   };
 
-  const replaceOrderStock = async (previous: OperationOrder, next: OperationOrder) => {
-    await reverseOrderStock(previous.id);
+  const replaceOrderStock = async (previous: OperationOrder, next: OperationOrder, deliveryId?: string) => {
+    await reverseOrderStock(previous.id, deliveryId);
     try {
       await applyOrderStock(next);
     } catch (error) {
@@ -1187,6 +1190,54 @@ const Operations: React.FC = () => {
       ...delivery,
       items: delivery.items.map(item => ({ ...item })),
     })));
+  };
+
+  const startEditDelivery = (order: OperationOrder, delivery: OrderDelivery) => {
+    setDeliveryEditError('');
+    setDeliveryEdit({ orderId: order.id, delivery, items: delivery.items.map(item => ({ ...item, unit: item.unit || 'UN' })) });
+  };
+
+  const saveDeliveryEdit = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!deliveryEdit || savingDeliveryEdit) return;
+    const order = orders.find(candidate => candidate.id === deliveryEdit.orderId);
+    const delivery = order?.deliveries.find(candidate => candidate.id === deliveryEdit.delivery.id);
+    if (!order || !delivery || JSON.stringify(delivery) !== JSON.stringify(deliveryEdit.delivery)) {
+      setDeliveryEditError('Este romaneio mudou. Feche o editor e abra novamente para ver os itens atuais.');
+      return;
+    }
+
+    const items = deliveryEdit.items.map(item => ({ ...item, product: displayText(item.product), unit: displayText(item.unit) }));
+    if (items.some(item => !item.product || !item.unit)) {
+      setDeliveryEditError('Preencha o nome e a unidade de todos os produtos.');
+      return;
+    }
+
+    const updatedDelivery = { ...delivery, items };
+    const updatedOrder = { ...order, deliveries: order.deliveries.map(candidate => candidate.id === delivery.id ? updatedDelivery : candidate) };
+    const previousStockOrder = { ...order, deliveries: [delivery] };
+    const updatedStockOrder = { ...order, deliveries: [updatedDelivery] };
+    const stockChanged = items.some((item, index) => stockKey(item.product, item.unit) !== stockKey(delivery.items[index].product, delivery.items[index].unit));
+    const nextOrders = orders.map(candidate => candidate.id === order.id ? updatedOrder : candidate);
+    setSavingDeliveryEdit(true);
+    setDeliveryEditError('');
+    try {
+      if (stockChanged) await replaceOrderStock(previousStockOrder, updatedStockOrder, delivery.id);
+      try {
+        await saveSharedState(ORDERS_KEY, nextOrders);
+      } catch (error) {
+        if (stockChanged) await replaceOrderStock(updatedStockOrder, previousStockOrder, delivery.id);
+        throw error;
+      }
+      setOrders(nextOrders);
+      saveStorage(ORDERS_KEY, nextOrders);
+      setDeliveryEdit(null);
+    } catch (error) {
+      console.error('Falha ao salvar romaneio:', error);
+      setDeliveryEditError('Não foi possível salvar o romaneio. Verifique a conexão e tente novamente.');
+    } finally {
+      setSavingDeliveryEdit(false);
+    }
   };
 
   const deleteOrder = async (orderId: string) => {
@@ -3559,6 +3610,9 @@ const Operations: React.FC = () => {
                             </button>
                             {order.deliveries.map(delivery => (
                               <React.Fragment key={delivery.id}>
+                                <button type="button" className="button button-outline" style={{ width: 'auto', minHeight: '36px', padding: '0.35rem 0.65rem' }} onClick={() => startEditDelivery(order, delivery)}>
+                                  <Edit3 size={16} /> Editar itens · {pointById(delivery.deliveryPointId)?.name || 'Entrega'}
+                                </button>
                                 <button className="button button-outline" style={{ width: '42px', height: '36px', padding: 0 }} title={`PDF ${pointById(delivery.deliveryPointId)?.name || 'Entrega'}`} onClick={() => generateDeliveryPdf(order, delivery)}>
                                   <FileText size={16} />
                                 </button>
@@ -3610,6 +3664,40 @@ const Operations: React.FC = () => {
                 </tbody>
               </table>
             </div>
+            {deliveryEdit && (
+              <div role="dialog" aria-modal="true" aria-labelledby="delivery-edit-title" style={{ position: 'fixed', inset: 0, zIndex: 10003, display: 'grid', placeItems: 'center', padding: '1rem' }}>
+                <button type="button" className="operations-modal-backdrop" aria-label="Cancelar edição do romaneio" disabled={savingDeliveryEdit} onClick={() => setDeliveryEdit(null)} />
+                <form className="card" onSubmit={saveDeliveryEdit} style={{ position: 'relative', zIndex: 10004, width: 'min(100%, 760px)', maxHeight: '90vh', overflowY: 'auto', padding: '1.5rem' }}>
+                  <h3 id="delivery-edit-title">Editar itens do romaneio</h3>
+                  <p>{pointById(deliveryEdit.delivery.deliveryPointId)?.name || 'Entrega'}</p>
+                  <div style={{ overflowX: 'auto' }}>
+                    <table className="data-table">
+                      <thead><tr><th>Produto</th><th>Unidade</th><th>Qtd.</th></tr></thead>
+                      <tbody>
+                        {deliveryEdit.items.map((item, index) => (
+                          <tr key={index}>
+                            <td><input className="input-field" aria-label={`Produto ${index + 1}`} required disabled={savingDeliveryEdit} value={item.product} onChange={event => {
+                              const product = event.target.value;
+                              setDeliveryEdit({ ...deliveryEdit, items: deliveryEdit.items.map((row, rowIndex) => rowIndex === index ? { ...row, product } : row) });
+                            }} /></td>
+                            <td style={{ width: '7rem' }}><input className="input-field" aria-label={`Unidade ${index + 1}`} required disabled={savingDeliveryEdit} value={item.unit} onChange={event => {
+                              const unit = event.target.value;
+                              setDeliveryEdit({ ...deliveryEdit, items: deliveryEdit.items.map((row, rowIndex) => rowIndex === index ? { ...row, unit } : row) });
+                            }} /></td>
+                            <td>{formatQuantity(item.quantity)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                  {deliveryEditError && <p role="alert">{deliveryEditError}</p>}
+                  <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.75rem', marginTop: '1rem' }}>
+                    <button type="button" className="button button-outline" style={{ width: 'auto' }} disabled={savingDeliveryEdit} onClick={() => setDeliveryEdit(null)}>Cancelar</button>
+                    <button type="submit" className="button" style={{ width: 'auto' }} disabled={savingDeliveryEdit}>{savingDeliveryEdit ? 'Salvando…' : 'Salvar romaneio'}</button>
+                  </div>
+                </form>
+              </div>
+            )}
             {pendingDeleteOrderId && (() => {
               const pendingOrder = orders.find(order => order.id === pendingDeleteOrderId);
               if (!pendingOrder) return null;
