@@ -360,7 +360,7 @@ const replaceRomaneioProduct = (
     const deliveries = order.deliveries.map(delivery => {
       const changedItems: DeliveryItem[] = [];
       const items = delivery.items.map(item => {
-        if (stockKey(item.product, item.unit) !== sourceKey) return item;
+        if (stockKey(item.product, displayText(item.unit)) !== sourceKey) return item;
         const nextProduct = product || item.product;
         const nextUnit = unit || item.unit;
         if (nextProduct === item.product && nextUnit === item.unit) return item;
@@ -1283,9 +1283,22 @@ const Operations: React.FC = () => {
     setActiveModule('edit-romaneio-products');
   };
 
-  const saveBatchEdit = async (event: React.FormEvent) => {
+  const saveBatchEdit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (savingBatchEdit || !batchProduct || batchPreview.length === 0) return;
+    if (savingBatchEdit || !batchProduct) return;
+
+    const fields = new FormData(event.currentTarget);
+    const product = displayText(fields.get('product'));
+    const unit = displayText(fields.get('unit'));
+    const preview = replaceRomaneioProduct(orders, batchOperationId, batchProductKey, product, unit).affected;
+    if (preview.length === 0) {
+      setBatchEditFeedback({
+        error: true,
+        message: 'Informe um novo nome ou uma nova unidade para atualizar os romaneios.',
+      });
+      return;
+    }
+
     setSavingBatchEdit(true);
     setBatchEditFeedback(null);
     const conflict = 'Os romaneios foram atualizados em outra sessão. Reabra a edição para conferir os dados atuais.';
@@ -1295,13 +1308,13 @@ const Operations: React.FC = () => {
       if (loadError) throw loadError;
 
       const { updated, affected } = replaceRomaneioProduct(
-        current.value as OperationOrder[], batchOperationId, batchProductKey, displayText(batchName), displayText(batchUnit),
+        current.value as OperationOrder[], batchOperationId, batchProductKey, product, unit,
       );
       const signature = (deliveries: typeof affected) =>
         deliveries.map(({ orderId, deliveryId, items }) =>
           JSON.stringify([orderId, deliveryId, items.map(item => [item.product, item.unit, item.quantity, item.notes])]),
         ).sort().join('\n');
-      if (signature(affected) !== signature(batchPreview)) {
+      if (signature(affected) !== signature(preview)) {
         setOrders(current.value as OperationOrder[]);
         saveStorage(ORDERS_KEY, current.value);
         throw new Error(conflict);
@@ -3310,7 +3323,7 @@ const Operations: React.FC = () => {
         {activeModule === 'edit-romaneio-products' && (
           <section role="dialog" aria-modal="true" aria-labelledby="batch-romaneio-title" className="card" style={{ position: 'fixed', inset: '5.5rem max(1rem, calc((100vw - 880px) / 2)) auto', maxHeight: 'calc(100vh - 7rem)', overflow: 'auto', padding: '1.5rem', zIndex: 10001 }}>
             <h2 id="batch-romaneio-title">Editar produtos dos romaneios</h2>
-            <form onSubmit={saveBatchEdit}>
+            <form onSubmit={saveBatchEdit} autoComplete="off">
               <fieldset disabled={savingBatchEdit} style={{ border: 0, padding: 0, margin: '1rem 0', minWidth: 0 }}>
                 <div className="period-report-filters">
                   <div>
@@ -3340,18 +3353,24 @@ const Operations: React.FC = () => {
                 </div>
                 {batchProduct && (
                   <>
-                    <div className="period-report-filters">
+                    <div className="period-report-filters" key={JSON.stringify([batchOperationId, batchProductKey])}>
                       <div>
                         <label htmlFor="batch-romaneio-name">Novo nome</label>
-                        <input id="batch-romaneio-name" className="input-field" value={batchName} placeholder={batchProduct.product} onChange={event => setBatchName(event.target.value)} />
+                        <input id="batch-romaneio-name" name="product" className="input-field" placeholder="Digite o novo nome" onChange={event => {
+                          setBatchName(event.target.value);
+                          setBatchEditFeedback(null);
+                        }} />
                       </div>
                       <div>
                         <label htmlFor="batch-romaneio-unit">Nova unidade</label>
-                        <input id="batch-romaneio-unit" className="input-field" value={batchUnit} placeholder={batchProduct.unit} onChange={event => setBatchUnit(event.target.value)} />
+                        <input id="batch-romaneio-unit" name="unit" className="input-field" placeholder="Digite a nova unidade" onChange={event => {
+                          setBatchUnit(event.target.value);
+                          setBatchEditFeedback(null);
+                        }} />
                       </div>
                     </div>
                     <p style={{ textAlign: 'left', margin: '0.75rem 0' }}>Preencha apenas os campos que deseja alterar. As quantidades e as movimentações de estoque já registradas são preservadas.</p>
-                    <button type="submit" className="button" disabled={batchPreview.length === 0} style={{ width: 'auto' }}>
+                    <button type="submit" className="button" disabled={savingBatchEdit} style={{ width: 'auto' }}>
                       {savingBatchEdit ? 'Salvando…' : batchPreview.length ? `Atualizar ${batchPreview.length} romaneio(s)` : 'Atualizar romaneios'}
                     </button>
                   </>
