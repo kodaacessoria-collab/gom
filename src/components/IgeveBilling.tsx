@@ -51,16 +51,20 @@ function individualRubricReport(invoices: BillingInvoice[]) {
 function appendIndividualRubricPdf(doc: jsPDF, invoices: BillingInvoice[]) {
   const rows = individualRubricReport(invoices);
   if (!rows.length) return;
-  doc.addPage();
-  doc.setFontSize(12);
-  doc.text('Rubrica individual e desconto na nota fiscal', 14, 17);
+  const headers = Object.keys(rows[0]);
   autoTable(doc, {
-    startY: 22, styles: { fontSize: 8 }, head: [Object.keys(rows[0])],
+    pageBreak: 'avoid',
+    styles: { fontSize: 8 },
+    head: [[{
+      content: 'Rubrica individual e desconto na nota fiscal',
+      colSpan: headers.length,
+      styles: { font: 'courier', fontSize: 12, fillColor: false, textColor: [31, 41, 55], cellPadding: { top: 0, right: 0, bottom: 2, left: 0 } },
+    }], headers],
     body: rows.map(row => Object.values(row).map(value => typeof value === 'string' ? value : optionalMoney(value))),
   });
   if (invoices.length === 1) {
     const invoice = invoices[0];
-    autoTable(doc, { body: [
+    autoTable(doc, { pageBreak: 'avoid', body: [
       ['Total bruto com frete', money(invoiceGrossTotal(invoice))],
       ['Desconto total na nota fiscal', money(invoiceRubricDiscount(invoice))],
       ['Total líquido com frete', money(invoiceTotal(invoice))],
@@ -627,7 +631,18 @@ export default function IgeveBilling() {
         const costRows = adjustmentCategory ? billingAdjustmentLines(invoice, adjustmentCategory) : billingCostLines(invoice);
         const notes = [invoice.parentId ? `Complemento do controle ${parent?.control || invoice.control}` : '', invoice.notes, rubricDiscountNote(invoice.rubricDiscount, adjustmentCategory), adjustmentCategory ? `Frete rateado desta categoria: ${money(costRows.reduce((sum, row) => sum + row.freight, 0))}` : invoice.batchFreight ? `Frete rateado do conjunto de romaneios: ${money(billingCostLines(invoice).reduce((sum, row) => sum + row.freight, 0))}` : invoice.freight?.amount ? `Frete: ${money(invoice.freight.amount)} | Categoria: ${invoice.freight.category || 'Todas'} | Rateio pela quantidade faturada` : ''].filter(Boolean).join(' | ');
         autoTable(doc, { startY: 45 + infoLines.length * 5, styles: { fontSize: 8 }, head: [['Produto', 'Categoria', 'Unidade', 'Qtd. entregue', 'Ajuste (+/-)', 'Qtd. faturada', 'Preço unitário', 'Frete rateado', 'Custo unit. final', 'Total com frete']], body: costRows.map(({ item, freight, unitCost, total }) => [item.product, item.category || invoice.category, item.unit, item.quantity, billingQuantityAdjustment(item), item.billedQuantity ?? item.quantity, money(item.price), money(freight), unitCost.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 6 }), money(total)]), foot: [['TOTAL', '', '', '', '', '', '', money(costRows.reduce((sum, row) => sum + row.freight, 0)), '', money(costRows.reduce((sum, row) => sum + row.total, 0))]] });
-        if (notes) { doc.addPage(); doc.text(doc.splitTextToSize(`Observações: ${notes}`, 275), 10, 20); }
+        if (!adjustmentCategory) appendIndividualRubricPdf(doc, [invoice]);
+        if (notes && adjustmentCategory) {
+          doc.addPage();
+          doc.text(doc.splitTextToSize(`Observações: ${notes}`, 275), 10, 20);
+        } else if (notes) {
+          autoTable(doc, {
+            theme: 'plain',
+            styles: { font: 'courier', fontStyle: 'bold', fontSize: 10, textColor: [31, 41, 55], cellPadding: 0 },
+            margin: { left: 10, right: 10 },
+            body: [[`Observações: ${notes}`]],
+          });
+        }
       } else if (tab === 'locations') {
         autoTable(doc, { startY: 40, head: [['Operação', 'Local', 'Romaneios', 'Produtos', 'Situação', 'Desconto na NF', 'Total']], body: visibleLocations.map(row => [row.operation, row.destination, row.count, row.products, row.stored ? 'Salvo' : 'A preparar', money(invoiceRubricDiscount(row.invoice)), money(row.total)]), foot: [['TOTAL', '', '', '', '', money(sumBillingMoney(visibleLocations.map(row => invoiceRubricDiscount(row.invoice)))), money(locationGrandTotal)]] });
         doc.addPage();
@@ -637,7 +652,7 @@ export default function IgeveBilling() {
         doc.addPage();
         autoTable(doc, { head: [['Empresa', 'Operação / local', 'Controle', 'Tipo', 'Data faturamento', 'Total']], body: visibleInvoices.map(item => [item.company, `${item.operation} / ${item.destination}`, item.control, billingInvoiceType(item), dateLabel(item.date), money(invoiceTotal(item))]) });
       }
-      if (!adjustmentCategory) appendIndividualRubricPdf(doc, invoice ? [invoice] : tab === 'locations' ? visibleLocations.map(row => row.invoice) : visibleInvoices);
+      if (!invoice) appendIndividualRubricPdf(doc, tab === 'locations' ? visibleLocations.map(row => row.invoice) : visibleInvoices);
       doc.save(invoice && adjustmentCategory ? romaneioFilename(invoice, adjustmentCategory) : invoice ? `faturamento-${invoice.control}-${invoice.id.slice(-8)}.pdf` : tab === 'locations' ? 'faturamento-igeve-locais.pdf' : 'faturamento-igeve-empresas.pdf');
     } catch { setMessage('Não foi possível gerar o PDF. Tente novamente.'); }
   }
