@@ -72,6 +72,164 @@ function appendIndividualRubricPdf(doc: jsPDF, invoices: BillingInvoice[]) {
   }
 }
 
+function exportBillingAudit(saved: SavedInvoice[], orders: BillingOrder[], points: BillingPoint[]) {
+  const sources = new Map(orders.flatMap(order => order.deliveries.map(delivery =>
+    [JSON.stringify([order.id, delivery.id]), { order, delivery }] as const)));
+  const ordersById = new Map(orders.map(order => [order.id, order]));
+  const pointsById = new Map(points.map(point => [point.id, point]));
+  const invoicesById = new Map(saved.map(({ invoice }) => [invoice.id, invoice]));
+  const coveredBy = new Map<string, string>();
+  const workbook = XLSX.utils.book_new();
+  const findings: (string | number | null)[][] = [];
+  const coverage: (string | number | null)[][] = [];
+  const verifiedStatuses = new Map<string, number>();
+  const normalize = (value: string) => value.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toUpperCase().replace(/\s+/g, ' ').trim();
+  const productKey = (item: { category: string; product: string; unit: string }) =>
+    JSON.stringify([normalize(item.category), normalize(item.product), normalize(item.unit || 'UN')]);
+  const quantity = (value: number) => Math.round(value * 1e6) / 1e6;
+
+  for (const { invoice } of saved) {
+    const location = invoice.location;
+    const name = [invoice.operation, invoice.destination, invoice.control, invoice.date, billingInvoiceType(invoice), invoice.id];
+    const issues: [string, string, string?, string?, number?, number?, number?, number?][] = [];
+    const add = (...issue: typeof issues[number]) => issues.push(issue);
+    const expected = new Map<string, { category: string; product: string; unit: string; quantity: number }>();
+    const financialAdditions = new Map<string, number>();
+    const seen = new Set<string>();
+    const controls: string[] = [];
+    let complete = true;
+    const keys = location?.deliveryKeys || [JSON.stringify([invoice.sourceOrderId, invoice.sourceDeliveryId])];
+    const financial = !!invoice.parentId || invoice.rubric?.kind === 'carry' || invoice.rubric?.kind === 'complement';
+
+    if (!financial && !keys.length) {
+      complete = false;
+      add('Origem indisponível', 'Faturamento sem vínculo de entrega registrado.');
+    }
+    if (!financial && location) {
+      for (const id of new Set(location.sourceIds || [])) {
+        const complement = invoicesById.get(id);
+        if (!complement?.parentId) continue;
+        for (const item of complement.items) {
+          const key = productKey({ ...item, category: item.category || complement.category });
+          financialAdditions.set(key, quantity((financialAdditions.get(key) || 0) + item.quantity));
+        }
+        add('Complemento vinculado', `Lançamento financeiro ${complement.control} (${id}).`);
+      }
+    }
+    if (financial) add('Lançamento financeiro', 'Complemento ou aproveitamento. Conferência de entrega não aplicável aos itens próprios.');
+    for (const key of financial ? [] : keys) {
+      let linked = sources.get(key);
+      if (!linked && invoice.deliveryPointId) {
+        let orderId: string | undefined;
+        try { [orderId] = JSON.parse(key) as [string, string]; } catch { /* Vínculo ilegível. */ }
+        const order = orderId ? ordersById.get(orderId) : undefined;
+        const candidates = order?.deliveries.filter(row => row.deliveryPointId === invoice.deliveryPointId) || [];
+        if (order && candidates.length === 1) {
+          linked = { order, delivery: candidates[0] };
+          add('Vínculo recriado', `Entrega localizada no mesmo romaneio e ponto. Controle ${getOrderControlNumber(order.importedAt)}.`);
+        }
+      }
+      if (!linked) {
+        complete = false;
+        add('Origem indisponível', `Entrega não localizada em Operações. Vínculo ${key}.`);
+        continue;
+      }
+      const { order, delivery } = linked;
+      const control = getOrderControlNumber(order.importedAt);
+      const pointName = pointsById.get(delivery.deliveryPointId)?.name;
+      controls.push(`${control} · ${order.deliveryDate} · ${order.category}`);
+      const currentKey = JSON.stringify([order.id, delivery.id]);
+      if (seen.has(currentKey)) {
+        add('Vínculo duplicado', `Entrega repetida no mesmo faturamento. Controle ${control}.`);
+        continue;
+      }
+      seen.add(currentKey);
+      if (location) {
+        const earlier = coveredBy.get(currentKey);
+        if (earlier && earlier !== invoice.id) add('Entrega em dois consolidados', `Controle ${control}. Outro faturamento ${earlier}.`);
+        coveredBy.set(currentKey, invoice.id);
+      }
+      if (order.operationId !== invoice.operationId || (invoice.deliveryPointId
+        ? invoice.deliveryPointId !== delivery.deliveryPointId
+        : pointName && normalize(pointName) !== normalize(invoice.destination))) {
+        complete = false;
+        add('Origem de outra operação ou unidade', `Controle ${control}. Unidade de origem ${pointName || delivery.deliveryPointId}.`);
+        continue;
+      }
+      if (location && (!billingDateInRange(order.deliveryDate, location.start, location.end) ||
+        (location.categories?.length && !location.categories.some(category => normalize(category) === normalize(order.category))))) {
+        add('Origem fora do período ou categoria', `Controle ${control}, ${order.deliveryDate}, ${order.category}.`);
+      }
+      for (const item of delivery.items) {
+        const row = { ...item, category: order.category };
+        const id = productKey(row);
+        row.quantity = quantity((expected.get(id)?.quantity || 0) + item.quantity);
+        expected.set(id, row);
+      }
+    }
+
+    const actual = new Map<string, { category: string; product: string; unit: string; delivered: number; billed: number; total: number; price: number | null }>();
+    if (!financial) {
+      for (const { item, subtotal } of billingCostLines(invoice)) {
+        const category = item.category || invoice.category;
+        const billed = item.billedQuantity ?? item.quantity;
+        if (item.addedForBilling) {
+          add('Inclusão manual', 'Marcado no faturamento como adicionado manualmente.', item.product, item.unit, 0, item.quantity, billed, subtotal);
+          continue;
+        }
+        const key = productKey({ ...item, category });
+        const previous = actual.get(key);
+        actual.set(key, { ...item, category, delivered: quantity((previous?.delivered || 0) + item.quantity),
+          billed: quantity((previous?.billed || 0) + billed), total: Math.round(((previous?.total || 0) + subtotal) * 100) / 100,
+          price: !previous || previous.price === item.price ? item.price : null });
+      }
+      if (complete) {
+        for (const [key, item] of actual) {
+          const origin = expected.get(key);
+          const expectedQuantity = quantity((origin?.quantity || 0) + (financialAdditions.get(key) || 0));
+          if (!origin && !financialAdditions.has(key)) {
+            add('Produto sem correspondência', `Categoria ${item.category}. Conferir também eventual renomeação em Operações.`, item.product, item.unit, 0, item.delivered, item.billed, item.total);
+          } else if (item.delivered !== expectedQuantity) {
+            const amount = item.price === null ? undefined : Math.round((item.delivered - expectedQuantity) * item.price * 100) / 100;
+            add('Quantidade entregue divergente', `Categoria ${item.category}. Valor estimado pela diferença × preço salvo.`, item.product, item.unit, expectedQuantity, item.delivered, item.billed, amount);
+          }
+        }
+        for (const [key, item] of expected) if (!actual.has(key)) {
+          add('Produto da origem ausente', `Categoria ${item.category}. Conferir também eventual renomeação em Operações.`, item.product, item.unit, item.quantity, 0, 0);
+        }
+      }
+    }
+
+    const relevant = issues.filter(([type]) => !['Lançamento financeiro', 'Complemento vinculado', 'Inclusão manual'].includes(type)).length;
+    const status = financial ? 'Lançamento financeiro' : !complete ? 'Origem incompleta' : relevant ? 'Com divergências ou vínculos a conferir' : 'Sem divergência de origem';
+    verifiedStatuses.set(status, (verifiedStatuses.get(status) || 0) + 1);
+    coverage.push([...name, invoice.category, location?.start || invoice.deliveryDate || '', location?.end || invoice.deliveryDate || '',
+      status, keys.length, seen.size, invoice.items.length, invoiceTotal(invoice), controls.join(' | ')]);
+    for (const [type, detail, product, unit, expectedQty, storedQty, billedQty, amount] of issues) {
+      findings.push([...name, type, product || '', unit || '', expectedQty ?? null, storedQty ?? null, billedQty ?? null, amount ?? null, detail]);
+    }
+  }
+  const addSheet = (title: string, rows: (string | number | null)[][], widths: number[]) => {
+    const sheet = XLSX.utils.aoa_to_sheet(rows);
+    sheet['!cols'] = widths.map(wch => ({ wch }));
+    if (rows.length > 1 && sheet['!ref']) sheet['!autofilter'] = { ref: sheet['!ref'] };
+    XLSX.utils.book_append_sheet(workbook, sheet, title);
+  };
+  const identity = ['Operação', 'Unidade de entrega', 'Controle do faturamento', 'Data do faturamento', 'Tipo', 'ID do faturamento'];
+  addSheet('Resumo', [['Indicador', 'Resultado'], ['Data da conferência', today()], ['Faturamentos salvos analisados', saved.length],
+    ['Pedidos de Operações disponíveis', orders.length], ...[...verifiedStatuses],
+    ['Critério', 'Quantidades entregues salvas × romaneios vinculados disponíveis hoje em Operações.'],
+    ['Ajustes', 'A quantidade faturada é informativa. Inclusões manuais e complementos são identificados no detalhe.'],
+    ['Valor', 'Valores em R$, antes de frete e desconto. Valores de linhas diferentes não devem ser somados como prejuízo.'],
+    ['Origens incompletas', 'Itens sem todos os romaneios disponíveis ficam pendentes de comprovação.'],
+    ['Histórico', 'Edições e renomeações em Operações podem produzir diferenças em relação ao faturamento salvo.']], [37, 102]);
+  addSheet('Faturamentos', [[...identity, 'Categoria', 'Entrega de', 'Entrega até', 'Resultado', 'Vínculos registrados', 'Entregas únicas localizadas', 'Linhas salvas', 'Total salvo (R$)', 'Controles de origem'], ...coverage],
+    [23, 47, 35, 19, 23, 34, 27, 16, 16, 37, 19, 24, 15, 19, 75]);
+  addSheet('Ocorrências', [[...identity, 'Ocorrência', 'Produto', 'Unidade do produto', 'Qtd. origem', 'Qtd. entregue salva', 'Qtd. faturada', 'Valor indicado (R$)', 'Detalhe'], ...findings],
+    [23, 47, 35, 19, 23, 34, 34, 35, 20, 14, 19, 16, 19, 82]);
+  XLSX.writeFile(workbook, 'Auditoria_Faturamentos_IGEVE.xlsx');
+}
+
 interface SharedRow { key: string; value: unknown; updated_at: string }
 async function loadInvoices(prefix = BILLING_PREFIX) {
   const rows: SharedRow[] = [];
@@ -324,8 +482,15 @@ export default function IgeveBilling() {
     billingInvoiceCategoryMatches(invoice, categoryFilter));
   const outstandingSources = effectiveBillingInvoices([...locationSource, ...scopedLocations.map(row => row.invoice)])
     .filter(invoice => !invoice.location);
+  // A saved closing can cover selected deliveries without belonging in the filtered list.
+  const matchesLocationScope = ({ invoice }: SavedInvoice) => {
+    const context = invoice.location!;
+    return (!start || (!!context.start && context.start >= start)) &&
+      (!end || (!!context.end && context.end <= end)) &&
+      invoice.items.every(item => billingCategoryMatches(item.category || invoice.category, categoryFilter));
+  };
   const preparedLocations = [
-    ...scopedLocations.filter(row => currentInvoiceIds.has(row.invoice.id)).map(stored => {
+    ...scopedLocations.filter(row => currentInvoiceIds.has(row.invoice.id) && matchesLocationScope(row)).map(stored => {
       const invoice = stored.invoice;
       const context = invoice.location!;
       const group = locationTotals([invoice], orders, points)[0];
@@ -673,7 +838,7 @@ export default function IgeveBilling() {
     XLSX.writeFile(workbook, tab === 'locations' ? 'faturamento-igeve-locais.xlsx' : 'faturamento-igeve-empresas.xlsx');
   }
   return <section className="igeve-billing">
-    <div className="igeve-heading"><div><h1>Faturamento IGEVE</h1><p>Romaneios e complementos com valores próprios para faturamento.</p></div><button className="button button-outline" disabled={busy || !!draft || !!Object.keys(priceEdits).length} onClick={() => void load()}><RefreshCw size={18} /> Atualizar</button></div>
+    <div className="igeve-heading"><div><h1>Faturamento IGEVE</h1><p>Romaneios e complementos com valores próprios para faturamento.</p></div><button className="button button-outline" disabled={busy || !!draft || !!Object.keys(priceEdits).length} onClick={() => void load()}><RefreshCw size={18} /> Atualizar</button>{ready && <button type="button" className="button button-outline" disabled={busy || !!draft} onClick={() => exportBillingAudit(rawSaved, orders, points)}>Conferir faturamentos salvos</button>}</div>
     <nav className="igeve-actions" aria-label="Faturamento IGEVE">{[['documents', 'Orçamentos e entrega por NF-e'], ['rubrics', 'Rubricas por operação'], ['romaneios', 'Faturamento por romaneio'], ['saved', 'Romaneios de faturamento'], ['freight', 'Frete'], ['locations', 'Faturamento por operação/local'], ['report', 'Relatório por empresas'], ['prices', 'Tabela de preços']].map(([id, label]) => <button key={id} className={`button ${tab !== id ? 'button-outline' : ''}`} disabled={busy || !!draft} onClick={() => { if (id === 'documents') setDocumentsOpened(true); setTab(id); }}>{label}</button>)}</nav>
     {documentsOpened && <div hidden={tab !== 'documents'}><IgeveDocuments /></div>}
     {tab !== 'rubrics' && tab !== 'documents' && <div className="card igeve-panel igeve-filter-panel"><div className="igeve-filters">
