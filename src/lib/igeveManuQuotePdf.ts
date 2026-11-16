@@ -38,7 +38,7 @@ export function createManuQuotationPdf(doc: NfeDocument, supplier: DocumentSuppl
     pdf.setFont('helvetica', 'bold'); pdf.setFontSize(11);
     pdf.text(reference, 194, 46, { align: 'right' });
   }
-  table({ body: [[doc.recipient], [`CNPJ: ${doc.recipientCnpj}`], [`Endereço: ${doc.address || '________________________________________________'}`],
+  table({ body: [[doc.recipient], [`CNPJ: ${doc.recipientCnpj}`],
     ...(doc.consumption ? [[`Consumo: ${doc.consumption}`]] : [])],
     styles: { fontSize: 10, fontStyle: 'bold', textColor: [0, 0, 0], cellPadding: 2, lineColor: [0, 0, 0], lineWidth: .15 } });
   y += 12;
@@ -60,7 +60,7 @@ export function createManuQuotationPdf(doc: NfeDocument, supplier: DocumentSuppl
   y += 12; space(doc.baskets > 0 ? 48 : 34);
   table({ body: [
     ['Valor Total', money(total)], ['Pagamento:', supplier.payment],
-    ['Validade:', `${supplier.validity} dias - ${doc.unitName}`], ['Data:', quotation.date.split('-').reverse().join('/')],
+    ['Validade:', `${supplier.validity} dias`], ['Data:', quotation.date.split('-').reverse().join('/')],
     ...(doc.baskets > 0 ? [['Quantidade de cestas', decimal2(doc.baskets)], ['Valor por cesta', money(total / doc.baskets)]] : []),
   ], columnStyles: { 0: { cellWidth: 89, fontStyle: 'bold' }, 1: { cellWidth: 89, fontStyle: 'bold' } },
     didParseCell: data => { if (data.row.index === 3) data.cell.styles.fillColor = [244, 234, 234]; } });
