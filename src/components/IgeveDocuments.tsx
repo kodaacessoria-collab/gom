@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
 import { supabase } from '../lib/supabase';
-import { DEFAULT_DOCUMENT_SUPPLIERS, DEFAULT_IGEVE_UNITS, DOCUMENT_PREFIX, SUPPLIER_PREFIX, UNIT_PREFIX, createAutomaticQuotation, createIssuerMirrorQuotation, quotationPrices, decimal2, digits, documentToday, documentTotal, emptyNfeDocument, round2, unitsForCnpj, validCnpj, validateNfeDocument } from '../lib/igeveDocuments';
+import { DEFAULT_DOCUMENT_SUPPLIERS, DEFAULT_IGEVE_UNITS, DOCUMENT_PREFIX, SUPPLIER_PREFIX, UNIT_PREFIX, createAutomaticQuotation, createIssuerMirrorQuotation, quotationPrices, decimal2, digits, documentToday, documentTotal, emptyNfeDocument, round2, unitsForCnpj, validCnpj, validDocumentDate, validateNfeDocument } from '../lib/igeveDocuments';
 import type { DocumentLayout, DocumentSupplier, IgeveUnit, NfeDocument, NfeItem, Quotation } from '../lib/igeveDocuments';
 import { quoteSignatureCompanies, quoteSignatureCompany } from '../lib/igeveQuoteSignature';
 import type { QuoteSignatureCompany, QuoteSignatures } from '../lib/igeveQuoteSignature';
@@ -9,7 +9,8 @@ import { importNfePdf } from '../lib/nfePdfImport';
 import './IgeveDocuments.css';
 
 interface Stored<T> { value: T; version: string }
-interface DocumentRecord { document: NfeDocument; savedAt: string; generatedAt?: string; generatedKind?: 'quote' | 'delivery'; generatedDocument?: NfeDocument; suppliers?: DocumentSupplier[]; signatureHashes?: Record<string, string> }
+type DocumentDraft = NfeDocument & { quotationDate?: string };
+interface DocumentRecord { document: DocumentDraft; savedAt: string; generatedAt?: string; generatedKind?: 'quote' | 'delivery'; generatedDocument?: NfeDocument; suppliers?: DocumentSupplier[]; signatureHashes?: Record<string, string> }
 async function readRows<T>(prefix: string): Promise<Stored<T>[]> {
   const rows: Stored<T>[] = [];
   for (let offset = 0; ; offset += 100) {
@@ -99,7 +100,7 @@ export default function IgeveDocuments() {
   const [supplierRows, setSupplierRows] = useState<Stored<DocumentSupplier>[]>([]);
   const [unitRows, setUnitRows] = useState<Stored<IgeveUnit>[]>([]);
   const [records, setRecords] = useState<Stored<DocumentRecord>[]>([]);
-  const [draft, setDraft] = useState<NfeDocument>(emptyNfeDocument);
+  const [draft, setDraft] = useState<DocumentDraft>(emptyNfeDocument);
   const [version, setVersion] = useState<string>();
   const [busy, setBusy] = useState(false);
   const [ready, setReady] = useState(false);
@@ -122,7 +123,9 @@ export default function IgeveDocuments() {
     } : undefined)
     : undefined;
   const selectedSnapshot = records.find(r => r.value.document.id === draft.id)?.value;
-  const change = (patch: Partial<NfeDocument>) => { setDraft(d => ({ ...d, ...patch, confirmed: patch.confirmed ?? false })); setDirty(true); };
+  const previousQuoteDates = new Set(draft.quotations.map(quote => quote.date));
+  const quotationDate = draft.quotationDate ?? (previousQuoteDates.size > 1 ? '' : draft.quotations[0]?.date ?? documentToday());
+  const change = (patch: Partial<DocumentDraft>) => { setDraft(d => ({ ...d, ...patch, confirmed: patch.confirmed ?? false })); setDirty(true); };
   const run = async (action: () => Promise<void>) => {
     setBusy(true); setMessage(''); setMessageIsError(false);
     try { await action(); } catch (error) { setMessageIsError(true); setMessage(error instanceof Error ? error.message : 'Não foi possível concluir a ação.'); }
@@ -152,7 +155,7 @@ export default function IgeveDocuments() {
     }
   }, [message, messageIsError]);
   const discard = () => !dirty || window.confirm('Há alterações não salvas. Deseja descartá-las?');
-  function applyCnpj(cnpj: string, doc = draft): NfeDocument {
+  function applyCnpj(cnpj: string, doc = draft): DocumentDraft {
     const found = unitsForCnpj(cnpj, units);
     return { ...doc, recipientCnpj: cnpj, unitId: found.length === 1 ? found[0].id : '', unitName: found.length === 1 ? found[0].name : '', address: (digits(cnpj) === digits(doc.recipientCnpj) ? doc.address : '') || (found.length === 1 ? found[0].address : ''), confirmed: false };
   }
@@ -173,7 +176,7 @@ export default function IgeveDocuments() {
     if (error) throw new Error(error);
     const value: DocumentRecord = {
       ...records.find(r => r.value.document.id === draft.id)?.value,
-      document: structuredClone(draft), savedAt: new Date().toISOString(),
+      document: structuredClone(kind === 'quote' ? { ...draft, quotationDate } : draft), savedAt: new Date().toISOString(),
       ...(kind ? { generatedAt: new Date().toISOString(), generatedKind: kind, generatedDocument: structuredClone(generatedDocument), signatureHashes, suppliers: selected.map(s => ({ ...s, referencePdf: undefined })) } : {}),
     };
     const nextVersion = await writeRow(draft.id, value, version);
@@ -181,9 +184,14 @@ export default function IgeveDocuments() {
     return value;
   }
   async function generate(kind: 'quote' | 'delivery', { only, previewOnly = false, mirrorSupplier }: { only?: string; previewOnly?: boolean; mirrorSupplier?: DocumentSupplier } = {}) {
-    const outputDoc = mirrorSupplier
-      ? { ...draft, quotations: [createIssuerMirrorQuotation(draft, mirrorSupplier)] }
-      : only && kind === 'quote' ? { ...draft, quotations: draft.quotations.filter(q => q.supplierId === only) } : draft;
+    let outputDoc = draft;
+    if (kind === 'quote') {
+      if (!validDocumentDate(quotationDate) || quotationDate > documentToday()) throw new Error('Informe a data do orçamento, até a data de hoje.');
+      const quotations = mirrorSupplier
+        ? [createIssuerMirrorQuotation(draft, mirrorSupplier)]
+        : draft.quotations.filter(q => !only || q.supplierId === only);
+      outputDoc = { ...draft, quotations: quotations.map(q => ({ ...q, date: quotationDate })) };
+    }
     const availableSuppliers = mirrorSupplier ? [mirrorSupplier] : suppliers;
     const error = validateNfeDocument(outputDoc, availableSuppliers, kind); if (error) throw new Error(error);
     if (!currentUnit || digits(currentUnit.cnpj) !== digits(outputDoc.recipientCnpj)) throw new Error('A unidade selecionada deve corresponder ao CNPJ do destinatário.');
@@ -254,16 +262,16 @@ export default function IgeveDocuments() {
   }
   function selectQuote(supplierId: string, checked: boolean) {
     if (!checked) {
-      change({ quotations: draft.quotations.filter(q => q.supplierId !== supplierId) });
+      change({ quotationDate, quotations: draft.quotations.filter(q => q.supplierId !== supplierId) });
       return;
     }
     if (draft.quotations.some(q => q.supplierId === supplierId)) return;
     if (draft.quotations.length >= 3) { setMessage('Selecione até três empresas: o fornecedor da nota e até dois parceiros.'); return; }
     const supplier = suppliers.find(s => s.id === supplierId)!;
     let quote: Quotation;
-    try { quote = createAutomaticQuotation(draft, supplier, suppliers); }
+    try { quote = { ...createAutomaticQuotation(draft, supplier, suppliers), date: quotationDate }; }
     catch (error) { setMessage((error as Error).message); return; }
-    change({ quotations: [...draft.quotations, quote] });
+    change({ quotationDate, quotations: [...draft.quotations, quote] });
   }
   function updateQuote(id: string, patch: Partial<Quotation>) { change({ quotations: draft.quotations.map(q => q.supplierId === id ? { ...q, ...patch } : q) }); }
   function changeQuoteMarkup(id: string, markupPercent: number) {
@@ -362,6 +370,9 @@ export default function IgeveDocuments() {
       </div>
 
       <div className="card igeve-panel"><h3>4. Orçamentos de fornecedores</h3><p>Selecione o emitente e até dois parceiros. Escolha o acréscimo de cada parceiro: 8,75% ou 12,35% sobre o valor unitário de cada item da NF-e. Com dois parceiros, os percentuais ficam diferentes; ao trocar um, o outro é ajustado automaticamente. Alterar o acréscimo recalcula os preços do parceiro.</p>
+        <div className="igeve-filters">
+          <label>Data do orçamento<input className="input-field" type="date" max={documentToday()} value={quotationDate} onChange={e => change({ quotationDate: e.target.value, confirmed: draft.confirmed })} /></label>
+        </div>
         <div className="igeve-document-quote">
           <h4>Orçamento espelho da nota</h4>
           {issuerSupplier ? <>
@@ -375,7 +386,7 @@ export default function IgeveDocuments() {
           </> : <p>Informe a razão social e um CNPJ válido do emitente na seção 1 para gerar o orçamento espelho.</p>}
         </div>
         <div className="igeve-document-suppliers">{suppliers.map(s => <label className="igeve-check" key={s.id}><input type="checkbox" checked={draft.quotations.some(q => q.supplierId === s.id)} onChange={e => selectQuote(s.id, e.target.checked)} />{s.name}{digits(s.cnpj) === digits(draft.issuerCnpj) && digits(s.cnpj).length === 14 ? ' (emitente da NF-e)' : ''}</label>)}</div>
-        {draft.quotations.map(q => { const s = suppliers.find(s => s.id === q.supplierId); return <div className="igeve-document-quote" key={q.supplierId}><h4>{s?.name || 'Fornecedor indisponível'}{q.markupPercent != null ? q.markupPercent === 0 ? ' — Valores da NF-e' : ` — Parceiro ${q.markupPercent === 8.75 ? '01' : '02'} (+${decimal2(q.markupPercent)}%)` : ''}</h4><div className="igeve-filters"><label>Data efetiva da cotação<input className="input-field" type="date" max={documentToday()} value={q.date} onChange={e => updateQuote(q.supplierId, { date: e.target.value })} /></label><label>Referência da cotação recebida<input className="input-field" placeholder="Ex.: proposta nº 123 / e-mail de 06/11/2026" value={q.reference} onChange={e => updateQuote(q.supplierId, { reference: e.target.value })} /></label></div>
+        {draft.quotations.map(q => { const s = suppliers.find(s => s.id === q.supplierId); return <div className="igeve-document-quote" key={q.supplierId}><h4>{s?.name || 'Fornecedor indisponível'}{q.markupPercent != null ? q.markupPercent === 0 ? ' — Valores da NF-e' : ` — Parceiro ${q.markupPercent === 8.75 ? '01' : '02'} (+${decimal2(q.markupPercent)}%)` : ''}</h4><div className="igeve-filters"><label>Referência da cotação recebida<input className="input-field" placeholder="Ex.: proposta nº 123 / e-mail de 06/11/2026" value={q.reference} onChange={e => updateQuote(q.supplierId, { reference: e.target.value })} /></label></div>
           {!(digits(draft.issuerCnpj).length === 14 && digits(s?.cnpj || '') === digits(draft.issuerCnpj)) && <label>Acréscimo do parceiro<select className="input-field" aria-label={`Acréscimo ${s?.name}`} value={q.markupPercent ?? ''} onChange={e => changeQuoteMarkup(q.supplierId, Number(e.target.value))}><option value="" disabled>Selecione o acréscimo</option><option value="8.75">8,75%</option><option value="12.35">12,35%</option></select></label>}
           <div className="table-container"><table><thead><tr><th>Produto</th><th>Quantidade</th><th>Preço cotado (R$)</th><th>Total (R$)</th></tr></thead><tbody>{draft.items.map(i => <tr key={i.id}><td>{i.product}</td><td>{decimal2(i.quantity)} {i.unit}</td><td><DecimalInput label={`Preço ${s?.name} ${i.product}`} value={q.prices[i.id] ?? null} onChange={value => updateQuote(q.supplierId, { automaticPrices: false, prices: { ...q.prices, [i.id]: value } })} /></td><td>{q.prices[i.id] == null ? 'Pendente' : decimal2(i.quantity * q.prices[i.id]!)}</td></tr>)}</tbody></table></div>
           {q.automaticPrices === false && <p>Preços editados manualmente.</p>}
