@@ -1,3 +1,5 @@
+import { quoteSignatureCompany } from './igeveQuoteSignature.ts';
+import type { QuoteSignatures } from './igeveQuoteSignature.ts';
 import { createRioNutriPdf } from './igeveRioNutriPdf.ts';
 import { jsPDF } from 'jspdf';
 import { createQuotationPdf } from './igeveQuotePdf.ts';
@@ -7,13 +9,15 @@ import type { DocumentSupplier, NfeDocument, Quotation } from './igeveDocuments.
 
 const date = (s: string) => s.split('-').reverse().join('/');
 const rgb = (hex: string): [number, number, number] => [parseInt(hex.slice(1, 3), 16), parseInt(hex.slice(3, 5), 16), parseInt(hex.slice(5, 7), 16)];
-export function createIgeveDocumentPdf(doc: NfeDocument, supplier: DocumentSupplier, kind: 'quote' | 'delivery', quotation?: Quotation) {
+export function createIgeveDocumentPdf(doc: NfeDocument, supplier: DocumentSupplier, kind: 'quote' | 'delivery', quotation?: Quotation, signatures?: QuoteSignatures) {
   const error = validateNfeDocument({ ...doc, quotations: quotation ? [quotation] : doc.quotations }, [supplier], kind);
   if (error) throw new Error(error);
   if (kind === 'quote' && (!quotation || quotation.supplierId !== supplier.id)) throw new Error('Cotação não corresponde ao fornecedor.');
   if (!/^#[0-9a-f]{6}$/i.test(supplier.color)) throw new Error('Confira a cor do modelo.');
-  if (supplier.layout === 'rionutri') return { pdf: createRioNutriPdf(doc, supplier, kind === 'quote' ? quotation : undefined), filename: documentFilename(supplier, doc, kind) };
-  if (kind === 'quote') return { pdf: createQuotationPdf(doc, supplier, quotation!), filename: documentFilename(supplier, doc, kind) };
+  const company = kind === 'quote' ? quoteSignatureCompany(supplier.cnpj) : undefined;
+  const signature = company ? signatures?.[company] : undefined;
+  if (supplier.layout === 'rionutri') return { pdf: createRioNutriPdf(doc, supplier, kind === 'quote' ? quotation : undefined, signature), filename: documentFilename(supplier, doc, kind) };
+  if (kind === 'quote') return { pdf: createQuotationPdf(doc, supplier, quotation!, signature), filename: documentFilename(supplier, doc, kind) };
   const pdf = new jsPDF({ unit: 'mm', format: 'a4' });
   const color = rgb(supplier.color);
   const left = 14, width = 182;

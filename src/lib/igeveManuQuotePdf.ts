@@ -3,9 +3,10 @@ import { autoTable } from 'jspdf-autotable';
 import type { UserOptions } from 'jspdf-autotable';
 import { decimal2, digits, documentReference, documentTotal } from './igeveDocuments.ts';
 import type { DocumentSupplier, NfeDocument, Quotation } from './igeveDocuments.ts';
+import { addQuoteSignature } from './igeveQuoteSignature.ts';
 import { MANU_QUOTE_LOGO } from './igeveManuLogo.ts';
 
-export function createManuQuotationPdf(doc: NfeDocument, supplier: DocumentSupplier, quotation: Quotation) {
+export function createManuQuotationPdf(doc: NfeDocument, supplier: DocumentSupplier, quotation: Quotation, signature?: string) {
   const pdf = new jsPDF({ unit: 'mm', format: 'a4' });
   const left = 16, width = 178;
   const accent = [1, 3, 5].map(i => parseInt(supplier.color.slice(i, i + 2), 16)) as [number, number, number];
@@ -68,9 +69,14 @@ export function createManuQuotationPdf(doc: NfeDocument, supplier: DocumentSuppl
     y += 8; pdf.setFont('helvetica', 'normal'); pdf.setFontSize(8);
     for (const line of pdf.splitTextToSize(`Observações: ${notes}`, width) as string[]) { space(6); pdf.text(line, left, y); y += 4; }
   }
-  space(30); y += 16; pdf.setFont('helvetica', 'normal'); pdf.setFontSize(9);
-  pdf.setDrawColor(70, 70, 70); pdf.line(95, y, 190, y);
-  pdf.text('Assinatura do representante autorizado', 142.5, y + 5, { align: 'center' });
+  space(signature ? 45 : 30); y += 16; pdf.setFont('helvetica', 'normal'); pdf.setFontSize(9);
+  if (signature) {
+    addQuoteSignature(pdf, signature, 142.5, y - 5);
+    y += 20;
+  } else {
+    pdf.setDrawColor(70, 70, 70); pdf.line(95, y, 190, y);
+  }
+  pdf.text(signature ? 'Imagem de assinatura do representante' : 'Assinatura do representante autorizado', 142.5, y + 5, { align: 'center' });
   for (let p = 1; p <= pdf.getNumberOfPages(); p++) {
     pdf.setPage(p);
     pdf.setTextColor(...accent); pdf.setFont('times', 'bolditalic'); pdf.setFontSize(p > 1 ? 10 : 9);
