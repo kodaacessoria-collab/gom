@@ -1,7 +1,7 @@
 import { jsPDF } from 'jspdf';
 import { autoTable } from 'jspdf-autotable';
 import type { UserOptions } from 'jspdf-autotable';
-import { decimal2, digits, documentTotal } from './igeveDocuments.ts';
+import { decimal2, digits, documentReference, documentTotal } from './igeveDocuments.ts';
 import type { DocumentSupplier, NfeDocument, Quotation } from './igeveDocuments.ts';
 import { QUOTE_LOGOS } from './igeveQuoteLogos.ts';
 import { createManuQuotationPdf } from './igeveManuQuotePdf.ts';
@@ -11,6 +11,7 @@ export function createQuotationPdf(doc: NfeDocument, supplier: DocumentSupplier,
   if (supplier.layout === 'manu') return createManuQuotationPdf(doc, supplier, quotation);
   const pdf = new jsPDF({ unit: 'mm', format: 'a4' });
   const layout = supplier.layout;
+  const title = ['ORÇAMENTO', documentReference(doc.number)].filter(Boolean).join(' - ');
   const color = (hex: string): [number, number, number] => [1, 3, 5].map(i => parseInt(hex.slice(i, i + 2), 16)) as [number, number, number];
   const accent = layout === 'lm' ? color('#173e72') : color(supplier.color);
   const left = 14, width = 182;
@@ -42,7 +43,7 @@ export function createQuotationPdf(doc: NfeDocument, supplier: DocumentSupplier,
   if (doc.consumption) client.push(['CONSUMO', doc.consumption]);
 
   if (layout === 'caninde') {
-    pdf.setTextColor(...accent); text('ORÇAMENTO', 16, true); y += 3;
+    pdf.setTextColor(...accent); text(title, 16, true); y += 3;
     table({ theme: 'striped', body: [ ['Fornecedor', supplier.name], ['CNPJ do fornecedor', supplier.cnpj], ['Endereço do fornecedor', supplier.address], ['Data da cotação', date], ...client ],
       columnStyles: { 0: { cellWidth: 40, fillColor: [233, 240, 246] }, 1: { cellWidth: 142 } } });
     text('Itens do pedido', 10);
@@ -54,7 +55,7 @@ export function createQuotationPdf(doc: NfeDocument, supplier: DocumentSupplier,
     table({ theme: 'plain', body: [
       ['Cliente', doc.recipient, 'CNPJ', doc.recipientCnpj],
       ['Endereço', doc.address || '-', 'Unidade', doc.unitName],
-      ['Proposta', `ORÇAMENTO - ${date}`, 'Qtde. cestas', basket ? decimal2(doc.baskets) : '-'],
+      ['Proposta', `${title} - ${date}`, 'Qtde. cestas', basket ? decimal2(doc.baskets) : '-'],
       ['Proposta válida', `${supplier.validity} dias`, basket ? 'Vlr. por cesta' : 'Vlr. total', `R$ ${decimal2(basket ? total / doc.baskets : total)}`],
       ['Pagamento', supplier.payment, 'Vlr. total', `R$ ${decimal2(total)}`],
       ...(doc.consumption ? [['Consumo', doc.consumption, '', '']] : []),
@@ -62,7 +63,7 @@ export function createQuotationPdf(doc: NfeDocument, supplier: DocumentSupplier,
   } else if (layout === 'red') {
     addLogo(left, 14, 26, 22); y = 20;
     text(supplier.name, 13, true, logo ? 47 : left, logo ? 128 : 164); y = Math.max(y, 43);
-    text('ORÇAMENTO', 12, true);
+    text(title, 12, true);
     text(`DATA: ${date}     VALIDADE: ${supplier.validity} dias`, 9);
     table({ theme: 'grid', body: client, styles: { fontSize: 8, cellPadding: 2.5, lineColor: [40, 40, 40], lineWidth: .2 }, columnStyles: { 0: { cellWidth: 25, fontStyle: 'bold' }, 1: { cellWidth: 157 } } });
     text('Proposta comercial, contendo os preços e condições para fornecimento dos itens abaixo.', 8, false, 105, width, 'center');
@@ -73,7 +74,7 @@ export function createQuotationPdf(doc: NfeDocument, supplier: DocumentSupplier,
     text(`CNPJ: ${supplier.cnpj}`, 8, false, left, logo ? 156 : width);
     if (supplier.address) text(supplier.address, 8);
     pdf.setDrawColor(200, 212, 230); pdf.line(left, y, 196, y); y += 16;
-    pdf.setTextColor(...accent); text('ORÇAMENTO', 24, true); y += 5;
+    pdf.setTextColor(...accent); text(title, 24, true); y += 5;
     pdf.setTextColor(30, 40, 52); text('DADOS DO CLIENTE', 10, true);
     table({ theme: 'plain', body: client, columnStyles: { 0: { cellWidth: 28, fontStyle: 'bold' }, 1: { cellWidth: 154 } } });
     text(`Data: ${date}`, 9);
@@ -84,13 +85,13 @@ export function createQuotationPdf(doc: NfeDocument, supplier: DocumentSupplier,
     if (supplier.address) text(supplier.address, 8, false, 105, width, 'center');
     y += 4; text(`À ${doc.recipient}`, 10, true);
     table({ theme: 'plain', body: client.slice(1), columnStyles: { 0: { cellWidth: 28, fontStyle: 'bold' }, 1: { cellWidth: 154 } } });
-    text('ORÇAMENTO', 16, true, 105, width, 'center');
+    text(title, 16, true, 105, width, 'center');
     text(`Data: ${date}`, 9);
   } else {
     addLogo(left, 12, 35, 16); if (logo) y = 35;
     text(supplier.name, 14, true); text(`CNPJ: ${supplier.cnpj}`, 9);
     if (supplier.address) text(supplier.address, 8);
-    text('ORÇAMENTO', 15, true);
+    text(title, 15, true);
     text(supplier.validity ? `Data: ${date} | Validade: ${supplier.validity} dias` : `Data: ${date}`, 9);
     table({ theme: 'plain', body: client, columnStyles: { 0: { cellWidth: 28, fontStyle: 'bold' }, 1: { cellWidth: 154 } } });
   }
@@ -149,7 +150,7 @@ export function createQuotationPdf(doc: NfeDocument, supplier: DocumentSupplier,
       pdf.setFillColor(221, 0, 58); pdf.triangle(0, 267, 0, 297, 39, 297, 'F');
     }
     pdf.setFont('helvetica', 'normal'); pdf.setFontSize(8); pdf.setTextColor(80, 80, 80);
-    if (p > 1) pdf.text(pdf.splitTextToSize(`${supplier.name} | ORÇAMENTO`, layout === 'red' ? 145 : width), left, 16);
+    if (p > 1) pdf.text(pdf.splitTextToSize(`${supplier.name} | ${title}`, layout === 'red' ? 145 : width), left, 16);
     pdf.setDrawColor(210, 210, 210); pdf.line(left, 272, 196, 272);
     const footer = [supplier.contact, layout === 'red' ? supplier.address : '', `CNPJ: ${supplier.cnpj} | ${doc.unitName}`].filter(Boolean).join('\n');
     pdf.setFontSize(7); pdf.text(pdf.splitTextToSize(footer, 163), layout === 'red' ? 32 : left, 277);

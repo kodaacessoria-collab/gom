@@ -167,8 +167,8 @@ assert.ok(validateNfeDocument({ ...doc, quotations: [{ ...doc.quotations[0], pri
 assert.ok(validateNfeDocument({ ...doc, items: [{ ...doc.items[0], quantity: .001 }] }, DEFAULT_DOCUMENT_SUPPLIERS, 'quote'));
 assert.ok(validateNfeDocument({ ...doc, deliveryDate: '2026-02-30' }, DEFAULT_DOCUMENT_SUPPLIERS, 'delivery'));
 assert.equal(documentTotal(doc.items), 56.68);
-assert.equal(documentFilename(DEFAULT_DOCUMENT_SUPPLIERS[0], doc, 'quote'), 'CD-ORÇAMENTO-GARCA_TORTA.pdf');
-assert.equal(documentFilename(DEFAULT_DOCUMENT_SUPPLIERS[0], { ...doc, number: '../../658' }, 'delivery'), 'CD-ROMANEIO_2026-11-06-GARCA_TORTA.pdf');
+assert.equal(documentFilename(DEFAULT_DOCUMENT_SUPPLIERS[0], doc, 'quote'), 'CD-ORÇAMENTO-00658-GARCA_TORTA.pdf');
+assert.equal(documentFilename(DEFAULT_DOCUMENT_SUPPLIERS[0], { ...doc, number: '../../658' }, 'delivery'), 'CD-ROMANEIO_2026-11-06-00658-GARCA_TORTA.pdf');
 assert.deepEqual(doc, snapshot);
 
 const mirrorSupplier = DEFAULT_DOCUMENT_SUPPLIERS[0];
@@ -181,18 +181,20 @@ assert.match(validateNfeDocument({ ...mirrorDoc, items: [{ ...doc.items[0], pric
 const mirrorPdf = createIgeveDocumentPdf(mirrorDoc, mirrorSupplier, 'quote', mirror).pdf.output();
 assert.match(mirrorPdf, /Valor unitário/);
 assert.match(mirrorPdf, /56,68/);
-assert.doesNotMatch(mirrorPdf, /NF-e|927461805/);
+assert.match(mirrorPdf, /00927461805/);
+assert.doesNotMatch(mirrorPdf, /NF-e/);
 
 mkdirSync('tmp/pdfs/igeve-documents', { recursive: true });
 for (const supplier of DEFAULT_DOCUMENT_SUPPLIERS) {
   const s = supplier.cnpj ? supplier : { ...supplier, cnpj: '66.321.676/0001-95' };
   const q = { ...quote(s.id), reference: 'NF-e 927461805' };
-  const sample = { ...doc, number: '927461805', quotations: [q], deliverySupplierId: s.id };
+  const sample = { ...doc, number: '000000043', quotations: [q], deliverySupplierId: s.id };
   for (const kind of ['quote', 'delivery']) {
     const out = createIgeveDocumentPdf(sample, s, kind, q);
     assert.ok(out.pdf.getNumberOfPages() >= 1);
-    assert.doesNotMatch(out.pdf.output(), /NF-e|927461805/, `${s.layout}: ${kind} sem referência à nota de origem`);
-    assert.doesNotMatch(out.filename, /927461805/);
+    assert.match(out.pdf.output(), /(?<!\d)0043(?!\d)/, `${s.layout}: ${kind} com o número formatado`);
+    assert.doesNotMatch(out.pdf.output(), /NF-e/);
+    assert.match(out.filename, /-0043-/);
     writeFileSync(`tmp/pdfs/igeve-documents/${s.id}-${kind}.pdf`, new Uint8Array(out.pdf.output('arraybuffer')));
   }
 }
@@ -213,7 +215,7 @@ const long = { ...structuredClone(doc), number: '927461805', notes: doc.notes + 
 long.quotations = [{ ...quote('caninde'), prices: Object.fromEntries(long.items.map(i => [i.id, i.price])) }];
 const longPdf = createIgeveDocumentPdf(long, DEFAULT_DOCUMENT_SUPPLIERS[0], 'quote', long.quotations[0]);
 assert.ok(longPdf.pdf.getNumberOfPages() > 3);
-assert.equal(longPdf.pdf.output().includes('927461805'), false, 'Cabeçalhos e rodapés de continuação não imprimem o número da nota');
+assert.match(longPdf.pdf.output(), /00927461805/);
 writeFileSync('tmp/pdfs/igeve-documents/long-quote.pdf', new Uint8Array(longPdf.pdf.output('arraybuffer')));
 for (const supplier of DEFAULT_DOCUMENT_SUPPLIERS) {
   const s = supplier.cnpj ? supplier : { ...supplier, cnpj: '66.036.822/0001-30' };
@@ -222,7 +224,8 @@ for (const supplier of DEFAULT_DOCUMENT_SUPPLIERS) {
   for (const kind of ['quote', 'delivery']) {
     const pdf = createIgeveDocumentPdf(sample, s, kind, q).pdf;
     assert.ok(pdf.getNumberOfPages() > 3);
-    assert.doesNotMatch(pdf.output(), /NF-e|927461805/, `${s.layout}: ${kind} sem referência à nota nas páginas de continuação`);
+    assert.match(pdf.output(), /00927461805/);
+    assert.doesNotMatch(pdf.output(), /NF-e/);
     writeFileSync(`tmp/pdfs/igeve-documents/long-${s.id}-${kind}.pdf`, new Uint8Array(pdf.output('arraybuffer')));
   }
 }

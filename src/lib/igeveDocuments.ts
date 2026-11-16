@@ -45,11 +45,17 @@ export function validCnpj(value: string) {
 export function unitsForCnpj(cnpj: string, units: IgeveUnit[]) {
   return digits(cnpj).length === 14 ? units.filter(unit => digits(unit.cnpj) === digits(cnpj)) : [];
 }
+export function documentReference(number: string) {
+  const normalized = digits(number).replace(/^0+(?=\d)/, '');
+  return normalized ? `00${normalized}` : '';
+}
+
 export function documentFilename(supplier: DocumentSupplier, doc: NfeDocument, kind: 'quote' | 'delivery') {
   const safe = (s: string) => s.normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-zA-Z0-9_-]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 100);
   const words = safe(supplier.name).split('_').filter(Boolean);
   const initials = supplier.layout === 'manu' ? 'MA' : words.length > 1 ? words.slice(0, 2).map(w => w[0]).join('') : words[0]?.slice(0, 2);
-  return `${(initials || 'FO').toUpperCase()}-${kind === 'quote' ? 'ORÇAMENTO' : `ROMANEIO_${safe(doc.deliveryDate)}`}-${safe(doc.unitName)}.pdf`;
+  const name = kind === 'quote' ? 'ORÇAMENTO' : `ROMANEIO_${safe(doc.deliveryDate)}`;
+  return [`${(initials || 'FO').toUpperCase()}-${name}`, documentReference(doc.number), safe(doc.unitName)].filter(Boolean).join('-') + '.pdf';
 }
 export function documentTotal(items: NfeItem[], prices?: Record<string, number | null>) {
   return items.reduce((sum, item) => sum + Math.round(round2(item.quantity * (prices ? prices[item.id] ?? 0 : item.price)) * 100), 0) / 100;

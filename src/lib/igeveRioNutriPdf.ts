@@ -1,13 +1,13 @@
 import { jsPDF } from 'jspdf';
 import { autoTable } from 'jspdf-autotable';
-import { decimal2, digits, documentTotal } from './igeveDocuments.ts';
+import { decimal2, digits, documentReference, documentTotal } from './igeveDocuments.ts';
 import type { DocumentSupplier, NfeDocument, Quotation } from './igeveDocuments.ts';
 import { RIO_NUTRI_LOGO } from './igeveRioNutriLogo.ts';
 
 export function createRioNutriPdf(doc: NfeDocument, supplier: DocumentSupplier, quotation?: Quotation) {
   const pdf = new jsPDF();
   const quote = !!quotation;
-  const title = quote ? 'ORÇAMENTO' : 'ROMANEIO DE ENTREGA';
+  const title = [quote ? 'ORÇAMENTO' : 'ROMANEIO DE ENTREGA', documentReference(doc.number)].filter(Boolean).join(' - ');
   const accent: [number, number, number] = [0, 135, 119];
   const navy: [number, number, number] = [18, 47, 80];
   let y = 16;
