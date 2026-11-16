@@ -29,9 +29,10 @@ export function createRioNutriPdf(doc: NfeDocument, supplier: DocumentSupplier, 
   text(title, 20, true);
   text(quote ? `Data da cotação: ${quotation.date.split('-').reverse().join('/')}` : `Data da entrega: ${doc.deliveryDate.split('-').reverse().join('/')}`);
   if (doc.consumption) text(`Referência: ${doc.consumption}`);
+  const recipient = `DESTINATÁRIO\n${doc.recipient}\nCNPJ: ${doc.recipientCnpj}`;
   autoTable(pdf, { startY: y, margin: { left: 15, right: 15, top: 30, bottom: 25 }, theme: 'plain',
-    body: [[`DESTINATÁRIO\n${doc.recipient}\nCNPJ: ${doc.recipientCnpj}\n${doc.unitName}`, `ENDEREÇO DO DESTINATÁRIO\n${doc.address || 'A preencher'}`]],
-    styles: { fontSize: 9, cellPadding: 4, textColor: navy, fillColor: [238, 245, 245], overflow: 'linebreak' }, columnStyles: { 0: { cellWidth: 105 }, 1: { cellWidth: 75 } } });
+    body: [quote ? [recipient] : [`${recipient}\n${doc.unitName}`, `ENDEREÇO DO DESTINATÁRIO\n${doc.address || 'A preencher'}`]],
+    styles: { fontSize: 9, cellPadding: 4, textColor: navy, fillColor: [238, 245, 245], overflow: 'linebreak' }, columnStyles: quote ? { 0: { cellWidth: 180 } } : { 0: { cellWidth: 105 }, 1: { cellWidth: 75 } } });
   y = (pdf as jsPDF & { lastAutoTable: { finalY: number } }).lastAutoTable.finalY + 6;
   const ownCodes = quote && digits(doc.issuerCnpj).length === 14 && digits(doc.issuerCnpj) === digits(supplier.cnpj);
   autoTable(pdf, { startY: y, margin: { left: 15, right: 15, top: 30, bottom: 25 },

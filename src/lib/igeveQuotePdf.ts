@@ -44,7 +44,7 @@ export function createQuotationPdf(doc: NfeDocument, supplier: DocumentSupplier,
     const ratio = Math.min(maxWidth / props.width, maxHeight / props.height);
     pdf.addImage(logo, props.fileType, x, top, props.width * ratio, props.height * ratio);
   };
-  const client = [ ['CLIENTE', doc.recipient], ['CNPJ', doc.recipientCnpj], ['UNIDADE', doc.unitName], ['ENDEREÇO', doc.address || '________________________________________________'] ];
+  const client = [ ['CLIENTE', doc.recipient], ['CNPJ', doc.recipientCnpj] ];
   if (doc.consumption) client.push(['CONSUMO', doc.consumption]);
 
   if (pageLayout === 'caninde') {
@@ -59,7 +59,6 @@ export function createQuotationPdf(doc: NfeDocument, supplier: DocumentSupplier,
     if (supplier.address) text(supplier.address, 8);
     table({ theme: 'plain', body: [
       ['Cliente', doc.recipient, 'CNPJ', doc.recipientCnpj],
-      ['Endereço', doc.address || '-', 'Unidade', doc.unitName],
       ['Proposta', `${title} - ${date}`, 'Qtde. cestas', basket ? decimal2(doc.baskets) : '-'],
       ['Proposta válida', `${supplier.validity} dias`, basket ? 'Vlr. por cesta' : 'Vlr. total', `R$ ${decimal2(basket ? total / doc.baskets : total)}`],
       ['Pagamento', supplier.payment, 'Vlr. total', `R$ ${decimal2(total)}`],
@@ -176,7 +175,7 @@ export function createQuotationPdf(doc: NfeDocument, supplier: DocumentSupplier,
       }
       pdf.line(left, 272, right, 272); pdf.line(left, 274, right, 274);
       pdf.setFontSize(7);
-      footerText([taxId, supplier.address, supplier.contact, doc.unitName].filter(Boolean).join('\n'), 105, 279, width - 24, 'center');
+      footerText([taxId, supplier.address, supplier.contact].filter(Boolean).join('\n'), 105, 279, width - 24, 'center');
       pdf.text(pagination, right, 291, { align: 'right' });
     } else if (pageLayout === 'red') {
       pdf.setFillColor(30, 32, 32); pdf.triangle(163, 0, 210, 0, 210, 32, 'F');
@@ -191,7 +190,6 @@ export function createQuotationPdf(doc: NfeDocument, supplier: DocumentSupplier,
       pdf.setFillColor(...pageAccent); pdf.triangle(0, 273, 0, 297, 22, 297, 'F');
       pdf.setFont('helvetica', 'normal'); pdf.setFontSize(7); pdf.setTextColor(255, 255, 255);
       footerText([taxId, supplier.address, supplier.contact].filter(Boolean).join('\n'), 25, 279, 111);
-      footerText(doc.unitName, right, 279, 55, 'right');
       pdf.setFont('helvetica', 'bold'); pdf.text(pagination, right, 292, { align: 'right' });
     } else if (pageLayout === 'nobre') {
       pdf.rect(left, 7, 36, 1.4, 'F');
@@ -204,7 +202,6 @@ export function createQuotationPdf(doc: NfeDocument, supplier: DocumentSupplier,
       pdf.rect(left, 272, width, 1.2, 'F');
       pdf.setTextColor(25, 65, 60); pdf.setFontSize(7); pdf.setFont('helvetica', 'normal');
       footerText([taxId, supplier.contact].filter(Boolean).join('\n'), left, 279, 94);
-      footerText(doc.unitName, right, 279, 81, 'right');
       pdf.text(pagination, right, 291, { align: 'right' });
     } else if (pageLayout === 'lm') {
       pdf.rect(0, 0, 210, 6, 'F');
@@ -216,7 +213,7 @@ export function createQuotationPdf(doc: NfeDocument, supplier: DocumentSupplier,
       }
       pdf.roundedRect(174, 274, 22, 14, 2, 2, 'F');
       pdf.setFontSize(7);
-      footerText([taxId, doc.unitName, supplier.contact].filter(Boolean).join('\n'), left, 278, 151);
+      footerText([taxId, supplier.contact].filter(Boolean).join('\n'), left, 278, 151);
       pdf.setTextColor(255, 255, 255); pdf.text(pagination, 185, 282, { align: 'center' });
     } else if (pageLayout === 'caninde') {
       if (p > 1) {
@@ -227,7 +224,7 @@ export function createQuotationPdf(doc: NfeDocument, supplier: DocumentSupplier,
       }
       pdf.roundedRect(left, 273, width, 19, 2, 2);
       pdf.setFontSize(7);
-      footerText([taxId, doc.unitName, supplier.contact].filter(Boolean).join('\n'), 19, 279, 155);
+      footerText([taxId, supplier.contact].filter(Boolean).join('\n'), 19, 279, 155);
       pdf.text(pagination, 191, 287, { align: 'right' });
     } else {
       if (p > 1) {
@@ -236,7 +233,7 @@ export function createQuotationPdf(doc: NfeDocument, supplier: DocumentSupplier,
       }
       pdf.line(left, 273, right, 273);
       pdf.setFontSize(7); pdf.text(pagination, left, 280);
-      footerText([taxId, doc.unitName, supplier.contact].filter(Boolean).join('\n'), right, 280, width - 20, 'right');
+      footerText([taxId, supplier.contact].filter(Boolean).join('\n'), right, 280, width - 20, 'right');
     }
   }
   return pdf;
