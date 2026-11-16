@@ -3,11 +3,13 @@ import type { FormEvent } from 'react';
 import { supabase } from '../lib/supabase';
 import { DEFAULT_DOCUMENT_SUPPLIERS, DEFAULT_IGEVE_UNITS, DOCUMENT_PREFIX, SUPPLIER_PREFIX, UNIT_PREFIX, createAutomaticQuotation, createIssuerMirrorQuotation, quotationPrices, decimal2, digits, documentToday, documentTotal, emptyNfeDocument, round2, unitsForCnpj, validCnpj, validateNfeDocument } from '../lib/igeveDocuments';
 import type { DocumentLayout, DocumentSupplier, IgeveUnit, NfeDocument, NfeItem, Quotation } from '../lib/igeveDocuments';
+import { quoteSignatureCompanies, quoteSignatureCompany } from '../lib/igeveQuoteSignature';
+import type { QuoteSignatureCompany, QuoteSignatures } from '../lib/igeveQuoteSignature';
 import { importNfePdf } from '../lib/nfePdfImport';
 import './IgeveDocuments.css';
 
 interface Stored<T> { value: T; version: string }
-interface DocumentRecord { document: NfeDocument; savedAt: string; generatedAt?: string; generatedKind?: 'quote' | 'delivery'; generatedDocument?: NfeDocument; suppliers?: DocumentSupplier[] }
+interface DocumentRecord { document: NfeDocument; savedAt: string; generatedAt?: string; generatedKind?: 'quote' | 'delivery'; generatedDocument?: NfeDocument; suppliers?: DocumentSupplier[]; signatureHashes?: Record<string, string> }
 async function readRows<T>(prefix: string): Promise<Stored<T>[]> {
   const rows: Stored<T>[] = [];
   for (let offset = 0; ; offset += 100) {
@@ -33,6 +35,49 @@ async function imageData(file: File) {
   if (file.size > 512 * 1024 || !['image/png', 'image/jpeg'].includes(file.type)) throw new Error('Use um logotipo PNG ou JPG de até 512 KB.');
   return await new Promise<string>((resolve, reject) => { const reader = new FileReader(); reader.onload = () => resolve(String(reader.result)); reader.onerror = () => reject(new Error('Não foi possível ler o logotipo.')); reader.readAsDataURL(file); });
 }
+const signatureStorageKey = 'igeve-quote-signatures';
+const signatureEntries = Object.entries(quoteSignatureCompanies) as [QuoteSignatureCompany, string][];
+const isSignatureImage = (value: unknown): value is string => typeof value === 'string' && /^data:image\/(png|jpeg);base64,/.test(value);
+function readQuoteSignatures(): QuoteSignatures {
+  try {
+    const stored = JSON.parse(localStorage.getItem(signatureStorageKey) || '{}');
+    return Object.fromEntries(signatureEntries.filter(([key]) => isSignatureImage(stored?.[key])).map(([key]) => [key, stored[key]]));
+  } catch {
+    return {};
+  }
+}
+async function signatureHash(image: string) {
+  const hash = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(image));
+  return Array.from(new Uint8Array(hash), byte => byte.toString(16).padStart(2, '0')).join('');
+}
+async function readSignatureImage(file: File) {
+  if (file.size > 512 * 1024 || !['image/png', 'image/jpeg'].includes(file.type)) {
+    throw new Error('Use uma imagem PNG ou JPG de até 512 KB.');
+  }
+  const bitmap = await createImageBitmap(file).catch(() => { throw new Error('Não foi possível abrir a imagem.'); });
+  bitmap.close();
+  return imageData(file);
+}
+async function imagesFromSignatureDocx(file: File) {
+  if (!file.name.toLowerCase().endsWith('.docx') || file.size > 5 * 1024 * 1024) {
+    throw new Error('Use um arquivo Word (.docx) de até 5 MB.');
+  }
+  const { unzipSync } = await import('fflate');
+  const pattern = /^word\/media\/[^/]+\.(png|jpe?g)$/i;
+  let entries: ReturnType<typeof unzipSync>;
+  let count = 0;
+  try {
+    entries = unzipSync(new Uint8Array(await file.arrayBuffer()), {
+      filter: entry => pattern.test(entry.name) && entry.originalSize <= 512 * 1024 && ++count <= 16,
+    });
+  } catch {
+    throw new Error('Não foi possível ler o arquivo Word.');
+  }
+  const images = await Promise.all(Object.entries(entries).map(([name, bytes]) =>
+    readSignatureImage(new File([Uint8Array.from(bytes)], name, { type: /\.png$/i.test(name) ? 'image/png' : 'image/jpeg' }))));
+  if (!images.length) throw new Error('O Word não contém imagens PNG ou JPG de até 512 KB.');
+  return images;
+}
 const blankSupplier = (id: string = crypto.randomUUID()): DocumentSupplier => ({ id, name: '', cnpj: '', address: '', contact: '', layout: 'generic', color: '#203b50', payment: 'PIX / à vista', validity: 90, footer: '' });
 const newItem = (): NfeItem => ({ id: crypto.randomUUID(), code: '', product: '', unit: 'UN', quantity: 1, price: 0, brand: '', notes: '' });
 const layoutNames: Record<DocumentLayout, string> = { caninde: 'Canindé - dados em quadro / cestas', nobre: 'Nobre - destaque em laranja / marcas', om: 'OM Logística - cabeçalho central', lm: 'LM - tabela comercial', red: 'RED - proposta comercial', delicias: 'Delícias - entrega simplificada', manu: 'Manu Alimentos - cabeçalho azul / quadro comercial', rionutri: 'Rio Nutri - cabeçalho e conferência de entrega', generic: 'Padrão personalizado' };
@@ -48,6 +93,8 @@ function DecimalInput({ value, onChange, label, min = 0 }: { value: number | nul
 
 export default function IgeveDocuments() {
   const [suppliers, setSuppliers] = useState<DocumentSupplier[]>(DEFAULT_DOCUMENT_SUPPLIERS);
+  const [quoteSignatures, setQuoteSignatures] = useState(readQuoteSignatures);
+  const [signatureImages, setSignatureImages] = useState<string[]>([]);
   const [units, setUnits] = useState<IgeveUnit[]>(DEFAULT_IGEVE_UNITS);
   const [supplierRows, setSupplierRows] = useState<Stored<DocumentSupplier>[]>([]);
   const [unitRows, setUnitRows] = useState<Stored<IgeveUnit>[]>([]);
@@ -119,7 +166,7 @@ export default function IgeveDocuments() {
     setVersion(existing?.version); setSource(file); setWarnings(result.warnings); setDirty(true); setMode('editor');
     setMessage('PDF importado. Confira todos os campos e os itens com o original.');
   }
-  async function save(kind?: 'quote' | 'delivery', selected: DocumentSupplier[] = [], generatedDocument = draft) {
+  async function save(kind?: 'quote' | 'delivery', selected: DocumentSupplier[] = [], generatedDocument = draft, signatureHashes?: Record<string, string>) {
     if (!ready) throw new Error('Aguarde o carregamento ou atualize os documentos.');
     if (!currentUnit || digits(currentUnit.cnpj) !== digits(draft.recipientCnpj)) throw new Error('A unidade selecionada deve corresponder ao CNPJ do destinatário.');
     const error = validateNfeDocument(kind ? generatedDocument : draft, selected, kind);
@@ -127,7 +174,7 @@ export default function IgeveDocuments() {
     const value: DocumentRecord = {
       ...records.find(r => r.value.document.id === draft.id)?.value,
       document: structuredClone(draft), savedAt: new Date().toISOString(),
-      ...(kind ? { generatedAt: new Date().toISOString(), generatedKind: kind, generatedDocument: structuredClone(generatedDocument), suppliers: selected.map(s => ({ ...s, referencePdf: undefined })) } : {}),
+      ...(kind ? { generatedAt: new Date().toISOString(), generatedKind: kind, generatedDocument: structuredClone(generatedDocument), signatureHashes, suppliers: selected.map(s => ({ ...s, referencePdf: undefined })) } : {}),
     };
     const nextVersion = await writeRow(draft.id, value, version);
     setVersion(nextVersion); setRecords(rows => [{ value, version: nextVersion }, ...rows.filter(r => r.value.document.id !== draft.id)]); setDirty(false);
@@ -142,7 +189,7 @@ export default function IgeveDocuments() {
     if (!currentUnit || digits(currentUnit.cnpj) !== digits(outputDoc.recipientCnpj)) throw new Error('A unidade selecionada deve corresponder ao CNPJ do destinatário.');
     const { createIgeveDocumentPdf } = await import('../lib/igeveDocumentPdf');
     const selected = kind === 'delivery' ? [suppliers.find(s => s.id === draft.deliverySupplierId)!] : availableSuppliers.filter(s => outputDoc.quotations.some(q => q.supplierId === s.id));
-    const outputs = selected.map(s => createIgeveDocumentPdf(outputDoc, s, kind, outputDoc.quotations.find(q => q.supplierId === s.id)));
+    const outputs = selected.map(s => createIgeveDocumentPdf(outputDoc, s, kind, outputDoc.quotations.find(q => q.supplierId === s.id), quoteSignatures));
     if (previewOnly) { setPreview({ url: outputs[0].pdf.output('bloburl').toString(), name: outputs[0].filename }); return; }
     // Generate locally first. A failure to archive must not prevent the download.
     let blob: Blob;
@@ -161,7 +208,17 @@ export default function IgeveDocuments() {
     downloadBlob(blob, filename);
     setMessage('Download gerado. Salvando dados no histórico...');
     let archiveError = '';
-    try { await save(kind, selected, outputDoc); }
+    try {
+      const signatureHashes: Record<string, string> = {};
+      if (kind === 'quote') {
+        for (const supplier of selected) {
+          const company = quoteSignatureCompany(supplier.cnpj);
+          const signature = company && quoteSignatures[company];
+          if (signature) signatureHashes[supplier.id] = await signatureHash(signature);
+        }
+      }
+      await save(kind, selected, outputDoc, Object.keys(signatureHashes).length ? signatureHashes : undefined);
+    }
     catch (error) { archiveError = error instanceof Error ? error.message : 'Não foi possível salvar no histórico.'; }
     if (archiveError) {
       setMessageIsError(true);
@@ -174,7 +231,19 @@ export default function IgeveDocuments() {
     if (!record.generatedDocument || !record.generatedKind || !record.suppliers?.length) throw new Error('Não há geração arquivada neste registro.');
     const { createIgeveDocumentPdf } = await import('../lib/igeveDocumentPdf');
     const doc = record.generatedDocument;
-    const outputs = record.suppliers.map(s => createIgeveDocumentPdf(doc, s, record.generatedKind!, doc.quotations.find(q => q.supplierId === s.id)));
+    const outputs = await Promise.all(record.suppliers.map(async supplier => {
+      let archivedSignatures: QuoteSignatures | undefined;
+      const hash = record.generatedKind === 'quote' && record.signatureHashes?.[supplier.id];
+      if (hash) {
+        const company = quoteSignatureCompany(supplier.cnpj);
+        const signature = company && quoteSignatures[company];
+        if (!company || !signature || await signatureHash(signature) !== hash) {
+          throw new Error(`A assinatura usada na última geração de ${supplier.name} não está cadastrada neste navegador. Importe a mesma imagem ou gere um novo orçamento.`);
+        }
+        archivedSignatures = { [company]: signature };
+      }
+      return createIgeveDocumentPdf(doc, supplier, record.generatedKind!, doc.quotations.find(q => q.supplierId === supplier.id), archivedSignatures);
+    }));
     if (outputs.length === 1) outputs[0].pdf.save(outputs[0].filename);
     else {
       const { zipSync } = await import('fflate');
@@ -216,6 +285,14 @@ export default function IgeveDocuments() {
   function openRecord(row: Stored<DocumentRecord>) {
     if (!discard()) return;
     setDraft(structuredClone(row.value.document)); setVersion(row.version); setDirty(false); setSource(null); setWarnings([]); setMode('editor');
+  }
+  function saveQuoteSignature(company: QuoteSignatureCompany, image?: string) {
+    const next = { ...quoteSignatures };
+    if (image) next[company] = image;
+    else delete next[company];
+    localStorage.setItem(signatureStorageKey, JSON.stringify(next));
+    setQuoteSignatures(next);
+    setMessage(image ? 'Assinatura cadastrada neste navegador.' : 'Assinatura removida deste navegador.');
   }
   async function saveSupplier(event: FormEvent) {
     event.preventDefault(); if (!supplierEditor) return;
@@ -314,6 +391,40 @@ export default function IgeveDocuments() {
       {selectedSnapshot?.generatedAt && <p><small>Última geração salva: {new Date(selectedSnapshot.generatedAt).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' })}</small></p>}
     </>}
     {mode === 'suppliers' && <div className="card igeve-panel"><div className="igeve-heading"><h3>Empresas e modelos</h3><button className="button" onClick={() => setSupplierEditor(blankSupplier())}>Nova empresa / modelo</button></div><p>Os estilos seguem as referências fornecidas. Personalize os dados, a cor, o logotipo e as condições comerciais. Cada documento tem campo para sua própria assinatura.</p>
+      <details>
+        <summary>Assinaturas dos orçamentos</summary>
+        <p>Importe o Word ou carregue as imagens separadamente. O aplicativo usa a imagem cadastrada para o CNPJ da empresa ao gerar o orçamento. O cadastro fica neste navegador.</p>
+        <label>Importar imagens do Word<input className="input-field" type="file" accept=".docx" onChange={e => {
+          const file = e.target.files?.[0];
+          e.target.value = '';
+          if (file) void run(async () => setSignatureImages(await imagesFromSignatureDocx(file)));
+        }} /></label>
+        {signatureImages.length > 0 && <div className="igeve-document-config">
+          <p>Associe as imagens às empresas. Deixe sem seleção a assinatura de Osnei e qualquer imagem que não será usada.</p>
+          {signatureImages.map((image, index) => <div key={index} className="igeve-actions">
+            <img className="igeve-document-logo" src={image} alt={`Imagem ${index + 1} do Word`} />
+            <select className="input-field" aria-label={`Empresa para a imagem ${index + 1}`} value="" onChange={e => {
+              const company = e.target.value as QuoteSignatureCompany;
+              if (company) void run(async () => saveQuoteSignature(company, image));
+            }}>
+              <option value="">Associar à empresa</option>
+              {signatureEntries.map(([key, label]) => <option key={key} value={key}>{label}</option>)}
+            </select>
+          </div>)}
+          <button type="button" className="button button-outline" onClick={() => setSignatureImages([])}>Fechar imagens importadas</button>
+        </div>}
+        <div className="igeve-filters">{signatureEntries.map(([company, label]) => <div key={company}>
+          <label>{label}<input className="input-field" type="file" accept="image/png,image/jpeg" onChange={e => {
+            const file = e.target.files?.[0];
+            e.target.value = '';
+            if (file) void run(async () => saveQuoteSignature(company, await readSignatureImage(file)));
+          }} /></label>
+          {quoteSignatures[company] && <div className="igeve-actions">
+            <img className="igeve-document-logo" src={quoteSignatures[company]} alt={`Assinatura cadastrada de ${label}`} />
+            <button type="button" className="button button-outline" onClick={() => void run(async () => saveQuoteSignature(company))}>Remover assinatura</button>
+          </div>}
+        </div>)}</div>
+      </details>
       <div className="table-container"><table><thead><tr><th>Empresa</th><th>CNPJ</th><th>Modelo</th><th>Ação</th></tr></thead><tbody>{suppliers.map(s => <tr key={s.id}><td>{s.name}</td><td>{s.cnpj || 'A preencher'}</td><td>{layoutNames[s.layout]}</td><td><button className="button button-outline" onClick={() => setSupplierEditor({ ...s })}>Editar empresa e modelo</button></td></tr>)}</tbody></table></div>
       {supplierEditor && <form onSubmit={e => void saveSupplier(e)} className="igeve-document-config"><h4>Cadastro de empresa e modelo</h4><div className="igeve-filters">{supplierField('name', 'Razão social / nome')}{supplierField('cnpj', 'CNPJ')}{supplierField('address', 'Endereço')}{supplierField('contact', 'Contato')}
         <label>Estilo do modelo<select className="input-field" value={supplierEditor.layout} onChange={e => setSupplierEditor({ ...supplierEditor, layout: e.target.value as DocumentLayout })}>{Object.entries(layoutNames).map(([id, label]) => <option key={id} value={id}>{label}</option>)}</select></label><label>Cor do modelo<input type="color" className="input-field" value={supplierEditor.color} onChange={e => setSupplierEditor({ ...supplierEditor, color: e.target.value })} /></label>{supplierField('payment', 'Condições de pagamento')}<label>Validade (dias)<input className="input-field" type="number" min="1" max="3650" step="1" value={supplierEditor.validity} onChange={e => setSupplierEditor({ ...supplierEditor, validity: Number(e.target.value) })} /></label>{supplierField('footer', 'Observações do modelo')}
