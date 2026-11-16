@@ -5,6 +5,7 @@ export const quoteSignatureCompanies = {
   manu: 'Manu',
   lucas: 'OM Log / LM — Lucas Mendes de Oliveira',
   red: 'RED — Anderson',
+  veras: 'Veras',
 } as const;
 
 export type QuoteSignatureCompany = keyof typeof quoteSignatureCompanies;
@@ -16,6 +17,7 @@ export function quoteSignatureCompany(cnpj: string): QuoteSignatureCompany | und
     case '68673515':
     case '66036822': return 'lucas';
     case '12484640': return 'red';
+    case '39323523': return 'veras';
   }
 }
 
