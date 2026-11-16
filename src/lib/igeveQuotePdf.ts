@@ -4,11 +4,12 @@ import type { UserOptions } from 'jspdf-autotable';
 import { decimal2, digits, documentReference, documentTotal } from './igeveDocuments.ts';
 import type { DocumentSupplier, NfeDocument, Quotation } from './igeveDocuments.ts';
 import { QUOTE_LOGOS } from './igeveQuoteLogos.ts';
+import { addQuoteSignature } from './igeveQuoteSignature.ts';
 import { createManuQuotationPdf } from './igeveManuQuotePdf.ts';
 
 // Rebuild the reference layouts with current data; never reuse signed pages.
-export function createQuotationPdf(doc: NfeDocument, supplier: DocumentSupplier, quotation: Quotation) {
-  if (supplier.layout === 'manu') return createManuQuotationPdf(doc, supplier, quotation);
+export function createQuotationPdf(doc: NfeDocument, supplier: DocumentSupplier, quotation: Quotation, signature?: string) {
+  if (supplier.layout === 'manu') return createManuQuotationPdf(doc, supplier, quotation, signature);
   const pdf = new jsPDF({ unit: 'mm', format: 'a4' });
   const layout = supplier.layout;
   const cnpjRoot = digits(supplier.cnpj).slice(0, 8);
@@ -144,9 +145,14 @@ export function createQuotationPdf(doc: NfeDocument, supplier: DocumentSupplier,
     for (const line of pdf.splitTextToSize(`Observações: ${notes}`, width) as string[]) { space(6); pdf.text(line, left, y); y += 4; }
     y += 4;
   }
-  space(25); y += 10;
-  text('_________________________________________________________', 9, false, 105, width, 'center');
-  text('Assinatura do representante autorizado do fornecedor', 9, false, 105, width, 'center');
+  space(signature ? 43 : 25); y += 10;
+  if (signature) {
+    addQuoteSignature(pdf, signature, 105, y);
+    y += 26;
+  } else {
+    text('_________________________________________________________', 9, false, 105, width, 'center');
+  }
+  text(signature ? 'Imagem de assinatura do representante' : 'Assinatura do representante autorizado do fornecedor', 9, false, 105, width, 'center');
   const count = pdf.getNumberOfPages();
   const right = left + width;
   const taxId = `CNPJ: ${supplier.cnpj}`;

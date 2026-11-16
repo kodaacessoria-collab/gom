@@ -2,9 +2,10 @@ import { jsPDF } from 'jspdf';
 import { autoTable } from 'jspdf-autotable';
 import { decimal2, digits, documentReference, documentTotal } from './igeveDocuments.ts';
 import type { DocumentSupplier, NfeDocument, Quotation } from './igeveDocuments.ts';
+import { addQuoteSignature } from './igeveQuoteSignature.ts';
 import { RIO_NUTRI_LOGO } from './igeveRioNutriLogo.ts';
 
-export function createRioNutriPdf(doc: NfeDocument, supplier: DocumentSupplier, quotation?: Quotation) {
+export function createRioNutriPdf(doc: NfeDocument, supplier: DocumentSupplier, quotation?: Quotation, signature?: string) {
   const pdf = new jsPDF();
   const quote = !!quotation;
   const title = [quote ? 'ORÇAMENTO' : 'ROMANEIO DE ENTREGA', documentReference(doc.number)].filter(Boolean).join(' - ');
@@ -51,8 +52,16 @@ export function createRioNutriPdf(doc: NfeDocument, supplier: DocumentSupplier, 
     text('Data: ____/____/________    Hora: ____:____');
   }
   for (const line of pdf.splitTextToSize([doc.notes, supplier.footer].filter(Boolean).join('\n'), 180) as string[]) { space(5); text(line, 8); }
-  space(24); y += 12;
-  if (quote) { text('_________________________________________________', 9); text('Assinatura do representante autorizado do fornecedor', 8); }
+  space(quote && signature ? 46 : 24); y += 12;
+  if (quote) {
+    if (signature) {
+      addQuoteSignature(pdf, signature, 53, y);
+      y += 26;
+    } else {
+      text('_________________________________________________', 9);
+    }
+    text(signature ? 'Imagem de assinatura do representante' : 'Assinatura do representante autorizado do fornecedor', 8);
+  }
   else { text('_______________________________                     _______________________________'); text('Assinatura do recebedor                                    Assinatura do responsável pela entrega', 8); }
   const pages = pdf.getNumberOfPages();
   for (let p = 1; p <= pages; p++) {
