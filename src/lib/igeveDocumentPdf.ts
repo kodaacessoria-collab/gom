@@ -1,6 +1,7 @@
 import { quoteSignatureCompany } from './igeveQuoteSignature.ts';
 import type { QuoteSignatures } from './igeveQuoteSignature.ts';
 import { createRioNutriPdf } from './igeveRioNutriPdf.ts';
+import { createVerasPdf } from './igeveVerasPdf.ts';
 import { jsPDF } from 'jspdf';
 import { createQuotationPdf } from './igeveQuotePdf.ts';
 import { autoTable } from 'jspdf-autotable';
@@ -14,8 +15,9 @@ export function createIgeveDocumentPdf(doc: NfeDocument, supplier: DocumentSuppl
   if (error) throw new Error(error);
   if (kind === 'quote' && (!quotation || quotation.supplierId !== supplier.id)) throw new Error('Cotação não corresponde ao fornecedor.');
   if (!/^#[0-9a-f]{6}$/i.test(supplier.color)) throw new Error('Confira a cor do modelo.');
-  const company = kind === 'quote' ? quoteSignatureCompany(supplier.cnpj) : undefined;
-  const signature = company ? signatures?.[company] : undefined;
+  const company = quoteSignatureCompany(supplier.cnpj);
+  const signature = kind === 'quote' && company ? signatures?.[company] : undefined;
+  if (company === 'veras') return { pdf: createVerasPdf(doc, supplier, kind === 'quote' ? quotation : undefined, signature), filename: documentFilename(supplier, doc, kind) };
   if (supplier.layout === 'rionutri') return { pdf: createRioNutriPdf(doc, supplier, kind === 'quote' ? quotation : undefined, signature), filename: documentFilename(supplier, doc, kind) };
   if (kind === 'quote') return { pdf: createQuotationPdf(doc, supplier, quotation!, signature), filename: documentFilename(supplier, doc, kind) };
   const pdf = new jsPDF({ unit: 'mm', format: 'a4' });
