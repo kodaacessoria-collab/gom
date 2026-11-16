@@ -185,7 +185,8 @@ assert.match(mirrorPdf, /00927461805/);
 assert.doesNotMatch(mirrorPdf, /NF-e/);
 
 mkdirSync('tmp/pdfs/igeve-documents', { recursive: true });
-for (const supplier of DEFAULT_DOCUMENT_SUPPLIERS) {
+const layoutSuppliers = [...DEFAULT_DOCUMENT_SUPPLIERS, { ...DEFAULT_DOCUMENT_SUPPLIERS[0], id: 'custom', layout: 'generic' }];
+for (const supplier of layoutSuppliers) {
   const s = supplier.cnpj ? supplier : { ...supplier, cnpj: '66.321.676/0001-95' };
   const q = { ...quote(s.id), reference: 'NF-e 927461805' };
   const sample = { ...doc, number: '000000043', quotations: [q], deliverySupplierId: s.id };
@@ -195,6 +196,9 @@ for (const supplier of DEFAULT_DOCUMENT_SUPPLIERS) {
     assert.match(out.pdf.output(), /(?<!\d)0043(?!\d)/, `${s.layout}: ${kind} com o número formatado`);
     assert.doesNotMatch(out.pdf.output(), /NF-e/);
     assert.match(out.filename, /-0043-/);
+    for (const destination of [sample.unitName, sample.address]) {
+      assert.equal(out.pdf.output().includes(destination), kind === 'delivery', `${s.layout}: dados da unidade apenas no PDF do romaneio`);
+    }
     writeFileSync(`tmp/pdfs/igeve-documents/${s.id}-${kind}.pdf`, new Uint8Array(out.pdf.output('arraybuffer')));
   }
 }
@@ -217,7 +221,7 @@ const longPdf = createIgeveDocumentPdf(long, DEFAULT_DOCUMENT_SUPPLIERS[0], 'quo
 assert.ok(longPdf.pdf.getNumberOfPages() > 3);
 assert.match(longPdf.pdf.output(), /00927461805/);
 writeFileSync('tmp/pdfs/igeve-documents/long-quote.pdf', new Uint8Array(longPdf.pdf.output('arraybuffer')));
-for (const supplier of DEFAULT_DOCUMENT_SUPPLIERS) {
+for (const supplier of layoutSuppliers) {
   const s = supplier.cnpj ? supplier : { ...supplier, cnpj: '66.036.822/0001-30' };
   const q = { ...long.quotations[0], supplierId: s.id };
   const sample = { ...long, quotations: [q], deliverySupplierId: s.id };
@@ -226,6 +230,7 @@ for (const supplier of DEFAULT_DOCUMENT_SUPPLIERS) {
     assert.ok(pdf.getNumberOfPages() > 3);
     assert.match(pdf.output(), /00927461805/);
     assert.doesNotMatch(pdf.output(), /NF-e/);
+    assert.equal(pdf.output().includes(sample.unitName), kind === 'delivery', `${s.layout}: a unidade não reaparece na paginação dos orçamentos`);
     writeFileSync(`tmp/pdfs/igeve-documents/long-${s.id}-${kind}.pdf`, new Uint8Array(pdf.output('arraybuffer')));
   }
 }
