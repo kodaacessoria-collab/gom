@@ -2,7 +2,7 @@ import { createRioNutriPdf } from './igeveRioNutriPdf.ts';
 import { jsPDF } from 'jspdf';
 import { createQuotationPdf } from './igeveQuotePdf.ts';
 import { autoTable } from 'jspdf-autotable';
-import { decimal2, documentFilename, validateNfeDocument } from './igeveDocuments.ts';
+import { decimal2, documentFilename, documentReference, validateNfeDocument } from './igeveDocuments.ts';
 import type { DocumentSupplier, NfeDocument, Quotation } from './igeveDocuments.ts';
 
 const date = (s: string) => s.split('-').reverse().join('/');
@@ -37,7 +37,7 @@ export function createIgeveDocumentPdf(doc: NfeDocument, supplier: DocumentSuppl
   if (supplier.address) text(supplier.address, 8);
   if (supplier.contact) text(supplier.contact, 8);
   y += 2;
-  const title = 'ROMANEIO DE ENTREGA';
+  const title = ['ROMANEIO DE ENTREGA', documentReference(doc.number)].filter(Boolean).join(' - ');
   pdf.setDrawColor(...color); pdf.setLineWidth(.5); pdf.line(left, y, 196, y); y += 7;
   text(title, 13, true);
   text(`Data de entrega: ${date(doc.deliveryDate)}`, 9);

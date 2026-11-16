@@ -1,7 +1,7 @@
 import { jsPDF } from 'jspdf';
 import { autoTable } from 'jspdf-autotable';
 import type { UserOptions } from 'jspdf-autotable';
-import { decimal2, digits, documentTotal } from './igeveDocuments.ts';
+import { decimal2, digits, documentReference, documentTotal } from './igeveDocuments.ts';
 import type { DocumentSupplier, NfeDocument, Quotation } from './igeveDocuments.ts';
 import { MANU_QUOTE_LOGO } from './igeveManuLogo.ts';
 
@@ -12,6 +12,7 @@ export function createManuQuotationPdf(doc: NfeDocument, supplier: DocumentSuppl
   const total = documentTotal(doc.items, quotation.prices);
   const money = (value: number) => `R$ ${decimal2(value)}`;
   const showCodes = digits(doc.issuerCnpj).length === 14 && digits(doc.issuerCnpj) === digits(supplier.cnpj);
+  const reference = documentReference(doc.number);
   let y = 50;
   const table = (options: UserOptions) => {
     autoTable(pdf, { startY: y, margin: { left, right: left, top: 28, bottom: 34 }, theme: 'grid',
@@ -32,6 +33,10 @@ export function createManuQuotationPdf(doc: NfeDocument, supplier: DocumentSuppl
   pdf.setDrawColor(...accent);
   for (const [index, line] of title.entries()) pdf.line(54, 33 + index * 5, 54 + pdf.getTextWidth(line), 33 + index * 5);
 
+  if (reference) {
+    pdf.setFont('helvetica', 'bold'); pdf.setFontSize(11);
+    pdf.text(reference, 194, 46, { align: 'right' });
+  }
   table({ body: [[doc.recipient], [`CNPJ: ${doc.recipientCnpj}`], [`Endereço: ${doc.address || '________________________________________________'}`],
     ...(doc.consumption ? [[`Consumo: ${doc.consumption}`]] : [])],
     styles: { fontSize: 10, fontStyle: 'bold', textColor: [0, 0, 0], cellPadding: 2, lineColor: [0, 0, 0], lineWidth: .15 } });
@@ -69,7 +74,7 @@ export function createManuQuotationPdf(doc: NfeDocument, supplier: DocumentSuppl
   for (let p = 1; p <= pdf.getNumberOfPages(); p++) {
     pdf.setPage(p);
     pdf.setTextColor(...accent); pdf.setFont('times', 'bolditalic'); pdf.setFontSize(p > 1 ? 10 : 9);
-    if (p > 1) pdf.text(`${supplier.name} | ORÇAMENTO`, left, 16);
+    if (p > 1) pdf.text([supplier.name, 'ORÇAMENTO', reference].filter(Boolean).join(' | '), left, 16);
     pdf.setFontSize(10);
     const footer = pdf.splitTextToSize([supplier.address, `CNPJ: ${supplier.cnpj}`, supplier.contact].filter(Boolean).join('\n'), width) as string[];
     pdf.text(footer, 105, 272, { align: 'center' });
