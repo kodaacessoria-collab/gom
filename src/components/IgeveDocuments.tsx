@@ -3,7 +3,7 @@ import type { FormEvent } from 'react';
 import { supabase } from '../lib/supabase';
 import { DEFAULT_DOCUMENT_SUPPLIERS, DEFAULT_IGEVE_UNITS, DOCUMENT_PREFIX, SUPPLIER_PREFIX, UNIT_PREFIX, createAutomaticQuotation, createIssuerMirrorQuotation, quotationPrices, decimal2, digits, documentToday, documentTotal, emptyNfeDocument, round2, unitsForCnpj, validCnpj, validDocumentDate, validateNfeDocument } from '../lib/igeveDocuments';
 import type { DocumentLayout, DocumentSupplier, IgeveUnit, NfeDocument, NfeItem, Quotation } from '../lib/igeveDocuments';
-import { quoteSignatureCompanies, quoteSignatureCompany } from '../lib/igeveQuoteSignature';
+import { documentSignature, quoteSignatureCompanies, quoteSignatureCompany, readQuoteSignatures, signatureStorageKey } from '../lib/igeveQuoteSignature';
 import type { QuoteSignatureCompany, QuoteSignatures } from '../lib/igeveQuoteSignature';
 import { importNfePdf } from '../lib/nfePdfImport';
 import './IgeveDocuments.css';
@@ -36,17 +36,7 @@ async function imageData(file: File) {
   if (file.size > 512 * 1024 || !['image/png', 'image/jpeg'].includes(file.type)) throw new Error('Use um logotipo PNG ou JPG de até 512 KB.');
   return await new Promise<string>((resolve, reject) => { const reader = new FileReader(); reader.onload = () => resolve(String(reader.result)); reader.onerror = () => reject(new Error('Não foi possível ler o logotipo.')); reader.readAsDataURL(file); });
 }
-const signatureStorageKey = 'igeve-quote-signatures';
 const signatureEntries = Object.entries(quoteSignatureCompanies) as [QuoteSignatureCompany, string][];
-const isSignatureImage = (value: unknown): value is string => typeof value === 'string' && /^data:image\/(png|jpeg);base64,/.test(value);
-function readQuoteSignatures(): QuoteSignatures {
-  try {
-    const stored = JSON.parse(localStorage.getItem(signatureStorageKey) || '{}');
-    return Object.fromEntries(signatureEntries.filter(([key]) => isSignatureImage(stored?.[key])).map(([key]) => [key, stored[key]]));
-  } catch {
-    return {};
-  }
-}
 async function signatureHash(image: string) {
   const hash = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(image));
   return Array.from(new Uint8Array(hash), byte => byte.toString(16).padStart(2, '0')).join('');
@@ -218,12 +208,9 @@ export default function IgeveDocuments() {
     let archiveError = '';
     try {
       const signatureHashes: Record<string, string> = {};
-      if (kind === 'quote') {
-        for (const supplier of selected) {
-          const company = quoteSignatureCompany(supplier.cnpj);
-          const signature = company && quoteSignatures[company];
-          if (signature) signatureHashes[supplier.id] = await signatureHash(signature);
-        }
+      for (const supplier of selected) {
+        const signature = documentSignature(supplier.cnpj, kind, quoteSignatures);
+        if (signature) signatureHashes[supplier.id] = await signatureHash(signature);
       }
       await save(kind, selected, outputDoc, Object.keys(signatureHashes).length ? signatureHashes : undefined);
     }
@@ -241,12 +228,12 @@ export default function IgeveDocuments() {
     const doc = record.generatedDocument;
     const outputs = await Promise.all(record.suppliers.map(async supplier => {
       let archivedSignatures: QuoteSignatures | undefined;
-      const hash = record.generatedKind === 'quote' && record.signatureHashes?.[supplier.id];
+      const hash = record.signatureHashes?.[supplier.id];
       if (hash) {
         const company = quoteSignatureCompany(supplier.cnpj);
         const signature = company && quoteSignatures[company];
         if (!company || !signature || await signatureHash(signature) !== hash) {
-          throw new Error(`A assinatura usada na última geração de ${supplier.name} não está cadastrada neste navegador. Importe a mesma imagem ou gere um novo orçamento.`);
+          throw new Error(`A assinatura usada na última geração de ${supplier.name} não está cadastrada neste navegador. Importe a mesma imagem ou gere um novo documento.`);
         }
         archivedSignatures = { [company]: signature };
       }
@@ -403,8 +390,8 @@ export default function IgeveDocuments() {
     </>}
     {mode === 'suppliers' && <div className="card igeve-panel"><div className="igeve-heading"><h3>Empresas e modelos</h3><button className="button" onClick={() => setSupplierEditor(blankSupplier())}>Nova empresa / modelo</button></div><p>Os estilos seguem as referências fornecidas. Personalize os dados, a cor, o logotipo e as condições comerciais. Cada documento tem campo para sua própria assinatura.</p>
       <details>
-        <summary>Assinaturas dos orçamentos</summary>
-        <p>Importe o Word ou carregue as imagens separadamente. O aplicativo usa a imagem cadastrada para o CNPJ da empresa ao gerar o orçamento. O cadastro fica neste navegador.</p>
+        <summary>Assinaturas dos documentos</summary>
+        <p>Importe o Word ou carregue as imagens separadamente. A assinatura cadastrada por CNPJ é usada nos orçamentos e, para Canindé e Manu, também nos romaneios. O cadastro fica neste navegador.</p>
         <label>Importar imagens do Word<input className="input-field" type="file" accept=".docx" onChange={e => {
           const file = e.target.files?.[0];
           e.target.value = '';
