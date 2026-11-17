@@ -2,7 +2,7 @@ import { jsPDF } from 'jspdf';
 import { autoTable } from 'jspdf-autotable';
 import { decimal2, digits, documentReference, documentTotal } from './igeveDocuments.ts';
 import type { DocumentSupplier, NfeDocument, Quotation } from './igeveDocuments.ts';
-import { addQuoteSignature } from './igeveQuoteSignature.ts';
+import { addDeliverySupplierSignature, addQuoteSignature } from './igeveQuoteSignature.ts';
 import { RIO_NUTRI_LOGO } from './igeveRioNutriLogo.ts';
 
 export function createRioNutriPdf(doc: NfeDocument, supplier: DocumentSupplier, quotation?: Quotation, signature?: string) {
@@ -53,7 +53,7 @@ export function createRioNutriPdf(doc: NfeDocument, supplier: DocumentSupplier, 
     text('Data: ____/____/________    Hora: ____:____');
   }
   for (const line of pdf.splitTextToSize([doc.notes, supplier.footer].filter(Boolean).join('\n'), 180) as string[]) { space(5); text(line, 8); }
-  space(quote && signature ? 46 : 24); y += 12;
+  space(signature ? 46 : 24); y += 12;
   if (quote) {
     if (signature) {
       addQuoteSignature(pdf, signature, 53, y);
@@ -63,7 +63,15 @@ export function createRioNutriPdf(doc: NfeDocument, supplier: DocumentSupplier, 
     }
     text(signature ? 'Imagem de assinatura do representante' : 'Assinatura do representante autorizado do fornecedor', 8);
   }
-  else { text('_______________________________                     _______________________________'); text('Assinatura do recebedor                                    Assinatura do responsável pela entrega', 8); }
+  else if (signature) {
+    addDeliverySupplierSignature(pdf, signature, 153, y - 8);
+    y += 12;
+    text('_______________________________');
+    text('Assinatura do recebedor', 8);
+  } else {
+    text('_______________________________                     _______________________________');
+    text('Assinatura do recebedor                                    Assinatura do responsável pela entrega', 8);
+  }
   const pages = pdf.getNumberOfPages();
   for (let p = 1; p <= pages; p++) {
     pdf.setPage(p); pdf.setFontSize(8); pdf.setFont('helvetica', 'normal'); pdf.setTextColor(...navy);

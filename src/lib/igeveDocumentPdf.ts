@@ -1,4 +1,4 @@
-import { quoteSignatureCompany } from './igeveQuoteSignature.ts';
+import { addDeliverySupplierSignature, documentSignature, quoteSignatureCompany } from './igeveQuoteSignature.ts';
 import type { QuoteSignatures } from './igeveQuoteSignature.ts';
 import { createRioNutriPdf } from './igeveRioNutriPdf.ts';
 import { createVerasPdf } from './igeveVerasPdf.ts';
@@ -16,7 +16,7 @@ export function createIgeveDocumentPdf(doc: NfeDocument, supplier: DocumentSuppl
   if (kind === 'quote' && (!quotation || quotation.supplierId !== supplier.id)) throw new Error('Cotação não corresponde ao fornecedor.');
   if (!/^#[0-9a-f]{6}$/i.test(supplier.color)) throw new Error('Confira a cor do modelo.');
   const company = quoteSignatureCompany(supplier.cnpj);
-  const signature = kind === 'quote' && company ? signatures?.[company] : undefined;
+  const signature = documentSignature(supplier.cnpj, kind, signatures);
   if (company === 'veras') return { pdf: createVerasPdf(doc, supplier, kind === 'quote' ? quotation : undefined, signature), filename: documentFilename(supplier, doc, kind) };
   if (supplier.layout === 'rionutri') return { pdf: createRioNutriPdf(doc, supplier, kind === 'quote' ? quotation : undefined, signature), filename: documentFilename(supplier, doc, kind) };
   if (kind === 'quote') return { pdf: createQuotationPdf(doc, supplier, quotation!, signature), filename: documentFilename(supplier, doc, kind) };
@@ -78,16 +78,20 @@ export function createIgeveDocumentPdf(doc: NfeDocument, supplier: DocumentSuppl
     for (const line of lines) { pageSpace(5); pdf.text(line, left, y); y += 4; }
     y += 4;
   }
-  pageSpace(kind === 'delivery' ? 54 : 32);
+  pageSpace(signature ? 65 : 54);
   y += 6;
-  if (kind === 'delivery') {
-    text('Data de recebimento: ____/____/________    Horário: ____:____', 9);
-    text('Recebedor: ______________________________________________________', 9);
-    text('RG / CPF / matrícula: ______________________________________________', 9);
-    text('Divergências: _____________________________________________________', 9);
+  text('Data de recebimento: ____/____/________    Horário: ____:____', 9);
+  text('Recebedor: ______________________________________________________', 9);
+  text('RG / CPF / matrícula: ______________________________________________', 9);
+  text('Divergências: _____________________________________________________', 9);
+  if (signature) {
+    addDeliverySupplierSignature(pdf, signature, 153, y + 1);
+    y += 23;
+    text('_______________________________________', 9);
+  } else {
+    y += 5;
+    text('_________________________________________________________________', 9);
   }
-  y += 5;
-  text('_________________________________________________________________', 9);
   text('Assinatura do recebedor', 9);
   const count = pdf.getNumberOfPages();
   for (let p = 1; p <= count; p++) {

@@ -2,6 +2,7 @@ import type jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import referenceUrl from '../assets/caninde-logo.png';
 import { BASIC_BASKET_COMPOSITION } from './basicBasket';
+import { addDeliverySupplierSignature, readQuoteSignatures } from './igeveQuoteSignature.ts';
 
 const navy: [number, number, number] = [19, 55, 71];
 const quantity = (value: number) => value.toLocaleString('pt-BR', { maximumFractionDigits: 3 });
@@ -107,10 +108,13 @@ export async function addCanindeDelivery(doc: jsPDF, data: {
   doc.text('Instituto de Gestão, Educação e Valorização do Ensino - IGEVE', 14, y + 6);
   doc.text('Representante (nome/função): __________________________________________________', 14, y + 16);
   doc.text('Documento: __________________________________________________________________', 14, y + 24);
+  const signature = readQuoteSignatures().caninde;
+  if (signature) addDeliverySupplierSignature(doc, signature, 151, y + 27);
   doc.setDrawColor(150, 150, 150);
-  doc.line(50, y + 40, 160, y + 40);
+  doc.line(50, y + 40, signature ? 108 : 160, y + 40);
   doc.setFont('helvetica', 'bold');
-  doc.text('Assinatura', 105, y + 45, { align: 'center' });
+  doc.setFontSize(9);
+  doc.text('Assinatura', signature ? 79 : 105, y + 45, { align: 'center' });
   doc.setFont('helvetica', 'normal');
   doc.text('Data da assinatura: ____/____/________', 14, y + 53);
 }
