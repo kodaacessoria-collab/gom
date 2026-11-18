@@ -141,6 +141,8 @@ export function parseScannedPage(words: PrintWord[], page: number): ScannedDeliv
     unitName, district, address, items, continuation: Number(continuation) > 1 };
 }
 
+interface HeaderStrip { left: number; right: number; top: number; bottom: number }
+
 // The operations template prints white column labels over a green strip.
 function normalizeGreenHeader(canvas: HTMLCanvasElement) {
   const context = canvas.getContext('2d');
@@ -149,7 +151,7 @@ function normalizeGreenHeader(canvas: HTMLCanvasElement) {
   const image = context.getImageData(0, 0, width, height);
   const { data } = image;
   const isGreen = (offset: number) => data[offset + 1] > data[offset] + 18 && data[offset + 1] > data[offset + 2] + 5;
-  let changed = false;
+  const strips: HeaderStrip[] = [];
   for (let y = 0; y < height; y++) {
     const row = y * width * 4;
     let first = -1;
@@ -168,9 +170,49 @@ function normalizeGreenHeader(canvas: HTMLCanvasElement) {
       const aboveBackground = Math.min(data[offset], data[offset + 1], data[offset + 2]) > 145;
       data[offset] = data[offset + 1] = data[offset + 2] = aboveBackground ? 0 : 255;
     }
-    changed = true;
+    const lastStrip = strips.at(-1);
+    if (lastStrip && y <= lastStrip.bottom + 2) {
+      lastStrip.left = Math.min(first, lastStrip.left);
+      lastStrip.right = Math.max(last, lastStrip.right);
+      lastStrip.bottom = y;
+    } else {
+      strips.push({ left: first, right: last, top: y, bottom: y });
+    }
   }
-  if (changed) context.putImageData(image, 0, 0);
+  if (strips.length) context.putImageData(image, 0, 0);
+  return strips.sort((a, b) => (b.bottom - b.top) - (a.bottom - a.top))[0];
+}
+
+// Recover the printed columns of the GOM operations layout when the OCR skips
+// the labels in the green strip. Repeated positions in the item rows establish
+// the column starts. The printed control and the green strip identify this layout.
+function parseOperationsColumns(words: PrintWord[], page: number, strip: HeaderStrip, scale: number) {
+  const left = strip.left / scale;
+  const right = strip.right / scale;
+  const top = strip.top / scale;
+  const bottom = strip.bottom / scale;
+  const width = right - left;
+  const body = words.filter(word => word.y > bottom && word.y < bottom + 550);
+  function repeatedStart(min: number, max: number, pattern: RegExp) {
+    const candidates = body.filter(word => word.x >= left + min * width && word.x <= left + max * width && pattern.test(normalized(word.text)));
+    const matches = candidates.map(word => ({
+      x: word.x, count: new Set(candidates.filter(candidate => Math.abs(candidate.x - word.x) <= 5).map(candidate => Math.round(candidate.y / 4))).size,
+    })).sort((a, b) => b.count - a.count);
+    const best = matches[0];
+    if (!best || best.count < 2 || matches.some(other => other.count === best.count && Math.abs(other.x - best.x) > 8)) return;
+    return best.x;
+  }
+  const unit = repeatedStart(.36, .52, /^(?:UNIDADE|UN|UND|KG|KILO|QUILO|PACOTE|PCT|CAIXA|CX|L|LITRO|BD)$/);
+  const official = repeatedStart(.73, .82, numeric);
+  if (!unit || !official) return;
+  const y = (top + bottom) / 2;
+  const labels: PrintWord[] = [
+    { text: 'Produto', x: left + 2, y, width: 38 },
+    { text: 'UND', x: unit, y, width: 16 },
+    { text: 'QTD', x: official, y, width: 17 },
+    { text: 'OBS.', x: left + .91 * width, y, width: 20 },
+  ];
+  return parseScannedPage([...words.filter(word => word.y < top - 2 || word.y > bottom + 2), ...labels], page);
 }
 
 export async function readScannedDeliveries(file: File, onPage: (page: number, total: number) => void) {
@@ -227,14 +269,16 @@ export async function readScannedDeliveries(file: File, onPage: (page: number, t
         canvas.height = Math.ceil(render.height);
         try {
           await page.render({ canvas, viewport: render }).promise;
-          normalizeGreenHeader(canvas);
+          const strip = normalizeGreenHeader(canvas);
           const recognize = async () => {
             const result = await worker!.recognize(canvas, {}, { blocks: true, text: false });
             const recognized = result.data.blocks?.flatMap(block => block.paragraphs.flatMap(paragraph => paragraph.lines.flatMap(line =>
               line.words.map(word => ({ text: word.text, x: word.bbox.x0 / scale,
                 y: (line.baseline.y0 + (line.baseline.y1 - line.baseline.y0) * (word.bbox.x0 - line.baseline.x0) / Math.max(1, line.baseline.x1 - line.baseline.x0)) / scale,
                 width: (word.bbox.x1 - word.bbox.x0) / scale, confidence: word.confidence }))))) ?? [];
-            return parseScannedPage(recognized, pageNo);
+            const parsed = parseScannedPage(recognized, pageNo);
+            if (parsed.items.length || !parsed.control || !strip) return parsed;
+            return parseOperationsColumns(recognized, pageNo, strip, scale) ?? parsed;
           };
           delivery = await recognize();
           if (!delivery.items.length) {
