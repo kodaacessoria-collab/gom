@@ -6,6 +6,7 @@ import type { DocumentLayout, DocumentSupplier, IgeveUnit, NfeDocument, NfeItem,
 import { documentSignature, quoteSignatureCompanies, quoteSignatureCompany, readQuoteSignatures, signatureStorageKey } from '../lib/igeveQuoteSignature';
 import type { QuoteSignatureCompany, QuoteSignatures } from '../lib/igeveQuoteSignature';
 import { importNfePdf } from '../lib/nfePdfImport';
+import IgeveBatchQuotes from './IgeveBatchQuotes';
 import './IgeveDocuments.css';
 
 interface Stored<T> { value: T; version: string }
@@ -70,6 +71,12 @@ async function imagesFromSignatureDocx(file: File) {
   return images;
 }
 const blankSupplier = (id: string = crypto.randomUUID()): DocumentSupplier => ({ id, name: '', cnpj: '', address: '', contact: '', layout: 'generic', color: '#203b50', payment: 'PIX / à vista', validity: 90, footer: '' });
+function findIssuerSupplier(doc: NfeDocument, suppliers: DocumentSupplier[]) {
+  if (!validCnpj(doc.issuerCnpj)) return undefined;
+  return suppliers.find(s => digits(s.cnpj) === digits(doc.issuerCnpj)) ?? (doc.issuer.trim() ? {
+    ...blankSupplier(`issuer-${digits(doc.issuerCnpj)}`), name: doc.issuer.trim(), cnpj: doc.issuerCnpj, payment: '', validity: 0,
+  } : undefined);
+}
 const newItem = (): NfeItem => ({ id: crypto.randomUUID(), code: '', product: '', unit: 'UN', quantity: 1, price: 0, brand: '', notes: '' });
 const layoutNames: Record<DocumentLayout, string> = { caninde: 'Canindé - dados em quadro / cestas', nobre: 'Nobre - destaque em laranja / marcas', om: 'OM Logística - cabeçalho central', lm: 'LM - tabela comercial', red: 'RED - proposta comercial', delicias: 'Delícias - entrega simplificada', manu: 'Manu Alimentos - cabeçalho azul / quadro comercial', rionutri: 'Rio Nutri - cabeçalho e conferência de entrega', generic: 'Padrão personalizado' };
 
@@ -104,14 +111,10 @@ export default function IgeveDocuments() {
   const [preview, setPreview] = useState<{ url: string; name: string } | null>(null);
   const [source, setSource] = useState<File | null>(null);
   const [historySearch, setHistorySearch] = useState('');
-  const [mode, setMode] = useState<'editor' | 'suppliers' | 'units' | 'history'>('editor');
+  const [mode, setMode] = useState<'editor' | 'batch' | 'suppliers' | 'units' | 'history'>('editor');
   const matches = unitsForCnpj(draft.recipientCnpj, units);
   const currentUnit = units.find(u => u.id === draft.unitId);
-  const issuerSupplier = validCnpj(draft.issuerCnpj)
-    ? suppliers.find(s => digits(s.cnpj) === digits(draft.issuerCnpj)) ?? (draft.issuer.trim() ? {
-      ...blankSupplier(`issuer-${digits(draft.issuerCnpj)}`), name: draft.issuer.trim(), cnpj: draft.issuerCnpj, payment: '', validity: 0,
-    } : undefined)
-    : undefined;
+  const issuerSupplier = findIssuerSupplier(draft, suppliers);
   const selectedSnapshot = records.find(r => r.value.document.id === draft.id)?.value;
   const previousQuoteDates = new Set(draft.quotations.map(quote => quote.date));
   const quotationDate = draft.quotationDate ?? (previousQuoteDates.size > 1 ? '' : draft.quotations[0]?.date ?? documentToday());
@@ -222,6 +225,14 @@ export default function IgeveDocuments() {
     }
     setMessage(kind === 'quote' ? 'Orçamento(s) gerado(s) e dados salvos.' : 'Romaneio gerado e dados salvos.');
   }
+  async function renderBatchQuote(doc: NfeDocument, date: string) {
+    const supplier = findIssuerSupplier(doc, suppliers);
+    if (!supplier) throw new Error('Razão social ou CNPJ do emitente não identificado.');
+    const quotation = { ...createIssuerMirrorQuotation(doc, supplier), date };
+    const { createIgeveDocumentPdf } = await import('../lib/igeveDocumentPdf');
+    const outputDoc = { ...doc, confirmed: true, quotations: [quotation] };
+    return createIgeveDocumentPdf(outputDoc, supplier, 'quote', quotation, quoteSignatures).pdf.output('blob');
+  }
   async function downloadPrevious(record: DocumentRecord) {
     if (!record.generatedDocument || !record.generatedKind || !record.suppliers?.length) throw new Error('Não há geração arquivada neste registro.');
     const { createIgeveDocumentPdf } = await import('../lib/igeveDocumentPdf');
@@ -312,12 +323,15 @@ export default function IgeveDocuments() {
   const supplierField = (key: 'name' | 'cnpj' | 'address' | 'contact' | 'payment' | 'footer', label: string) => <label>{label}<input className="input-field" value={supplierEditor![key]} onChange={e => setSupplierEditor(s => s && ({ ...s, [key]: e.target.value }))} /></label>;
   return <div className="igeve-documents">
     <div className="card igeve-panel"><div className="igeve-heading"><div><h2>Orçamentos e entrega por NF-e</h2><p>Importe a nota, confira os produtos e prepare os documentos de cada fornecedor.</p></div><button className="button button-outline" disabled={busy || dirty || !!supplierEditor || !!unitEditor} onClick={() => void run(load)}>Atualizar documentos</button></div>
-      <div className="igeve-actions">{[['editor', 'Preparar documentos'], ['suppliers', 'Empresas e modelos'], ['units', 'Unidades IGEVE'], ['history', 'Histórico']].map(([key, label]) => <button key={key} className={`button ${mode === key ? '' : 'button-outline'}`} disabled={busy} onClick={() => setMode(key as typeof mode)}>{label}</button>)}</div>
+      <div className="igeve-actions">{[['editor', 'Preparar documentos'], ['batch', 'Orçamentos em lote'], ['suppliers', 'Empresas e modelos'], ['units', 'Unidades IGEVE'], ['history', 'Histórico']].map(([key, label]) => <button key={key} className={`button ${mode === key ? '' : 'button-outline'}`} disabled={busy} onClick={() => setMode(key as typeof mode)}>{label}</button>)}</div>
     </div>
     {message && <div ref={messageRef} tabIndex={-1} role={messageIsError ? 'alert' : 'status'} className={`card igeve-panel${messageIsError ? ' igeve-document-notice' : ''}`}>{message}</div>}
     {busy && <p role="status">Processando documentos...</p>}
     {!ready && !busy && <p>Atualize os documentos para carregar os cadastros.</p>}
     <fieldset disabled={busy || !ready} className="igeve-document-fieldset">
+    <div hidden={mode !== 'batch'}>
+      <IgeveBatchQuotes units={units} renderQuote={renderBatchQuote} download={downloadBlob} />
+    </div>
     {mode === 'editor' && <>
       <div className="card igeve-panel"><div className="igeve-heading"><h3>1. Nota fiscal de origem</h3><span>{dirty ? 'Alterações não salvas' : version ? 'Dados salvos' : 'Novo documento'}</span></div>
         <div className="igeve-actions"><label className="button button-outline">Importar NF-e em PDF<input aria-label="Importar NF-e em PDF" className="igeve-file-input" type="file" accept="application/pdf,.pdf" onChange={e => { const file = e.target.files?.[0]; e.target.value = ''; if (file) void run(() => importPdf(file)); }} /></label>
