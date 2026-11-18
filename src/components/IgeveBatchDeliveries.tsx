@@ -208,12 +208,14 @@ export default function IgeveBatchDeliveries({ units, suppliers, onPreview, rend
         {rows.map(row => {
           const { scan } = row;
           const name = `${file.name}, página ${scan.page}`;
+          const pendingQuantities = scan.items.filter(item => !item.quantity.trim()).length;
           const patchScan = (patch: Partial<ScannedDelivery>) => updateRow(row.id, current => ({ ...current, scan: { ...current.scan, ...patch } }));
           const patchItem = (id: string, patch: Partial<ScannedItem>) =>
             patchScan({ items: scan.items.map(item => item.id === id ? { ...item, ...patch } : item) });
           return <section className="igeve-document-config" key={row.id} aria-label={name}>
             <div className="igeve-actions">
               <strong>Página {scan.page} · {scan.items.length} item(ns)</strong>
+              {pendingQuantities > 0 && <small>{pendingQuantities} quantidade(s) impressa(s) a conferir</small>}
               <button type="button" className="button button-outline" onClick={() => onPreview(file, scan.page)}>Ver original</button>
               {rows.length > 1 && <button type="button" className="button button-outline" onClick={() => {
                 setFiles(current => current.map(entry => entry.hash === hash ? { ...entry, rows: entry.rows.filter(item => item.id !== row.id) } : entry));
