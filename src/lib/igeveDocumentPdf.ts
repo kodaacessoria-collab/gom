@@ -15,6 +15,12 @@ export function createIgeveDocumentPdf(doc: NfeDocument, supplier: DocumentSuppl
   if (error) throw new Error(error);
   if (kind === 'quote' && (!quotation || quotation.supplierId !== supplier.id)) throw new Error('Cotação não corresponde ao fornecedor.');
   if (!/^#[0-9a-f]{6}$/i.test(supplier.color)) throw new Error('Confira a cor do modelo.');
+  if (kind === 'quote') {
+    const address = doc.address.trim() || 'Endereço não informado';
+    const serviceUnit = `Unidade de atendimento: ${doc.unitName.trim()} - ${address}`;
+    doc = { ...doc, notes: [serviceUnit, doc.notes].filter(Boolean).join('\n') };
+    supplier = { ...supplier, validity: 90 };
+  }
   const company = quoteSignatureCompany(supplier.cnpj);
   const signature = documentSignature(supplier.cnpj, kind, signatures);
   if (company === 'veras') return { pdf: createVerasPdf(doc, supplier, kind === 'quote' ? quotation : undefined, signature), filename: documentFilename(supplier, doc, kind) };
