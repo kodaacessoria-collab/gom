@@ -1,5 +1,7 @@
 import { useId, useState } from 'react';
 import { BILLING_CATEGORIES } from '../lib/igeveBilling';
+import type { BillingOperation, BillingPoint } from '../lib/igeveBilling';
+import { addOperationRomaneio, isLmRomaneioCompany } from '../lib/operationRomaneioPdf';
 import { digits, documentToday, emptyNfeDocument, unitsForCnpj, validCnpj, validDocumentDate } from '../lib/igeveDocuments';
 import type { DocumentSupplier, IgeveUnit, NfeDocument } from '../lib/igeveDocuments';
 import type { ScannedDelivery, ScannedItem } from '../lib/igeveScannedDeliveries';
@@ -34,16 +36,19 @@ interface BatchFile {
 interface Props {
   units: IgeveUnit[];
   suppliers: DocumentSupplier[];
+  operations: BillingOperation[];
+  points: BillingPoint[];
   onPreview: (file: File, page: number) => void;
   renderDelivery: (document: NfeDocument, supplier: DocumentSupplier) => Promise<Blob>;
   download: (blob: Blob, filename: string) => void;
 }
 
-export default function IgeveBatchDeliveries({ units, suppliers, onPreview, renderDelivery, download }: Props) {
+export default function IgeveBatchDeliveries({ units, suppliers, operations, points, onPreview, renderDelivery, download }: Props) {
   const categoryList = useId();
   const [files, setFiles] = useState<BatchFile[]>([]);
   const [category, setCategory] = useState('');
   const [supplierId, setSupplierId] = useState('');
+  const [operationId, setOperationId] = useState('');
   const [date, setDate] = useState('');
   const [confirmed, setConfirmed] = useState(false);
   const [progress, setProgress] = useState('');
@@ -117,13 +122,15 @@ export default function IgeveBatchDeliveries({ units, suppliers, onPreview, rend
         try {
           const validNumber = scan.control ? /^\d{6,10}-\d{3,6}$/.test(scan.number) : /^\d{1,15}$/.test(scan.number);
           if (!validNumber) throw new Error('Informe o número ou controle impresso do documento.');
-          const supplier = scan.control ? undefined : availableSuppliers.find(candidate => candidate.id === (row.supplierId || supplierId));
+          const supplier = availableSuppliers.find(candidate => candidate.id === (row.supplierId || supplierId));
+          const lm = !!supplier && isLmRomaneioCompany({ cnpj: supplier.cnpj, company: supplier.name });
+          const customModel = !!supplier && !scan.control && !lm;
           const unit = units.find(candidate => candidate.id === row.unitId);
           const unitName = row.unitName.trim() || unit?.name || '';
           const recipientCnpj = unit?.cnpj || scan.recipientCnpj;
           if (!filenamePart(unitName)) throw new Error('Informe a unidade.');
           if (recipientCnpj && !validCnpj(recipientCnpj)) throw new Error('Confira o CNPJ do destinatário.');
-          if (supplier && !recipientCnpj) throw new Error('Informe o CNPJ do destinatário para usar o modelo da empresa.');
+          if (customModel && !recipientCnpj) throw new Error('Informe o CNPJ do destinatário para usar o modelo da empresa.');
           const documentCategory = filenamePart(row.category || category);
           const district = filenamePart(scan.district);
           if (!documentCategory || !district) throw new Error('Informe a categoria e o bairro.');
@@ -143,9 +150,38 @@ export default function IgeveBatchDeliveries({ units, suppliers, onPreview, rend
             deliveryDate, deliverySupplierId: supplier?.id ?? '', items, confirmed: true,
           };
           const reference = scan.control ? scan.number : '00' + scan.number.replace(/^0+(?=\d)/, '');
-          const blob = supplier && !scan.control
-            ? await renderDelivery(doc, supplier)
-            : await renderScannedDelivery(doc, reference, scan.control, documentCategory, district);
+          let blob: Blob;
+          if (lm) {
+            const matchingPoints = points.filter(point => normalize(point.name) === normalize(unitName));
+            const districtMatches = matchingPoints.filter(point => normalize(point.neighborhood || '') === normalize(district));
+            const candidates = districtMatches.length ? districtMatches : matchingPoints;
+            const selectedOperation = operations.find(operation => operation.id === operationId);
+            const matchedOperationIds = new Set(candidates.map(point => point.operationId));
+            const unitCity = normalize(unit?.city.split('/')[0] || '');
+            const matchingOperations = operations.filter(operation => matchedOperationIds.size
+              ? matchedOperationIds.has(operation.id)
+              : !!unitCity && normalize(operation.city) === unitCity);
+            const operation = selectedOperation || (matchingOperations.length === 1 ? matchingOperations[0] : undefined);
+            const scopedPoints = candidates.filter(point => point.operationId === operation?.id);
+            const point = scopedPoints.length === 1 ? scopedPoints[0] : undefined;
+            const { jsPDF } = await import('jspdf');
+            const pdf = new jsPDF();
+            await addOperationRomaneio(pdf, operation || { name: '', city: '' }, {
+              category: documentCategory, dateLabel: deliveryDate.split('-').reverse().join('/'),
+              consumption: scan.consumption, destination: unitName,
+              point: { code: point?.code, address: doc.address || point?.address, neighborhood: district },
+              control: reference, controlLabel: scan.control ? 'Controle' : '',
+              items: items.map(item => ({
+                product: item.product, unit: item.unit,
+                quantity: item.quantity.toLocaleString('pt-BR', { maximumFractionDigits: 2 }),
+              })),
+            });
+            blob = pdf.output('blob');
+          } else {
+            blob = customModel
+              ? await renderDelivery(doc, supplier)
+              : await renderScannedDelivery(doc, reference, scan.control, documentCategory, district);
+          }
           const base = `ROMANEIO (${reference}) - ${documentCategory}_${filenamePart(unitName)} - ${district}`;
           let filename = `${base}.pdf`;
           for (let suffix = 2; names.has(filename.toLocaleLowerCase('pt-BR')); suffix++) filename = `${base} (${suffix}).pdf`;
@@ -193,6 +229,10 @@ export default function IgeveBatchDeliveries({ units, suppliers, onPreview, rend
           <option value="">Modelo padrão do romaneio</option>
           {availableSuppliers.map(supplier => <option key={supplier.id} value={supplier.id}>{supplier.name}</option>)}
         </select></label>
+        {!!operations.length && <label>Operação para o modelo L.M.<select className="input-field" value={operationId} onChange={event => setOperationId(event.target.value)}>
+          <option value="">Identificar pela unidade</option>
+          {operations.map(operation => <option key={operation.id} value={operation.id}>{operation.name}</option>)}
+        </select></label>}
         <datalist id={categoryList}>{categories.map(value => <option key={value} value={value} />)}</datalist>
       </div>
       {files.map(({ file, hash, rows, error, ocrUnavailable }) => <section className="igeve-document-config" key={hash}>
@@ -229,10 +269,11 @@ export default function IgeveBatchDeliveries({ units, suppliers, onPreview, rend
               }} /></label>
               <label>Categoria<input className="input-field" list={categoryList} placeholder={category || 'Informe a categoria'} maxLength={60} value={row.category}
                 onChange={event => updateRow(row.id, current => ({ ...current, category: event.target.value }))} /></label>
-              {!scan.control && <label>Empresa<select className="input-field" value={row.supplierId} onChange={event => updateRow(row.id, current => ({ ...current, supplierId: event.target.value }))}>
+              <label>Empresa<select className="input-field" value={row.supplierId} onChange={event => updateRow(row.id, current => ({ ...current, supplierId: event.target.value }))}>
                 <option value="">Usar empresa padrão</option>
-                {availableSuppliers.map(supplier => <option key={supplier.id} value={supplier.id}>{supplier.name}</option>)}
-              </select></label>}
+                {availableSuppliers.filter(supplier => !scan.control || isLmRomaneioCompany({ cnpj: supplier.cnpj, company: supplier.name }))
+                  .map(supplier => <option key={supplier.id} value={supplier.id}>{supplier.name}</option>)}
+              </select></label>
               <label>Data de entrega<input className="input-field" type="date" value={scan.date} onChange={event => patchScan({ date: event.target.value })} /></label>
               <label>Unidade cadastrada<select className="input-field" value={row.unitId} onChange={event => {
                 const unit = units.find(candidate => candidate.id === event.target.value);

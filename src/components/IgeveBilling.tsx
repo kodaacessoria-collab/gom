@@ -24,6 +24,7 @@ import IgeveDocuments from './IgeveDocuments';
 import { RUBRIC_PREFIX, withDeferredItems, rubricBalance, rubricCategory, rubricDiscountNote, rubricInvoiceDiscount, rubricMonthInvoices, rubricProposal, rubricScopeInvoices } from '../lib/igeveRubrics';
 import type { MonthlyRubric, SavedRubric } from '../lib/igeveRubrics';
 import { createOmBillingRomaneio, isOmLogBilling, romaneioFilename } from '../lib/igeveOmRomaneio';
+import { addOperationRomaneio, isLmRomaneioCompany } from '../lib/operationRomaneioPdf';
 import igeveLogoUrl from '../assets/igeve-logo.png';
 import './IgeveBilling.css';
 
@@ -773,15 +774,39 @@ export default function IgeveBilling() {
       if (invoice && adjustmentCategory) {
         const error = validateInvoice(invoice);
         if (error) { setMessage(error); return; }
-        if (!billingAdjustmentLines(invoice, adjustmentCategory).length) { setMessage('Nenhum item ajustado nesta categoria. Informe um ajuste diferente de zero para gerar o romaneio.'); return; }
+        const adjustments = billingAdjustmentLines(invoice, adjustmentCategory);
+        if (!adjustments.length) { setMessage('Nenhum item ajustado nesta categoria. Informe um ajuste diferente de zero para gerar o romaneio.'); return; }
+        const currentInvoice = invoice;
+        const sourceKeys = new Set(currentInvoice.location?.deliveryKeys || []);
+        const consumption = [...new Set(orders.filter(order => currentInvoice.location
+          ? order.deliveries.some(delivery => sourceKeys.has(JSON.stringify([order.id, delivery.id])))
+          : order.id === currentInvoice.sourceOrderId).map(order => order.consumptionPeriod).filter(Boolean))].join(' / ');
+        const point = points.find(point => point.id === currentInvoice.deliveryPointId);
+        if (isLmRomaneioCompany(invoice)) {
+          const operation = operations.find(operation => operation.id === currentInvoice.operationId)
+            ?? { name: invoice.operation, city: '' };
+          const date = invoice.location
+            ? [...new Set([invoice.location.start, invoice.location.end].filter(Boolean))].map(dateLabel).join(' a ')
+            : dateLabel(invoice.deliveryDate || invoice.date);
+          const pdf = new jsPDF();
+          await addOperationRomaneio(pdf, operation, {
+            category: adjustmentCategory, dateLabel: date, consumption,
+            destination: invoice.destination, point, control: invoice.control,
+            notes: [invoice.notes, rubricDiscountNote(invoice.rubricDiscount, adjustmentCategory)].filter(Boolean).join(' | '),
+            items: adjustments.map(({ item }) => ({
+              product: item.product, unit: item.unit,
+              quantity: billingQuantityAdjustment(item).toLocaleString('pt-BR', { maximumFractionDigits: 6, signDisplay: 'exceptZero' }),
+            })),
+          });
+          pdf.save(romaneioFilename(invoice, adjustmentCategory));
+          return;
+        }
         if (isOmLogBilling(invoice)) {
           const response = await fetch(igeveLogoUrl);
           if (!response.ok) throw new Error('Logo indisponível.');
           const blob = await response.blob();
           const logo = await new Promise<string>((resolve, reject) => { const reader = new FileReader(); reader.onload = () => resolve(String(reader.result)); reader.onerror = () => reject(reader.error); reader.readAsDataURL(blob); });
-          const sourceKeys = new Set(invoice.location?.deliveryKeys || []);
-          const consumption = [...new Set(orders.filter(order => invoice!.location ? order.deliveries.some(delivery => sourceKeys.has(JSON.stringify([order.id, delivery.id]))) : order.id === invoice!.sourceOrderId).map(order => order.consumptionPeriod).filter(Boolean))].join(' / ');
-          createOmBillingRomaneio({ ...invoice, notes: [invoice.notes, rubricDiscountNote(invoice.rubricDiscount, adjustmentCategory)].filter(Boolean).join(' | ') }, adjustmentCategory, { logo, point: points.find(point => point.id === invoice!.deliveryPointId), consumption }).save(romaneioFilename(invoice, adjustmentCategory));
+          createOmBillingRomaneio({ ...invoice, notes: [invoice.notes, rubricDiscountNote(invoice.rubricDiscount, adjustmentCategory)].filter(Boolean).join(' | ') }, adjustmentCategory, { logo, point, consumption }).save(romaneioFilename(invoice, adjustmentCategory));
           return;
         }
       }
@@ -840,7 +865,7 @@ export default function IgeveBilling() {
   return <section className="igeve-billing">
     <div className="igeve-heading"><div><h1>Faturamento IGEVE</h1><p>Romaneios e complementos com valores próprios para faturamento.</p></div><button className="button button-outline" disabled={busy || !!draft || !!Object.keys(priceEdits).length} onClick={() => void load()}><RefreshCw size={18} /> Atualizar</button>{ready && <button type="button" className="button button-outline" disabled={busy || !!draft} onClick={() => exportBillingAudit(rawSaved, orders, points)}>Conferir faturamentos salvos</button>}</div>
     <nav className="igeve-actions" aria-label="Faturamento IGEVE">{[['documents', 'Orçamentos e entrega por NF-e'], ['rubrics', 'Rubricas por operação'], ['romaneios', 'Faturamento por romaneio'], ['saved', 'Romaneios de faturamento'], ['freight', 'Frete'], ['locations', 'Faturamento por operação/local'], ['report', 'Relatório por empresas'], ['prices', 'Tabela de preços']].map(([id, label]) => <button key={id} className={`button ${tab !== id ? 'button-outline' : ''}`} disabled={busy || !!draft} onClick={() => { if (id === 'documents') setDocumentsOpened(true); setTab(id); }}>{label}</button>)}</nav>
-    {documentsOpened && <div hidden={tab !== 'documents'}><IgeveDocuments /></div>}
+    {documentsOpened && <div hidden={tab !== 'documents'}><IgeveDocuments operations={operations} points={points} /></div>}
     {tab !== 'rubrics' && tab !== 'documents' && <div className="card igeve-panel igeve-filter-panel"><div className="igeve-filters">
       <label>Operação<select className="input-field" value={operationId} onChange={event => { setOperationId(event.target.value); setLocationFilter(''); }}><option value="">Todas as operações IGEVE</option>{operations.map(op => <option key={op.id} value={op.id}>{op.name}</option>)}</select></label>
       <div className="igeve-category-filter"><span id="igeve-category-label">Categoria</span><details onKeyDown={event => { if (event.key === 'Escape') { event.currentTarget.open = false; event.currentTarget.querySelector('summary')?.focus(); } }}><summary className="input-field" aria-labelledby="igeve-category-label igeve-category-selection"><span id="igeve-category-selection">{categoryFilter.length ? categoryFilter.join(', ') : 'Todas as categorias'}</span></summary><div className="igeve-category-options" role="group" aria-label="Selecionar categorias">

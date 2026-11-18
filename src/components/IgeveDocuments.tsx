@@ -1,3 +1,4 @@
+import type { BillingOperation, BillingPoint } from '../lib/igeveBilling';
 import { useEffect, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
 import { supabase } from '../lib/supabase';
@@ -90,7 +91,7 @@ function DecimalInput({ value, onChange, label, min = 0 }: { value: number | nul
     onChange={event => { setText(event.target.value); onChange(event.target.value === '' ? null : Number(event.target.value)); }} onBlur={() => setEditing(false)} />;
 }
 
-export default function IgeveDocuments() {
+export default function IgeveDocuments({ operations = [], points = [] }: { operations?: BillingOperation[]; points?: BillingPoint[] }) {
   const [suppliers, setSuppliers] = useState<DocumentSupplier[]>(DEFAULT_DOCUMENT_SUPPLIERS);
   const [quoteSignatures, setQuoteSignatures] = useState(readQuoteSignatures);
   const [signatureImages, setSignatureImages] = useState<string[]>([]);
@@ -334,7 +335,7 @@ export default function IgeveDocuments() {
       <IgeveBatchQuotes units={units} renderQuote={renderBatchQuote} download={downloadBlob} />
     </div>
     <div hidden={mode !== 'batch-delivery'}>
-      <IgeveBatchDeliveries units={units} suppliers={suppliers} download={downloadBlob}
+      <IgeveBatchDeliveries units={units} suppliers={suppliers} operations={operations} points={points} download={downloadBlob}
         onPreview={(file, page) => setPreview({ url: `${URL.createObjectURL(file)}#page=${page}`, name: file.name })}
         renderDelivery={async (doc, supplier) => {
           const { createIgeveDocumentPdf } = await import('../lib/igeveDocumentPdf');
