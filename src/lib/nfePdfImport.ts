@@ -3,6 +3,7 @@ import type { NfeDocument, NfeItem } from './igeveDocuments.ts';
 
 export interface PdfWord { text: string; x: number; y: number; width: number }
 export interface PdfTextPage { words: PdfWord[] }
+export const NFE_REVIEW_REMINDER = 'Confira número, CNPJ do destinatário, produtos, quantidades e preços com o PDF original antes de gerar documentos.';
 const norm = (s: string) => s.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toUpperCase();
 export function pdfRows(words: PdfWord[]) {
   const rows: { y: number; words: PdfWord[] }[] = [];
@@ -37,7 +38,7 @@ function tableColumns(rows: ReturnType<typeof pdfRows>, start: number) {
   }
   return columns.sort((a, b) => a.x - b.x);
 }
-export function parseNfePages(pages: PdfTextPage[]): { document: NfeDocument; warnings: string[] } {
+export function parseNfePages(pages: PdfTextPage[]): { document: NfeDocument; warnings: string[]; district: string } {
   const doc = emptyNfeDocument();
   const warnings = new Set<string>();
   const lines = pages.flatMap(page => pdfRows(page.words).map(r => r.words.map(w => w.text).join(' ')));
@@ -176,8 +177,8 @@ export function parseNfePages(pages: PdfTextPage[]): { document: NfeDocument; wa
   const actualTotal = parsed.reduce((sum, item) => sum + round2(item.quantity * item.price), 0);
   if (Number.isFinite(expectedTotal) && Math.abs(round2(actualTotal) - expectedTotal) > 0.01) warnings.add(`O total dos itens importados (${round2(actualTotal).toFixed(2)}) difere do total de produtos da NF-e (${expectedTotal.toFixed(2)}). Confira se todos os itens e páginas foram importados.`);
   if (!parsed.length) warnings.add('Nenhum item foi identificado automaticamente. Este PDF pode ser digitalizado ou ter outro formato. Inclua os itens manualmente e confira a nota.');
-  warnings.add('Confira número, CNPJ do destinatário, produtos, quantidades e preços com o PDF original antes de gerar documentos.');
-  return { document: doc, warnings: [...warnings] };
+  warnings.add(NFE_REVIEW_REMINDER);
+  return { document: doc, warnings: [...warnings], district };
 }
 
 export async function importNfePdf(file: File) {
