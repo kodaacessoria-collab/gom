@@ -57,7 +57,7 @@ export function createManuQuotationPdf(doc: NfeDocument, supplier: DocumentSuppl
     foot: [[{ content: 'TOTAL GERAL', colSpan: columns.length - 1, styles: { halign: 'center' } }, money(total)]],
     footStyles: { fillColor: [255, 255, 255], textColor: [0, 0, 0], fontStyle: 'bold', halign: 'right' }, showFoot: 'lastPage', rowPageBreak: 'avoid',
   });
-  y += 12; space(doc.baskets > 0 ? 48 : 34);
+  y += 8; space(doc.baskets > 0 ? 48 : 34);
   table({ body: [
     ['Valor Total', money(total)], ['Pagamento:', supplier.payment],
     ['Validade:', `${supplier.validity} dias`], ['Data:', quotation.date.split('-').reverse().join('/')],
@@ -66,10 +66,10 @@ export function createManuQuotationPdf(doc: NfeDocument, supplier: DocumentSuppl
     didParseCell: data => { if (data.row.index === 3) data.cell.styles.fillColor = [244, 234, 234]; } });
   const notes = [doc.notes, supplier.footer].filter(Boolean).join('\n');
   if (notes) {
-    y += 8; pdf.setFont('helvetica', 'normal'); pdf.setFontSize(8);
+    y += 5; pdf.setFont('helvetica', 'normal'); pdf.setFontSize(8);
     for (const line of pdf.splitTextToSize(`Observações: ${notes}`, width) as string[]) { space(6); pdf.text(line, left, y); y += 4; }
   }
-  space(signature ? 45 : 30); y += 16; pdf.setFont('helvetica', 'normal'); pdf.setFontSize(9);
+  space(signature ? 39 : 22); y += 12; pdf.setFont('helvetica', 'normal'); pdf.setFontSize(9);
   if (signature) {
     addQuoteSignature(pdf, signature, 142.5, y - 5);
     y += 20;

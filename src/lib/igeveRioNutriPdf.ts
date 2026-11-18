@@ -52,7 +52,9 @@ export function createRioNutriPdf(doc: NfeDocument, supplier: DocumentSupplier, 
     y += 3; text('Recebedor: ______________________________ Documento: __________________');
     text('Data: ____/____/________    Hora: ____:____');
   }
-  for (const line of pdf.splitTextToSize([doc.notes, supplier.footer].filter(Boolean).join('\n'), 180) as string[]) { space(5); text(line, 8); }
+  const notes = [doc.notes, supplier.footer].filter(Boolean).join('\n');
+  const observations = quote && notes ? `Observações: ${notes}` : notes;
+  for (const line of pdf.splitTextToSize(observations, 180) as string[]) { space(5); text(line, 8); }
   space(signature ? 46 : 24); y += 12;
   if (quote) {
     if (signature) {
