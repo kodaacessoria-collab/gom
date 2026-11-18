@@ -7,6 +7,7 @@ import { documentSignature, quoteSignatureCompanies, quoteSignatureCompany, read
 import type { QuoteSignatureCompany, QuoteSignatures } from '../lib/igeveQuoteSignature';
 import { importNfePdf } from '../lib/nfePdfImport';
 import IgeveBatchQuotes from './IgeveBatchQuotes';
+import type { BatchQuotePartner } from './IgeveBatchQuotes';
 import IgeveBatchDeliveries from './IgeveBatchDeliveries';
 import './IgeveDocuments.css';
 
@@ -226,10 +227,17 @@ export default function IgeveDocuments() {
     }
     setMessage(kind === 'quote' ? 'Orçamento(s) gerado(s) e dados salvos.' : 'Romaneio gerado e dados salvos.');
   }
-  async function renderBatchQuote(doc: NfeDocument, date: string) {
-    const supplier = findIssuerSupplier(doc, suppliers);
+  async function renderBatchQuote(doc: NfeDocument, date: string, partner?: BatchQuotePartner) {
+    const supplier = partner?.supplier ?? findIssuerSupplier(doc, suppliers);
     if (!supplier) throw new Error('Razão social ou CNPJ do emitente não identificado.');
-    const quotation = { ...createIssuerMirrorQuotation(doc, supplier), date };
+    const quotation: Quotation = partner ? {
+      supplierId: supplier.id,
+      date,
+      reference: `Orçamento calculado: NF-e ${doc.number} + ${decimal2(partner.markup)}%`,
+      markupPercent: partner.markup,
+      automaticPrices: true,
+      prices: quotationPrices(doc.items, partner.markup),
+    } : { ...createIssuerMirrorQuotation(doc, supplier), date };
     const { createIgeveDocumentPdf } = await import('../lib/igeveDocumentPdf');
     const outputDoc = { ...doc, confirmed: true, quotations: [quotation] };
     return createIgeveDocumentPdf(outputDoc, supplier, 'quote', quotation, quoteSignatures).pdf.output('blob');
@@ -331,7 +339,7 @@ export default function IgeveDocuments() {
     {!ready && !busy && <p>Atualize os documentos para carregar os cadastros.</p>}
     <fieldset disabled={busy || !ready} className="igeve-document-fieldset">
     <div hidden={mode !== 'batch'}>
-      <IgeveBatchQuotes units={units} renderQuote={renderBatchQuote} download={downloadBlob} />
+      <IgeveBatchQuotes units={units} suppliers={suppliers} renderQuote={renderBatchQuote} download={downloadBlob} />
     </div>
     <div hidden={mode !== 'batch-delivery'}>
       <IgeveBatchDeliveries units={units} suppliers={suppliers} download={downloadBlob}

@@ -1,7 +1,7 @@
 import { useId, useState } from 'react';
 import { BILLING_CATEGORIES } from '../lib/igeveBilling';
-import { digits, documentToday, unitsForCnpj, validDocumentDate } from '../lib/igeveDocuments';
-import type { IgeveUnit, NfeDocument } from '../lib/igeveDocuments';
+import { decimal2, digits, documentReference, documentToday, unitsForCnpj, validCnpj, validDocumentDate } from '../lib/igeveDocuments';
+import type { DocumentSupplier, IgeveUnit, NfeDocument } from '../lib/igeveDocuments';
 import { importNfePdf, NFE_REVIEW_REMINDER } from '../lib/nfePdfImport';
 
 const MAX_INVOICES = 12;
@@ -26,9 +26,15 @@ interface BatchInvoice {
   importError?: string;
 }
 
+export interface BatchQuotePartner {
+  supplier: DocumentSupplier;
+  markup: 8.75 | 12.35;
+}
+
 interface Props {
   units: IgeveUnit[];
-  renderQuote: (invoice: NfeDocument, quotationDate: string) => Promise<Blob>;
+  suppliers: DocumentSupplier[];
+  renderQuote: (invoice: NfeDocument, quotationDate: string, partner?: BatchQuotePartner) => Promise<Blob>;
   download: (blob: Blob, filename: string) => void;
 }
 
@@ -42,16 +48,21 @@ function filenamePart(value: string) {
   return value.normalize('NFC').replace(/[^\p{L}\p{M}\p{N} ()&.,'-]+/gu, ' ').replace(/\s+/g, ' ').trim().replace(/[. ]+$/, '');
 }
 
-function quoteFilename(number: string, category: string, unit: string, district: string) {
-  const reference = '00' + digits(number).replace(/^0+(?=\d)/, '');
-  return `ORÇAMENTO (${reference}) - ${filenamePart(category)}_${filenamePart(unit)} - ${filenamePart(district)}.pdf`;
+function quoteFilename(number: string, category: string, unit: string, district: string, partner?: DocumentSupplier) {
+  const reference = documentReference(number);
+  const company = partner ? ` - ${filenamePart(partner.name).slice(0, 60)}` : '';
+  return `ORÇAMENTO (${reference}) - ${filenamePart(category)}_${filenamePart(unit)} - ${filenamePart(district)}${company}.pdf`;
 }
 
-export default function IgeveBatchQuotes({ units, renderQuote, download }: Props) {
+export default function IgeveBatchQuotes({ units, suppliers, renderQuote, download }: Props) {
   const categoryListId = useId();
   const [invoices, setInvoices] = useState<BatchInvoice[]>([]);
   const [quotationDate, setQuotationDate] = useState(documentToday);
   const [batchCategory, setBatchCategory] = useState('');
+  const [includeIssuer, setIncludeIssuer] = useState(true);
+  const [partnerIds, setPartnerIds] = useState<Record<BatchQuotePartner['markup'], string>>({ 8.75: '', 12.35: '' });
+  const partnerMarkups = [8.75, 12.35] as const;
+  const eligiblePartners = suppliers.filter(supplier => supplier.name.trim() && validCnpj(supplier.cnpj));
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState('');
   const [errors, setErrors] = useState<string[]>([]);
@@ -102,10 +113,25 @@ export default function IgeveBatchQuotes({ units, renderQuote, download }: Props
       setErrors(['Informe a data do orçamento, até a data de hoje.']);
       return;
     }
+    const partners: BatchQuotePartner[] = [];
+    for (const markup of partnerMarkups) {
+      if (!partnerIds[markup]) continue;
+      const supplier = eligiblePartners.find(candidate => candidate.id === partnerIds[markup]);
+      if (!supplier || partners.some(partner => digits(partner.supplier.cnpj) === digits(supplier.cnpj))) {
+        setErrors(['Selecione empresas parceiras diferentes e com cadastro válido.']);
+        return;
+      }
+      partners.push({ supplier, markup });
+    }
+    const targets = includeIssuer ? [undefined, ...partners] : partners;
+    if (!targets.length) return;
+
     setBusy(true);
     const failures: string[] = [];
+    const skipped: string[] = [];
     const outputs: { filename: string; blob: Blob }[] = [];
     const filenames = new Set<string>();
+    let invoicesWithQuotes = 0;
     try {
       for (const row of invoices) {
         try {
@@ -114,19 +140,33 @@ export default function IgeveBatchQuotes({ units, renderQuote, download }: Props
           const unit = unitsForCnpj(row.document.recipientCnpj, units).find(match => match.id === row.unitId);
           if (!unit) throw new Error('Selecione a unidade que corresponde ao CNPJ do destinatário.');
           if (!filenamePart(row.category) || !filenamePart(row.district)) throw new Error('Informe a categoria e o bairro.');
-          const blob = await renderQuote({
+          const invoice = {
             ...row.document,
             unitId: unit.id,
             unitName: unit.name,
-            address: row.document.address || unit.address,
-          }, quotationDate);
-          const base = quoteFilename(row.document.number, row.category, unit.name, row.district);
-          let filename = base;
-          for (let suffix = 2; filenames.has(filename.toLocaleLowerCase('pt-BR')); suffix++) {
-            filename = base.replace(/\.pdf$/, ` (${suffix}).pdf`);
+            address: unit.address || row.document.address,
+          };
+          const previousCount = outputs.length;
+          for (const partner of targets) {
+            if (partner && digits(partner.supplier.cnpj) === digits(invoice.issuerCnpj)) {
+              skipped.push(`${row.filename} — ${partner.supplier.name} é a emitente desta NF-e.`);
+              continue;
+            }
+            try {
+              const blob = await renderQuote(invoice, quotationDate, partner);
+              const base = quoteFilename(invoice.number, row.category, unit.name, row.district, partner?.supplier);
+              let filename = base;
+              for (let suffix = 2; filenames.has(filename.toLocaleLowerCase('pt-BR')); suffix++) {
+                filename = base.replace(/\.pdf$/, ` (${suffix}).pdf`);
+              }
+              filenames.add(filename.toLocaleLowerCase('pt-BR'));
+              outputs.push({ filename, blob });
+            } catch (error) {
+              const company = partner?.supplier.name ?? 'Empresa principal';
+              failures.push(`${row.filename} — ${company}: ${error instanceof Error ? error.message : 'Erro ao gerar o orçamento.'}`);
+            }
           }
-          filenames.add(filename.toLocaleLowerCase('pt-BR'));
-          outputs.push({ filename, blob });
+          if (outputs.length > previousCount) invoicesWithQuotes++;
         } catch (error) {
           failures.push(`${row.filename}: ${error instanceof Error ? error.message : 'Erro ao gerar o orçamento.'}`);
         }
@@ -139,18 +179,18 @@ export default function IgeveBatchQuotes({ units, renderQuote, download }: Props
         const zip = Uint8Array.from(zipSync(Object.fromEntries(files), { level: 0 }));
         download(new Blob([zip], { type: 'application/zip' }), `ORÇAMENTOS EM LOTE - ${quotationDate}.zip`);
       }
-      if (outputs.length) setMessage(`${outputs.length} de ${invoices.length} orçamento(s) gerado(s).`);
+      if (outputs.length) setMessage(`${outputs.length} orçamento(s) gerado(s) para ${invoicesWithQuotes} de ${invoices.length} NF-e.`);
     } catch (error) {
       failures.push(error instanceof Error ? error.message : 'Não foi possível baixar o lote.');
     } finally {
-      setErrors(failures);
+      setErrors([...failures, ...skipped]);
       setBusy(false);
     }
   }
 
   return <section className="card igeve-panel">
     <h3>Orçamentos em lote</h3>
-    <p>Selecione até 12 NF-e em PDF para baixar um orçamento espelho por nota, com os produtos e valores do emitente.</p>
+    <p>Selecione até 12 NF-e em PDF. Escolha o orçamento espelho da empresa emitente e até duas parceiras para cada nota.</p>
     <fieldset disabled={busy} className="igeve-document-fieldset">
       <div className="igeve-actions">
         <label className="button button-outline">Selecionar NF-e em PDF
@@ -167,6 +207,25 @@ export default function IgeveBatchQuotes({ units, renderQuote, download }: Props
         <label>Categoria para o lote<input className="input-field" list={categoryListId} value={batchCategory} onChange={event => setBatchCategory(event.target.value)} maxLength={60} /></label>
         <button type="button" className="button button-outline" disabled={!batchCategory.trim() || !invoices.some(row => row.document && !row.category.trim())} onClick={() => setInvoices(rows => rows.map(row => row.category.trim() ? row : { ...row, category: batchCategory }))}>Preencher categorias em branco</button>
         <datalist id={categoryListId}>{categories.map(category => <option key={category} value={category} />)}</datalist>
+      </div>
+      <div className="igeve-filters">
+        <label className="igeve-check">
+          <input type="checkbox" checked={includeIssuer} onChange={event => setIncludeIssuer(event.target.checked)} />
+          Incluir empresa principal (emitente da NF-e)
+        </label>
+        {partnerMarkups.map(markup => {
+          const otherId = partnerIds[markup === 8.75 ? 12.35 : 8.75];
+          const otherCnpj = digits(eligiblePartners.find(supplier => supplier.id === otherId)?.cnpj ?? '');
+          return <label key={markup}>Parceira (+{decimal2(markup)}%)
+            <select className="input-field" value={partnerIds[markup]} onChange={event => {
+              const id = event.target.value;
+              setPartnerIds(previous => ({ ...previous, [markup]: id }));
+            }}>
+              <option value="">Selecione uma parceira (opcional)</option>
+              {eligiblePartners.map(supplier => <option key={supplier.id} value={supplier.id} disabled={digits(supplier.cnpj) === otherCnpj}>{supplier.name}</option>)}
+            </select>
+          </label>;
+        })}
       </div>
       {invoices.length > 0 && <div className="table-container"><table>
         <thead><tr><th>Arquivo / número</th><th>Categoria</th><th>Unidade de entrega</th><th>Bairro</th><th>Ação</th></tr></thead>
@@ -187,7 +246,7 @@ export default function IgeveBatchQuotes({ units, renderQuote, download }: Props
         })}</tbody>
       </table></div>}
       <div className="igeve-actions">
-        <button type="button" className="button" disabled={!invoices.some(row => row.document)} onClick={() => void generate()}>Gerar orçamentos em lote</button>
+        <button type="button" className="button" disabled={!invoices.some(row => row.document) || !(includeIssuer || partnerIds[8.75] || partnerIds[12.35])} onClick={() => void generate()}>Gerar orçamentos em lote</button>
       </div>
     </fieldset>
     {busy && <p role="status">Processando NF-e...</p>}
