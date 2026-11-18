@@ -141,6 +141,38 @@ export function parseScannedPage(words: PrintWord[], page: number): ScannedDeliv
     unitName, district, address, items, continuation: Number(continuation) > 1 };
 }
 
+// The operations template prints white column labels over a green strip.
+function normalizeGreenHeader(canvas: HTMLCanvasElement) {
+  const context = canvas.getContext('2d');
+  if (!context) return;
+  const { width, height } = canvas;
+  const image = context.getImageData(0, 0, width, height);
+  const { data } = image;
+  const isGreen = (offset: number) => data[offset + 1] > data[offset] + 18 && data[offset + 1] > data[offset + 2] + 5;
+  let changed = false;
+  for (let y = 0; y < height; y++) {
+    const row = y * width * 4;
+    let first = -1;
+    let last = -1;
+    let green = 0;
+    for (let x = 0; x < width; x += 4) {
+      if (isGreen(row + x * 4)) {
+        if (first < 0) first = x;
+        last = x;
+        green += 4;
+      }
+    }
+    if (green < width * 0.3 || green < (last - first) * 0.75) continue;
+    for (let x = first; x <= last; x++) {
+      const offset = row + x * 4;
+      const aboveBackground = Math.min(data[offset], data[offset + 1], data[offset + 2]) > 145;
+      data[offset] = data[offset + 1] = data[offset + 2] = aboveBackground ? 0 : 255;
+    }
+    changed = true;
+  }
+  if (changed) context.putImageData(image, 0, 0);
+}
+
 export async function readScannedDeliveries(file: File, onPage: (page: number, total: number) => void) {
   if (!/\.pdf$/i.test(file.name) || file.size > 20 * 1024 * 1024) throw new Error('Selecione um PDF de até 20 MB.');
   const data = await file.arrayBuffer();
@@ -195,13 +227,26 @@ export async function readScannedDeliveries(file: File, onPage: (page: number, t
         canvas.height = Math.ceil(render.height);
         try {
           await page.render({ canvas, viewport: render }).promise;
-          const result = await worker.recognize(canvas, {}, { blocks: true, text: false });
-          const recognized = result.data.blocks?.flatMap(block => block.paragraphs.flatMap(paragraph => paragraph.lines.flatMap(line =>
-            line.words.map(word => ({ text: word.text, x: word.bbox.x0 / scale,
-              y: (line.baseline.y0 + (line.baseline.y1 - line.baseline.y0) * (word.bbox.x0 - line.baseline.x0) / Math.max(1, line.baseline.x1 - line.baseline.x0)) / scale,
-              width: (word.bbox.x1 - word.bbox.x0) / scale, confidence: word.confidence })))))
-            ?? [];
-          delivery = parseScannedPage(recognized, pageNo);
+          normalizeGreenHeader(canvas);
+          const recognize = async () => {
+            const result = await worker!.recognize(canvas, {}, { blocks: true, text: false });
+            const recognized = result.data.blocks?.flatMap(block => block.paragraphs.flatMap(paragraph => paragraph.lines.flatMap(line =>
+              line.words.map(word => ({ text: word.text, x: word.bbox.x0 / scale,
+                y: (line.baseline.y0 + (line.baseline.y1 - line.baseline.y0) * (word.bbox.x0 - line.baseline.x0) / Math.max(1, line.baseline.x1 - line.baseline.x0)) / scale,
+                width: (word.bbox.x1 - word.bbox.x0) / scale, confidence: word.confidence }))))) ?? [];
+            return parseScannedPage(recognized, pageNo);
+          };
+          delivery = await recognize();
+          if (!delivery.items.length) {
+            const { PSM } = await import('tesseract.js');
+            await worker.setParameters({ tessedit_pageseg_mode: PSM.SPARSE_TEXT });
+            try {
+              const retry = await recognize();
+              if (retry.items.length) delivery = retry;
+            } finally {
+              await worker.setParameters({ tessedit_pageseg_mode: PSM.AUTO });
+            }
+          }
         } finally {
           canvas.width = canvas.height = 0;
         }
