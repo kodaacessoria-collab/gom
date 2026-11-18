@@ -187,7 +187,7 @@ assert.doesNotMatch(mirrorPdf, /NF-e/);
 mkdirSync('tmp/pdfs/igeve-documents', { recursive: true });
 const layoutSuppliers = [...DEFAULT_DOCUMENT_SUPPLIERS, { ...DEFAULT_DOCUMENT_SUPPLIERS[0], id: 'custom', layout: 'generic' }];
 for (const supplier of layoutSuppliers) {
-  const s = supplier.cnpj ? supplier : { ...supplier, cnpj: '66.321.676/0001-95' };
+  const s = { ...supplier, cnpj: supplier.cnpj || '66.321.676/0001-95', validity: 15 };
   const q = { ...quote(s.id), reference: 'NF-e 927461805' };
   const sample = { ...doc, number: '000000043', quotations: [q], deliverySupplierId: s.id };
   for (const kind of ['quote', 'delivery']) {
@@ -196,8 +196,12 @@ for (const supplier of layoutSuppliers) {
     assert.match(out.pdf.output(), /(?<!\d)0043(?!\d)/, `${s.layout}: ${kind} com o número formatado`);
     assert.doesNotMatch(out.pdf.output(), /NF-e/);
     assert.match(out.filename, /-0043-/);
-    for (const destination of [sample.unitName, sample.address]) {
-      assert.equal(out.pdf.output().includes(destination), kind === 'delivery', `${s.layout}: dados da unidade apenas no PDF do romaneio`);
+    assert.ok(out.pdf.output().includes(sample.unitName), `${s.layout}: nome da unidade no ${kind}`);
+    assert.ok(out.pdf.output().includes(sample.address), `${s.layout}: endereço da unidade no ${kind}`);
+    if (kind === 'quote') {
+      assert.match(out.pdf.output(), /Observações: Unidade de atendimento:/);
+      assert.match(out.pdf.output(), /90 dias/);
+      assert.doesNotMatch(out.pdf.output(), /15 dias/);
     }
     writeFileSync(`tmp/pdfs/igeve-documents/${s.id}-${kind}.pdf`, new Uint8Array(out.pdf.output('arraybuffer')));
   }
@@ -230,7 +234,9 @@ for (const supplier of layoutSuppliers) {
     assert.ok(pdf.getNumberOfPages() > 3);
     assert.match(pdf.output(), /00927461805/);
     assert.doesNotMatch(pdf.output(), /NF-e/);
-    assert.equal(pdf.output().includes(sample.unitName), kind === 'delivery', `${s.layout}: a unidade não reaparece na paginação dos orçamentos`);
+    if (kind === 'quote') {
+      assert.equal(pdf.output().split(sample.unitName).length - 1, 1, `${s.layout}: a unidade aparece uma vez nas observações`);
+    }
     writeFileSync(`tmp/pdfs/igeve-documents/long-${s.id}-${kind}.pdf`, new Uint8Array(pdf.output('arraybuffer')));
   }
 }

@@ -23,7 +23,7 @@ const quotation = { supplierId: supplier.id, date: '2026-08-15', reference: 'NF-
 doc.quotations = [quotation];
 const snapshot = structuredClone(doc);
 const result = createIgeveDocumentPdf(doc, supplier, 'quote', quotation);
-assert.equal(result.filename, 'MA-ORÇAMENTO-CEI_IGEVE_MENDONCA.pdf');
+assert.equal(result.filename, 'MA-ORÇAMENTO-00927461805-CEI_IGEVE_MENDONCA.pdf');
 assert.equal(result.pdf.getNumberOfPages(), 1, 'Modelo de sete itens cabe em uma página');
 const bytes = new Uint8Array(result.pdf.output('arraybuffer'));
 mkdirSync('tmp/pdfs/igeve-documents', { recursive: true });
@@ -33,9 +33,9 @@ const parsed = await loading.promise;
 try {
   const page = await parsed.getPage(1);
   const text = (await page.getTextContent()).items.filter(item => 'str' in item).map(item => item.str).join(' ');
-  for (const value of [supplier.name, supplier.cnpj, supplier.contact, 'TOTAL GERAL', 'R$ 9.931,68', 'Pix / Dep. Bancário', '90 dias', '15/08/2026', doc.unitName, 'Assinatura do representante autorizado']) assert.ok(text.includes(value), value);
+  for (const value of [supplier.name, supplier.cnpj, supplier.contact, 'TOTAL GERAL', 'R$ 9.931,68', 'Pix / Dep. Bancário', '90 dias', '15/08/2026', '00927461805', 'Observações: Unidade de atendimento:', doc.unitName, 'RUA DR LOURENCO DE MENDONCA, 107', 'Assinatura do representante autorizado']) assert.ok(text.includes(value), value);
   for (const [name] of products) assert.ok(text.includes(name), name);
-  for (const value of ['927461805', 'SOURCE0', 'Assinado digitalmente', '137.849.718-06']) assert.equal(text.includes(value), false, value);
+  for (const value of ['NF-e', 'SOURCE0', 'Assinado digitalmente', '137.849.718-06']) assert.equal(text.includes(value), false, value);
 } finally { await loading.destroy(); }
 assert.deepEqual(doc, snapshot);
 console.log('OK: Manu cadastrada, dados comerciais, modelo com sete produtos e total R$ 9.931,68, sem códigos do emitente ou assinatura prévia.');
