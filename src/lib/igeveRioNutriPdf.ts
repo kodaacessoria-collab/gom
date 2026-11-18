@@ -63,7 +63,7 @@ export function createRioNutriPdf(doc: NfeDocument, supplier: DocumentSupplier, 
     } else {
       text('_________________________________________________', 9);
     }
-    text(signature ? 'Imagem de assinatura do representante' : 'Assinatura do representante autorizado do fornecedor', 8);
+    if (!signature) text('Assinatura do representante autorizado do fornecedor', 8);
   }
   else if (signature) {
     addDeliverySupplierSignature(pdf, signature, 153, y - 8);

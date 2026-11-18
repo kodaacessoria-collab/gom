@@ -76,7 +76,7 @@ export function createManuQuotationPdf(doc: NfeDocument, supplier: DocumentSuppl
   } else {
     pdf.setDrawColor(70, 70, 70); pdf.line(95, y, 190, y);
   }
-  pdf.text(signature ? 'Imagem de assinatura do representante' : 'Assinatura do representante autorizado', 142.5, y + 5, { align: 'center' });
+  if (!signature) pdf.text('Assinatura do representante autorizado', 142.5, y + 5, { align: 'center' });
   for (let p = 1; p <= pdf.getNumberOfPages(); p++) {
     pdf.setPage(p);
     pdf.setTextColor(...accent); pdf.setFont('times', 'bolditalic'); pdf.setFontSize(p > 1 ? 10 : 9);

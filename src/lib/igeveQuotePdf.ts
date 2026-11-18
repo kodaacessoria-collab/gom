@@ -151,7 +151,7 @@ export function createQuotationPdf(doc: NfeDocument, supplier: DocumentSupplier,
   } else {
     text('_________________________________________________________', 9, false, 105, width, 'center');
   }
-  text(signature ? 'Imagem de assinatura do representante' : 'Assinatura do representante autorizado do fornecedor', 9, false, 105, width, 'center');
+  if (!signature) text('Assinatura do representante autorizado do fornecedor', 9, false, 105, width, 'center');
   const count = pdf.getNumberOfPages();
   const right = left + width;
   const taxId = `CNPJ: ${supplier.cnpj}`;
