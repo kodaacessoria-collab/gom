@@ -44,7 +44,7 @@ export default function IgeveBatchDeliveries({ units, suppliers, onPreview, rend
   const [files, setFiles] = useState<BatchFile[]>([]);
   const [category, setCategory] = useState('');
   const [supplierId, setSupplierId] = useState('');
-  const [date, setDate] = useState(documentToday);
+  const [date, setDate] = useState('');
   const [confirmed, setConfirmed] = useState(false);
   const [progress, setProgress] = useState('');
   const [message, setMessage] = useState('');
@@ -102,8 +102,8 @@ export default function IgeveBatchDeliveries({ units, suppliers, onPreview, rend
   async function generate() {
     setMessage('');
     setErrors([]);
-    if (!confirmed || !validDocumentDate(date)) {
-      setErrors(['Informe a data padrão e confirme a leitura das quantidades impressas.']);
+    if (!confirmed) {
+      setErrors(['Confirme a leitura das quantidades impressas.']);
       return;
     }
     setProgress('Gerando romaneios…');
@@ -128,7 +128,7 @@ export default function IgeveBatchDeliveries({ units, suppliers, onPreview, rend
           const district = filenamePart(scan.district);
           if (!documentCategory || !district) throw new Error('Informe a categoria e o bairro.');
           const deliveryDate = scan.date || date;
-          if (!validDocumentDate(deliveryDate)) throw new Error('Confira a data de entrega.');
+          if (!validDocumentDate(deliveryDate)) throw new Error('Informe a data de entrega do romaneio ou a data padrão do lote.');
           if (!scan.items.length) throw new Error('Inclua os itens impressos.');
           const items = scan.items.map(item => {
             const quantity = officialQuantity(item.quantity);
@@ -160,7 +160,7 @@ export default function IgeveBatchDeliveries({ units, suppliers, onPreview, rend
         const { zipSync } = await import('fflate');
         const entries = await Promise.all(outputs.map(async ({ filename, blob }) => [filename, new Uint8Array(await blob.arrayBuffer())] as const));
         const zip = Uint8Array.from(zipSync(Object.fromEntries(entries), { level: 0 }));
-        download(new Blob([zip], { type: 'application/zip' }), `ROMANEIOS EM LOTE - ${date}.zip`);
+        download(new Blob([zip], { type: 'application/zip' }), `ROMANEIOS EM LOTE - ${date || documentToday()}.zip`);
       }
       if (outputs.length) setMessage(`${outputs.length} de ${rowCount} romaneio(s) gerado(s).`);
     } catch (error) {
