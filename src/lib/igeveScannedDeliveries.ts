@@ -215,6 +215,46 @@ function parseOperationsColumns(words: PrintWord[], page: number, strip: HeaderS
   return parseScannedPage([...words.filter(word => word.y < top - 2 || word.y > bottom + 2), ...labels], page);
 }
 
+function recognizedWords(result: import('tesseract.js').RecognizeResult, scale: number, offsetX = 0, offsetY = 0): PrintWord[] {
+  return result.data.blocks?.flatMap(block => block.paragraphs.flatMap(paragraph => paragraph.lines.flatMap(line =>
+    line.words.map(word => ({ text: word.text, x: (offsetX + word.bbox.x0) / scale,
+      y: (offsetY + word.bbox.y1) / scale, width: (word.bbox.x1 - word.bbox.x0) / scale,
+      confidence: word.confidence }))))) ?? [];
+}
+
+async function readOperationsTable(canvas: HTMLCanvasElement, worker: import('tesseract.js').Worker, strip: HeaderStrip, scale: number, page: number) {
+  const { PSM } = await import('tesseract.js');
+  const top = strip.bottom + 3;
+  const width = strip.right - strip.left;
+  const pageHeight = Math.min(canvas.height - top, Math.round(550 * scale));
+  const words: PrintWord[] = [];
+  // Isolate the printed columns to prevent OCR from merging them with checkmarks,
+  // amounts written in the observations column, or the recipient's signature.
+  await worker.setParameters({ tessedit_pageseg_mode: PSM.SINGLE_BLOCK });
+  try {
+    for (const [from, to, label] of [[0, .36, 'Produto'], [.36, .72, 'UND'], [.72, .851, 'QTD']] as const) {
+      const x = strip.left + Math.floor(from * width);
+      const crop = document.createElement('canvas');
+      crop.width = Math.floor((to - from) * width);
+      crop.height = pageHeight;
+      try {
+        crop.getContext('2d')!.drawImage(canvas, x, top, crop.width, crop.height, 0, 0, crop.width, crop.height);
+        const result = await worker.recognize(crop, {}, { blocks: true, text: false });
+        const found = recognizedWords(result, scale, x, top);
+        const headerY = (strip.top + strip.bottom) / (2 * scale);
+        if (!found.length) return;
+        const firstWord = found.reduce((first, word) => word.y < first.y ? word : first);
+        words.push({ text: label, x: firstWord.x, y: headerY, width: Math.min(firstWord.width, 16) }, ...found);
+      } finally {
+        crop.width = crop.height = 0;
+      }
+    }
+  } finally {
+    await worker.setParameters({ tessedit_pageseg_mode: PSM.AUTO });
+  }
+  return parseScannedPage(words, page);
+}
+
 export async function readScannedDeliveries(file: File, onPage: (page: number, total: number) => void) {
   if (!/\.pdf$/i.test(file.name) || file.size > 20 * 1024 * 1024) throw new Error('Selecione um PDF de até 20 MB.');
   const data = await file.arrayBuffer();
@@ -272,10 +312,7 @@ export async function readScannedDeliveries(file: File, onPage: (page: number, t
           const strip = normalizeGreenHeader(canvas);
           const recognize = async () => {
             const result = await worker!.recognize(canvas, {}, { blocks: true, text: false });
-            const recognized = result.data.blocks?.flatMap(block => block.paragraphs.flatMap(paragraph => paragraph.lines.flatMap(line =>
-              line.words.map(word => ({ text: word.text, x: word.bbox.x0 / scale,
-                y: (line.baseline.y0 + (line.baseline.y1 - line.baseline.y0) * (word.bbox.x0 - line.baseline.x0) / Math.max(1, line.baseline.x1 - line.baseline.x0)) / scale,
-                width: (word.bbox.x1 - word.bbox.x0) / scale, confidence: word.confidence }))))) ?? [];
+            const recognized = recognizedWords(result, scale);
             const parsed = parseScannedPage(recognized, pageNo);
             if (parsed.items.length || !parsed.control || !strip) return parsed;
             return parseOperationsColumns(recognized, pageNo, strip, scale) ?? parsed;
@@ -290,6 +327,10 @@ export async function readScannedDeliveries(file: File, onPage: (page: number, t
             } finally {
               await worker.setParameters({ tessedit_pageseg_mode: PSM.AUTO });
             }
+          }
+          if (!delivery.items.length && delivery.control && strip) {
+            const table = await readOperationsTable(canvas, worker, strip, scale, pageNo);
+            if (table?.items.length) delivery = { ...delivery, items: table.items };
           }
         } finally {
           canvas.width = canvas.height = 0;
