@@ -45,8 +45,8 @@ function field(lines: string[], label: string) {
   return lines.map(line => line.match(pattern)?.[1].trim()).find(Boolean) ?? '';
 }
 
-export function parseScannedPage(words: PrintWord[], page: number): ScannedDelivery {
-  const rows = pdfRows(words);
+export function parseScannedPage(words: PrintWord[], page: number, operationsLayout = false): ScannedDelivery {
+  const rows = operationsLayout ? pdfRows(words.map(word => ({ ...word, y: word.y / 1.6 }))) : pdfRows(words);
   const lines = rows.map(row => row.words.map(word => word.text).join(' ').trim());
   const header = rows.findIndex((row, index) => {
     const text = normalized(lines[index]);
@@ -61,7 +61,9 @@ export function parseScannedPage(words: PrintWord[], page: number): ScannedDeliv
   const control = !number && text.match(/\bCONTROLE\s*:\s*(\d{6,10}\s*[-–]\s*\d{3,6})\b/i);
   const titleDate = text.match(/\bROMANEIO[^\n]*(?:\n[^\n]*)?\b(\d{2})\/(\d{2})\/(\d{4})\b/i);
   const listedDate = field(metadata, 'DATA(?: DE ENTREGA)?').match(/\b(\d{2})\/(\d{2})\/(\d{4})\b/);
-  const printedDate = listedDate || titleDate;
+  const deliveryHeader = metadata.slice(0, metadata.findIndex(line => /^CONSUMO\b/i.test(line)));
+  const operationDate = control && deliveryHeader.join(' ').match(/\b(\d{2})\s*\/\s*(\d{2})\s*\/\s*(\d{4})\b/);
+  const printedDate = listedDate || titleDate || operationDate;
   const date = printedDate ? `${printedDate[3]}-${printedDate[2]}-${printedDate[1]}` : '';
   const consumption = field(metadata, 'CONSUMO').match(/\b\d{2}\/\d{2}\/\d{4}\s+a\s+\d{2}\/\d{2}\/\d{4}\b/i)?.[0] ?? '';
   const unitName = field(metadata, 'UNIDADE DE (?:ATENDIMENTO|ENTREGA)|LOCAL(?: DE ENTREGA)?|ESCOLA|DESTINO')
@@ -126,7 +128,13 @@ export function parseScannedPage(words: PrintWord[], page: number): ScannedDeliv
         const values = cell(official) as PrintWord[];
         const aligned = control ? values.filter(value => Math.abs(value.x - official.x) <= 8) : values;
         if (!measure && !values.length) {
-          if (items.length && rows[index].y - rows[index - 1].y < 17) items[items.length - 1].product += ` ${productText}`;
+          if (control || operationsLayout) {
+            if (description[0].x >= product.x - 10 && description[0].x <= product.x + 15) {
+              items.push({ id: crypto.randomUUID(), product: productText, unit: '', quantity: '' });
+            }
+          } else if (items.length && rows[index].y - rows[index - 1].y < 17) {
+            items[items.length - 1].product += ` ${productText}`;
+          }
           continue;
         }
         const candidate = aligned.length === 1 ? aligned[0] : undefined;
@@ -212,7 +220,7 @@ function parseOperationsColumns(words: PrintWord[], page: number, strip: HeaderS
     { text: 'QTD', x: official, y, width: 17 },
     { text: 'OBS.', x: left + .91 * width, y, width: 20 },
   ];
-  return parseScannedPage([...words.filter(word => word.y < top - 2 || word.y > bottom + 2), ...labels], page);
+  return parseScannedPage([...words.filter(word => word.y < top - 2 || word.y > bottom + 2), ...labels], page, true);
 }
 
 function recognizedWords(result: import('tesseract.js').RecognizeResult, scale: number, offsetX = 0, offsetY = 0): PrintWord[] {
@@ -252,7 +260,7 @@ async function readOperationsTable(canvas: HTMLCanvasElement, worker: import('te
   } finally {
     await worker.setParameters({ tessedit_pageseg_mode: PSM.AUTO });
   }
-  return parseScannedPage(words, page);
+  return parseScannedPage(words, page, true);
 }
 
 export async function readScannedDeliveries(file: File, onPage: (page: number, total: number) => void) {
