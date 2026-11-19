@@ -1,6 +1,6 @@
 import { useId, useState } from 'react';
 import { BILLING_CATEGORIES } from '../lib/igeveBilling';
-import { digits, documentToday, emptyNfeDocument, unitsForCnpj, validCnpj, validDocumentDate } from '../lib/igeveDocuments';
+import { digits, documentToday, emptyNfeDocument, registeredDeliveryUnit, unitsForCnpj, validCnpj, validDocumentDate } from '../lib/igeveDocuments';
 import type { DocumentSupplier, IgeveUnit, NfeDocument } from '../lib/igeveDocuments';
 import type { ScannedDelivery, ScannedItem } from '../lib/igeveScannedDeliveries';
 
@@ -80,10 +80,14 @@ export default function IgeveBatchDeliveries({ units, suppliers, onPreview, rend
           const rows = imported.deliveries.map(scan => {
             const matches = unitsForCnpj(scan.recipientCnpj, units);
             const matchingUnits = matches.length ? matches : units;
-            const byName = scan.unitName && matchingUnits.find(unit => normalize(unit.name) === normalize(scan.unitName));
-            const unit = byName || (matches.length === 1 ? matches[0] : undefined);
+            const scannedName = normalize(scan.unitName);
+            const namedUnits = scannedName ? matchingUnits.filter(unit =>
+              normalize(unit.name) === scannedName || normalize(registeredDeliveryUnit(unit).name) === scannedName) : [];
+            const unit = matches.length === 1 ? matches[0] : namedUnits.length === 1 ? namedUnits[0] : undefined;
+            const details = unit && registeredDeliveryUnit(unit);
             return {
-              id: crypto.randomUUID(), scan, unitId: unit?.id ?? '', unitName: scan.unitName,
+              id: crypto.randomUUID(), unitId: unit?.id ?? '', unitName: details?.name || scan.unitName,
+              scan: { ...scan, address: details?.address || scan.address, district: details?.district || scan.district },
               category: scan.category || (foundCategories.length === 1 ? foundCategories[0][1] : ''),
               supplierId: availableSuppliers.find(supplier => digits(supplier.cnpj) === digits(scan.issuerCnpj))?.id ?? '',
             };
@@ -139,7 +143,7 @@ export default function IgeveBatchDeliveries({ units, suppliers, onPreview, rend
           });
           const doc: NfeDocument = {
             ...emptyNfeDocument(), number: digits(scan.number), recipientCnpj, consumption: scan.consumption,
-            unitId: unit?.id ?? `scan-${row.id}`, unitName, address: scan.address || unit?.address || '',
+            unitId: unit?.id ?? `scan-${row.id}`, unitName, address: scan.address.trim(),
             deliveryDate, deliverySupplierId: supplier?.id ?? '', items, confirmed: true,
           };
           const reference = scan.control ? scan.number : '00' + scan.number.replace(/^0+(?=\d)/, '');
@@ -236,7 +240,11 @@ export default function IgeveBatchDeliveries({ units, suppliers, onPreview, rend
               <label>Data de entrega<input className="input-field" type="date" value={scan.date} onChange={event => patchScan({ date: event.target.value })} /></label>
               <label>Unidade cadastrada<select className="input-field" value={row.unitId} onChange={event => {
                 const unit = units.find(candidate => candidate.id === event.target.value);
-                updateRow(row.id, current => ({ ...current, unitId: unit?.id ?? '', unitName: unit?.name ?? current.unitName }));
+                updateRow(row.id, current => {
+                  if (!unit) return { ...current, unitId: '' };
+                  const { name, address, district } = registeredDeliveryUnit(unit);
+                  return { ...current, unitId: unit.id, unitName: name, scan: { ...current.scan, address, district } };
+                });
               }}>
                 <option value="">Preencher manualmente</option>
                 {units.map(unit => <option key={unit.id} value={unit.id}>{unit.name} - {unit.city}</option>)}
