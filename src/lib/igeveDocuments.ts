@@ -1,6 +1,7 @@
 export const DOCUMENT_PREFIX = 'gom_igeve_document_';
 export const SUPPLIER_PREFIX = 'gom_igeve_supplier_';
 export const UNIT_PREFIX = 'gom_igeve_unit_';
+export const IGEVE_QUOTE_RECIPIENT = 'INSTITUTO DE GESTAO EDUCACIONAL E VALORIZACAO DO ENSINO - IGEVE';
 export type DocumentLayout = 'caninde' | 'nobre' | 'om' | 'lm' | 'red' | 'delicias' | 'manu' | 'rionutri' | 'generic';
 export interface DocumentSupplier {
   id: string; name: string; cnpj: string; address: string; contact: string;
@@ -16,6 +17,7 @@ export interface Quotation {
 export interface NfeDocument {
   id: string; number: string; issuedAt: string; issuer: string; issuerCnpj: string;
   recipient: string; recipientCnpj: string; unitId: string; unitName: string; address: string;
+  quoteDeliveryAddress?: string;
   deliveryDate: string; consumption: string; baskets: number; notes: string;
   items: NfeItem[]; quotations: Quotation[]; deliverySupplierId: string;
   sourceName: string; sourceHash: string; importedAt: string; confirmed: boolean;
@@ -137,6 +139,27 @@ const unitRows: [string, string, string][] = [
   ['GARÇA TORTA', '0041-80', 'Maceió/AL'], ['NOVO JARDIM', '0043-41', 'Maceió/AL'], ['OITICICA', '0046-94', 'Maceió/AL'], ['PETROPOLIS', '0032-99', 'Maceió/AL'], ['MORADA PLANALTO', '0044-22', 'Maceió/AL'], ['TRAPICHE', '0034-50', 'Maceió/AL'], ['SALVADOR LIRA (DUBEUX LEÃO)', '0045-03', 'Maceió/AL'],
 ];
 export const DEFAULT_IGEVE_UNITS: IgeveUnit[] = unitRows.map(([name, suffix, city], i) => ({ id: `igeve-unit-${i + 1}`, name, cnpj: `28.413.401/${suffix}`, city, address: '' }));
+
+const maceioQuoteUnits: Record<string, readonly [name: string, address: string]> = {
+  '28413401004180': ['CMEI Garça Torta', 'Vila Santa Maria, 149, Garça Torta, CEP 57017-186'],
+  '28413401004341': ['CMEI Novo Jardim', 'Rua A 28, S/N, Novo Jardim, Cidade Universitária, Maceió/AL'],
+  '28413401004422': ['CMEI Morada do Planalto', 'Residencial - Cj. Morada do Planalto - Benedito Bendes, Maceió/AL, CEP 57086-479'],
+  '28413401004503': ['CMEI Dubeaux Leao - Salvador Lira', 'Conj. Salvador Lira - R. da Cordeal, 194 - Santa Lúcia, Maceió/AL, CEP 57082-117'],
+  '28413401004694': ['CMEI Oiticica', 'Residencial Oiticica, no Bairro Cidade Universitária, Maceió/AL, CEP 57073-700'],
+  '28413401003450': ['CMEI Parque da Lagoa', 'Av. Sen. Rui Palmeira, 933 - Vergel do Lago, Maceió/AL, CEP 57015-430'],
+  '28413401002993': ['CMEI Professora Anne Cleide Pimentel Bezerra - Antares', 'Avenida Menino Marcelo, 245, Antares, CEP 57081-385'],
+  '28413401002560': ['CMEI Professora Maria Elisabete dos Santos - Santos Dumont', 'Avenida Lourival Melo Mota, Santos Dumont, CEP 57072-000'],
+  '28413401002640': ['CMEI Professora Simone Ferreira Simão - Tabuleiro', 'Avenida Maceió, Tabuleiro do Martins, CEP 57061-110'],
+  '28413401002721': ['CMEI Professora Zaira Nascimento de Oliveira - Chã da Jaqueira', 'Travessa Jatobá, 37, Chã da Jaqueira, CEP 57018-534'],
+  '28413401003027': ['CMEI Professora Cleide Gomes Cordeiro da Silva - Ponta da Terra', 'Rua Ângelo Martins, 270, Ponta da Terra, CEP 57030-592'],
+  '28413401003108': ['CMEI Maria Leonice dos Santos - Feitosa', 'Av. Governador Lamenha Filho, 2222 - Feitosa, CEP 57043-000'],
+};
+
+export function quotationDeliveryUnit(doc: NfeDocument) {
+  const [name, address] = maceioQuoteUnits[digits(doc.recipientCnpj)] ?? [doc.unitName.trim(), doc.quoteDeliveryAddress?.trim() ?? ''];
+  return { name, address };
+}
+
 export function emptyNfeDocument(): NfeDocument {
   return { id: `${DOCUMENT_PREFIX}${crypto.randomUUID()}`, number: '', issuedAt: '', issuer: '', issuerCnpj: '', recipient: 'INSTITUTO DE GESTÃO EDUCACIONAL E VALORIZAÇÃO DO ENSINO - IGEVE', recipientCnpj: '', unitId: '', unitName: '', address: '', deliveryDate: '', consumption: '', baskets: 0, notes: '', items: [], quotations: [], deliverySupplierId: '', sourceName: '', sourceHash: '', importedAt: '', confirmed: false };
 }
