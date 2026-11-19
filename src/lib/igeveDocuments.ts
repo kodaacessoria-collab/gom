@@ -8,7 +8,7 @@ export interface DocumentSupplier {
   layout: DocumentLayout; color: string; payment: string; validity: number;
   footer: string; logo?: string; referenceName?: string; referencePdf?: string;
 }
-export interface IgeveUnit { id: string; name: string; cnpj: string; city: string; address: string }
+export interface IgeveUnit { id: string; name: string; cnpj: string; city: string; address: string; district?: string }
 export interface NfeItem { id: string; code: string; product: string; unit: string; quantity: number; price: number; brand: string; notes: string }
 export interface Quotation {
   supplierId: string; date: string; reference: string; markupPercent?: number; automaticPrices?: boolean; prices: Record<string, number | null>;
@@ -140,23 +140,31 @@ const unitRows: [string, string, string][] = [
 ];
 export const DEFAULT_IGEVE_UNITS: IgeveUnit[] = unitRows.map(([name, suffix, city], i) => ({ id: `igeve-unit-${i + 1}`, name, cnpj: `28.413.401/${suffix}`, city, address: '' }));
 
-const maceioQuoteUnits: Record<string, readonly [name: string, address: string]> = {
-  '28413401004180': ['CMEI Garça Torta', 'Vila Santa Maria, 149, Garça Torta, CEP 57017-186'],
-  '28413401004341': ['CMEI Novo Jardim', 'Rua A 28, S/N, Novo Jardim, Cidade Universitária, Maceió/AL'],
-  '28413401004422': ['CMEI Morada do Planalto', 'Residencial - Cj. Morada do Planalto - Benedito Bendes, Maceió/AL, CEP 57086-479'],
-  '28413401004503': ['CMEI Dubeaux Leao - Salvador Lira', 'Conj. Salvador Lira - R. da Cordeal, 194 - Santa Lúcia, Maceió/AL, CEP 57082-117'],
-  '28413401004694': ['CMEI Oiticica', 'Residencial Oiticica, no Bairro Cidade Universitária, Maceió/AL, CEP 57073-700'],
-  '28413401003450': ['CMEI Parque da Lagoa', 'Av. Sen. Rui Palmeira, 933 - Vergel do Lago, Maceió/AL, CEP 57015-430'],
-  '28413401002993': ['CMEI Professora Anne Cleide Pimentel Bezerra - Antares', 'Avenida Menino Marcelo, 245, Antares, CEP 57081-385'],
-  '28413401002560': ['CMEI Professora Maria Elisabete dos Santos - Santos Dumont', 'Avenida Lourival Melo Mota, Santos Dumont, CEP 57072-000'],
-  '28413401002640': ['CMEI Professora Simone Ferreira Simão - Tabuleiro', 'Avenida Maceió, Tabuleiro do Martins, CEP 57061-110'],
-  '28413401002721': ['CMEI Professora Zaira Nascimento de Oliveira - Chã da Jaqueira', 'Travessa Jatobá, 37, Chã da Jaqueira, CEP 57018-534'],
-  '28413401003027': ['CMEI Professora Cleide Gomes Cordeiro da Silva - Ponta da Terra', 'Rua Ângelo Martins, 270, Ponta da Terra, CEP 57030-592'],
-  '28413401003108': ['CMEI Maria Leonice dos Santos - Feitosa', 'Av. Governador Lamenha Filho, 2222 - Feitosa, CEP 57043-000'],
+type DeliveryUnitDetails = { name: string; address: string; district: string };
+
+const maceioDeliveryUnits: Record<string, readonly [name: string, address: string, district: string]> = {
+  '28413401004180': ['CMEI Garça Torta', 'Vila Santa Maria, 149, Garça Torta, CEP 57017-186', 'Garça Torta'],
+  '28413401004341': ['CMEI Novo Jardim', 'Rua A 28, S/N, Novo Jardim, Cidade Universitária, Maceió/AL', 'Cidade Universitária'],
+  '28413401004422': ['CMEI Morada do Planalto', 'Residencial - Cj. Morada do Planalto - Benedito Bentes, Maceió/AL, CEP 57086-479', 'Benedito Bentes'],
+  '28413401004503': ['CMEI Dubeaux Leao - Salvador Lira', 'Conj. Salvador Lira - R. da Cordeal, 194 - Santa Lúcia, Maceió/AL, CEP 57082-117', 'Santa Lúcia'],
+  '28413401004694': ['CMEI Oiticica', 'Residencial Oiticica, no Bairro Cidade Universitária, Maceió/AL, CEP 57073-700', 'Cidade Universitária'],
+  '28413401003450': ['CMEI Parque da Lagoa', 'Av. Sen. Rui Palmeira, 933 - Vergel do Lago, Maceió/AL, CEP 57015-430', 'Vergel do Lago'],
+  '28413401002993': ['CMEI Professora Anne Cleide Pimentel Bezerra - Antares', 'Avenida Menino Marcelo, 245, Antares, CEP 57081-385', 'Antares'],
+  '28413401002560': ['CMEI Professora Maria Elisabete dos Santos - Santos Dumont', 'Avenida Lourival Melo Mota, Santos Dumont, CEP 57072-000', 'Santos Dumont'],
+  '28413401002640': ['CMEI Professora Simone Ferreira Simão - Tabuleiro', 'Avenida Maceió, Tabuleiro do Martins, CEP 57061-110', 'Tabuleiro do Martins'],
+  '28413401002721': ['CMEI Professora Zaira Nascimento de Oliveira - Chã da Jaqueira', 'Travessa Jatobá, 37, Chã da Jaqueira, CEP 57018-534', 'Chã da Jaqueira'],
+  '28413401003027': ['CMEI Professora Cleide Gomes Cordeiro da Silva - Ponta da Terra', 'Rua Ângelo Martins, 270, Ponta da Terra, CEP 57030-592', 'Ponta da Terra'],
+  '28413401003108': ['CMEI Maria Leonice dos Santos - Feitosa', 'Av. Governador Lamenha Filho, 2222 - Feitosa, CEP 57043-000', 'Feitosa'],
 };
 
+export function registeredDeliveryUnit(unit: IgeveUnit): DeliveryUnitDetails {
+  const [name, address, district] = maceioDeliveryUnits[digits(unit.cnpj)]
+    ?? [unit.name.trim(), unit.address.trim(), unit.district?.trim() ?? ''];
+  return { name, address, district };
+}
+
 export function quotationDeliveryUnit(doc: NfeDocument) {
-  const [name, address] = maceioQuoteUnits[digits(doc.recipientCnpj)] ?? [doc.unitName.trim(), doc.quoteDeliveryAddress?.trim() ?? ''];
+  const [name, address] = maceioDeliveryUnits[digits(doc.recipientCnpj)] ?? [doc.unitName.trim(), doc.quoteDeliveryAddress?.trim() ?? ''];
   return { name, address };
 }
 
