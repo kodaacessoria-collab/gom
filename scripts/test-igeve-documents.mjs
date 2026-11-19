@@ -196,12 +196,17 @@ for (const supplier of layoutSuppliers) {
     assert.match(out.pdf.output(), /(?<!\d)0043(?!\d)/, `${s.layout}: ${kind} com o número formatado`);
     assert.doesNotMatch(out.pdf.output(), /NF-e/);
     assert.match(out.filename, /-0043-/);
-    assert.ok(out.pdf.output().includes(sample.unitName), `${s.layout}: nome da unidade no ${kind}`);
-    assert.ok(out.pdf.output().includes(sample.address), `${s.layout}: endereço da unidade no ${kind}`);
     if (kind === 'quote') {
+      const text = out.pdf.output().replaceAll(') Tj\nT* (', ' ');
+      assert.ok(text.includes('INSTITUTO DE GESTAO EDUCACIONAL E VALORIZACAO DO ENSINO - IGEVE'), `${s.layout}: razão social completa`);
       assert.match(out.pdf.output(), /Observações: Unidade de atendimento:/);
+      assert.match(out.pdf.output(), /CMEI Garça Torta - Vila Santa Maria, 149, Garça Torta, CEP 57017-186/);
+      assert.ok(!out.pdf.output().includes(sample.address), `${s.layout}: orçamento sem o endereço da NF-e`);
       assert.match(out.pdf.output(), /90 dias/);
       assert.doesNotMatch(out.pdf.output(), /15 dias/);
+    } else {
+      assert.ok(out.pdf.output().includes(sample.unitName), `${s.layout}: nome da unidade no romaneio`);
+      assert.ok(out.pdf.output().includes(sample.address), `${s.layout}: endereço da unidade no romaneio`);
     }
     writeFileSync(`tmp/pdfs/igeve-documents/${s.id}-${kind}.pdf`, new Uint8Array(out.pdf.output('arraybuffer')));
   }
@@ -235,7 +240,7 @@ for (const supplier of layoutSuppliers) {
     assert.match(pdf.output(), /00927461805/);
     assert.doesNotMatch(pdf.output(), /NF-e/);
     if (kind === 'quote') {
-      assert.equal(pdf.output().split(sample.unitName).length - 1, 1, `${s.layout}: a unidade aparece uma vez nas observações`);
+      assert.equal(pdf.output().split('CMEI Garça Torta').length - 1, 1, `${s.layout}: a unidade aparece uma vez nas observações`);
     }
     writeFileSync(`tmp/pdfs/igeve-documents/long-${s.id}-${kind}.pdf`, new Uint8Array(pdf.output('arraybuffer')));
   }

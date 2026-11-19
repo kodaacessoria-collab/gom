@@ -5,19 +5,20 @@ import { createVerasPdf } from './igeveVerasPdf.ts';
 import { jsPDF } from 'jspdf';
 import { createQuotationPdf } from './igeveQuotePdf.ts';
 import { autoTable } from 'jspdf-autotable';
-import { decimal2, documentFilename, documentReference, validateNfeDocument } from './igeveDocuments.ts';
+import { decimal2, documentFilename, documentReference, IGEVE_QUOTE_RECIPIENT, quotationDeliveryUnit, validateNfeDocument } from './igeveDocuments.ts';
 import type { DocumentSupplier, NfeDocument, Quotation } from './igeveDocuments.ts';
 
 const date = (s: string) => s.split('-').reverse().join('/');
 const rgb = (hex: string): [number, number, number] => [parseInt(hex.slice(1, 3), 16), parseInt(hex.slice(3, 5), 16), parseInt(hex.slice(5, 7), 16)];
 export function createIgeveDocumentPdf(doc: NfeDocument, supplier: DocumentSupplier, kind: 'quote' | 'delivery', quotation?: Quotation, signatures?: QuoteSignatures) {
+  if (kind === 'quote') doc = { ...doc, recipient: IGEVE_QUOTE_RECIPIENT };
   const error = validateNfeDocument({ ...doc, quotations: quotation ? [quotation] : doc.quotations }, [supplier], kind);
   if (error) throw new Error(error);
   if (kind === 'quote' && (!quotation || quotation.supplierId !== supplier.id)) throw new Error('Cotação não corresponde ao fornecedor.');
   if (!/^#[0-9a-f]{6}$/i.test(supplier.color)) throw new Error('Confira a cor do modelo.');
   if (kind === 'quote') {
-    const address = doc.address.trim() || 'Endereço não informado';
-    const serviceUnit = `Unidade de atendimento: ${doc.unitName.trim()} - ${address}`;
+    const { name, address } = quotationDeliveryUnit(doc);
+    const serviceUnit = `Unidade de atendimento: ${name} - ${address || 'Endereço da unidade não cadastrado'}`;
     doc = { ...doc, notes: [serviceUnit, doc.notes].filter(Boolean).join('\n') };
     supplier = { ...supplier, validity: 90 };
   }

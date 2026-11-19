@@ -15,7 +15,8 @@ const products = [
 ];
 const doc = { ...emptyNfeDocument(), number: '927461805', issuerCnpj: '66.321.676/0001-95',
   recipient: 'INSTITUTO DE GESTAO EDUCACIONAL E VALORIZACAO DO ENSINO - IGEVE', recipientCnpj: '28.413.401/0012-45',
-  unitId: 'igeve-unit-2', unitName: 'CEI IGEVE MENDONÇA', address: 'RUA DR LOURENCO DE MENDONCA, 107 - JARDIM AUGUSTA - SAO PAULO/SP - CEP 08452-330', confirmed: true,
+  unitId: 'igeve-unit-3', unitName: 'CEI IGEVE MENDONÇA', address: 'ENDEREÇO DE FATURAMENTO DE TESTE', confirmed: true,
+  quoteDeliveryAddress: 'RUA DR LOURENCO DE MENDONCA, 107 - JARDIM AUGUSTA - SAO PAULO/SP - CEP 08452-330',
   items: products.map(([product, quantity, price], index) => ({ id: String(index), code: `SOURCE${index}`, product, unit: 'KG', quantity, price, brand: '', notes: '' })),
 };
 const quotation = { supplierId: supplier.id, date: '2026-08-15', reference: 'NF-e 927461805', markupPercent: 0, automaticPrices: true,
@@ -35,7 +36,7 @@ try {
   const text = (await page.getTextContent()).items.filter(item => 'str' in item).map(item => item.str).join(' ');
   for (const value of [supplier.name, supplier.cnpj, supplier.contact, 'TOTAL GERAL', 'R$ 9.931,68', 'Pix / Dep. Bancário', '90 dias', '15/08/2026', '00927461805', 'Observações: Unidade de atendimento:', doc.unitName, 'RUA DR LOURENCO DE MENDONCA, 107', 'Assinatura do representante autorizado']) assert.ok(text.includes(value), value);
   for (const [name] of products) assert.ok(text.includes(name), name);
-  for (const value of ['NF-e', 'SOURCE0', 'Assinado digitalmente', '137.849.718-06']) assert.equal(text.includes(value), false, value);
+  for (const value of ['NF-e', 'SOURCE0', 'Assinado digitalmente', '137.849.718-06', doc.address]) assert.equal(text.includes(value), false, value);
 } finally { await loading.destroy(); }
 assert.deepEqual(doc, snapshot);
 console.log('OK: Manu cadastrada, dados comerciais, modelo com sete produtos e total R$ 9.931,68, sem códigos do emitente ou assinatura prévia.');

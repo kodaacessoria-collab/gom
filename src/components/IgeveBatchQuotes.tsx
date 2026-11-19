@@ -144,7 +144,7 @@ export default function IgeveBatchQuotes({ units, suppliers, renderQuote, downlo
             ...row.document,
             unitId: unit.id,
             unitName: unit.name,
-            address: unit.address || row.document.address,
+            quoteDeliveryAddress: unit.address,
           };
           const previousCount = outputs.length;
           for (const partner of targets) {

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
 import { supabase } from '../lib/supabase';
-import { DEFAULT_DOCUMENT_SUPPLIERS, DEFAULT_IGEVE_UNITS, DOCUMENT_PREFIX, SUPPLIER_PREFIX, UNIT_PREFIX, createAutomaticQuotation, createIssuerMirrorQuotation, quotationPrices, decimal2, digits, documentToday, documentTotal, emptyNfeDocument, round2, unitsForCnpj, validCnpj, validDocumentDate, validateNfeDocument } from '../lib/igeveDocuments';
+import { DEFAULT_DOCUMENT_SUPPLIERS, DEFAULT_IGEVE_UNITS, DOCUMENT_PREFIX, IGEVE_QUOTE_RECIPIENT, SUPPLIER_PREFIX, UNIT_PREFIX, createAutomaticQuotation, createIssuerMirrorQuotation, quotationDeliveryUnit, quotationPrices, decimal2, digits, documentToday, documentTotal, emptyNfeDocument, round2, unitsForCnpj, validCnpj, validDocumentDate, validateNfeDocument } from '../lib/igeveDocuments';
 import type { DocumentLayout, DocumentSupplier, IgeveUnit, NfeDocument, NfeItem, Quotation } from '../lib/igeveDocuments';
 import { documentSignature, quoteSignatureCompanies, quoteSignatureCompany, readQuoteSignatures, signatureStorageKey } from '../lib/igeveQuoteSignature';
 import type { QuoteSignatureCompany, QuoteSignatures } from '../lib/igeveQuoteSignature';
@@ -185,7 +185,12 @@ export default function IgeveDocuments() {
       const quotations = mirrorSupplier
         ? [createIssuerMirrorQuotation(draft, mirrorSupplier)]
         : draft.quotations.filter(q => !only || q.supplierId === only);
-      outputDoc = { ...draft, quotations: quotations.map(q => ({ ...q, date: quotationDate })) };
+      outputDoc = {
+        ...draft,
+        recipient: IGEVE_QUOTE_RECIPIENT,
+        quoteDeliveryAddress: currentUnit?.address,
+        quotations: quotations.map(q => ({ ...q, date: quotationDate })),
+      };
     }
     const availableSuppliers = mirrorSupplier ? [mirrorSupplier] : suppliers;
     const error = validateNfeDocument(outputDoc, availableSuppliers, kind); if (error) throw new Error(error);
@@ -245,7 +250,11 @@ export default function IgeveDocuments() {
   async function downloadPrevious(record: DocumentRecord) {
     if (!record.generatedDocument || !record.generatedKind || !record.suppliers?.length) throw new Error('Não há geração arquivada neste registro.');
     const { createIgeveDocumentPdf } = await import('../lib/igeveDocumentPdf');
-    const doc = record.generatedDocument;
+    let doc = record.generatedDocument;
+    if (record.generatedKind === 'quote' && doc.quoteDeliveryAddress === undefined) {
+      const unit = unitsForCnpj(doc.recipientCnpj, units).find(candidate => candidate.id === doc.unitId);
+      doc = { ...doc, quoteDeliveryAddress: unit?.address };
+    }
     const outputs = await Promise.all(record.suppliers.map(async supplier => {
       let archivedSignatures: QuoteSignatures | undefined;
       const hash = record.signatureHashes?.[supplier.id];
@@ -372,7 +381,8 @@ export default function IgeveDocuments() {
       </div>
         {matches.length > 1 && <p className="igeve-document-notice">Há mais de uma unidade para este CNPJ. Selecione a escola de atendimento.</p>}
         {digits(draft.recipientCnpj).length === 14 && !matches.length && <p className="igeve-document-notice">CNPJ sem unidade cadastrada. Inclua a unidade em Unidades IGEVE.</p>}
-        <label>Endereço de entrega<input className="input-field" value={draft.address} onChange={e => change({ address: e.target.value })} /></label>
+        <label>Endereço de entrega do romaneio<input className="input-field" value={draft.address} onChange={e => change({ address: e.target.value })} /></label>
+        {currentUnit && <label>Endereço da unidade no orçamento<input className="input-field" readOnly value={quotationDeliveryUnit({ ...draft, quoteDeliveryAddress: currentUnit.address }).address} placeholder="Cadastre o endereço em Unidades IGEVE" /></label>}
       </div>
       <div className="card igeve-panel"><h3>3. Produtos da nota</h3><div className="table-container"><table><thead><tr><th>Código</th><th>Produto</th><th>Un.</th><th>Quantidade</th><th>Preço NF-e (R$)</th><th>Marca</th><th>Observação entrega</th><th>Ação</th></tr></thead><tbody>
         {draft.items.map((item, index) => <tr key={item.id}>
